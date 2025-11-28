@@ -13,6 +13,11 @@ set(CMAKE_CUDA_ARCHITECTURES "90")
 
 add_executable(Thing main.cu)
 
+# TODO: ExternalProject_Add with INSTALL might make more sense here
+add_subdirectory(rdma-core)
+target_link_libraries(Thing PRIVATE ibverbs)
+target_link_libraries(Thing PRIVATE mlx5)
+
 include(ExternalProject)
 ExternalProject_Add(nccl_external
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/nccl
@@ -29,9 +34,11 @@ ExternalProject_Add(nccl_external
         -DDEBUG=ON
         -DTRACE=ON
         -DNVTX=ON
-        # -DRDMA_CORE=ON
-        # -DNET_PROFILER=ON
-        # -DMLX5DV=ON
+        -DRDMA_CORE=ON
+        -DNET_PROFILER=ON
+        -DMLX5DV=ON
+
+        -DVERBS_LIBRARY=${rdma-core_BINARY_DIR}/lib/libibverbs.so
 
         INSTALL_COMMAND ""
         BUILD_ALWAYS ON
@@ -45,5 +52,13 @@ set_target_properties(nccl PROPERTIES
         "${CMAKE_CURRENT_SOURCE_DIR}/nccl/src/include"
 )
 add_dependencies(nccl nccl_external)
+add_dependencies(nccl PRIVATE ibverbs)
+add_dependencies(nccl PRIVATE mlx5)
 
 target_link_libraries(Thing PRIVATE nccl)
+
+#get_cmake_property(_variableNames VARIABLES)
+#list(SORT _variableNames)
+#foreach (_variableName ${_variableNames})
+#    message(STATUS "${_variableName}=${${_variableName}}")
+#endforeach ()

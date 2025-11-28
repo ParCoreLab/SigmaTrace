@@ -1,3 +1,6 @@
 [submodule "nccl"]
 	path = nccl
 	url = https://github.com/NVIDIA/nccl.git
+[submodule "rdma-core"]
+	path = rdma-core
+	url = https://github.com/linux-rdma/rdma-core.git
