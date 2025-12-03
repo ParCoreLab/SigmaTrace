@@ -2,11 +2,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <tuple>
 #include <typeindex>
 #include <unordered_map>
+#include <vector>
 
 #include "infiniband/verbs.h"
 
@@ -15,7 +17,6 @@ namespace ibv_hook {
     // ============================================================================
     // Statistics
     // ============================================================================
-
     struct Stats {
         std::atomic<std::uint64_t> calls = 0;
         std::atomic<std::uint64_t> total_ns = 0;
@@ -38,7 +39,6 @@ namespace ibv_hook {
     // ============================================================================
     // Hook trait - define one per IBV operation
     // ============================================================================
-
     template<typename Tag>
     struct HookTrait;
 
@@ -48,6 +48,9 @@ namespace ibv_hook {
     template<>                                                                                                         \
     struct HookTrait<name##_tag> {                                                                                     \
         using FuncPtr = ret_type (*)(first_arg_type, ##__VA_ARGS__);                                                   \
+        using RetType = ret_type;                                                                                      \
+        using PreCallback = std::function<void(first_arg_type, ##__VA_ARGS__)>;                                        \
+        using PostCallback = std::function<void(ret_type, first_arg_type, ##__VA_ARGS__)>;                             \
         static constexpr const char *op_name = #name;                                                                  \
                                                                                                                        \
         static FuncPtr &get_op(ibv_context *ctx) { return ctx->ops.name; }                                             \
@@ -55,20 +58,16 @@ namespace ibv_hook {
     }
 
     // Supported obv functions are defined here as Traits
+    // TODO: this might break if two functions have the same signature
     DEFINE_IBV_HOOK(post_send, int, ibv_qp *, ibv_send_wr *, ibv_send_wr **);
-
     DEFINE_IBV_HOOK(post_recv, int, ibv_qp *, ibv_recv_wr *, ibv_recv_wr **);
-
     DEFINE_IBV_HOOK(poll_cq, int, ibv_cq *, int, ibv_wc *);
-
     DEFINE_IBV_HOOK(req_notify_cq, int, ibv_cq *, int);
-
     DEFINE_IBV_HOOK(post_srq_recv, int, ibv_srq *, ibv_recv_wr *, ibv_recv_wr **);
 
     // ============================================================================
     // Per-context storage for original function pointers
     // ============================================================================
-
     template<typename... Tags>
     struct ContextStorage {
         ibv_context *ctx = nullptr;
@@ -80,11 +79,13 @@ namespace ibv_hook {
             ((std::get<typename HookTrait<Tags>::FuncPtr>(originals) = HookTrait<Tags>::get_op(c)), ...);
         }
 
+        // TODO: MAYBE use index-based access
         template<typename Tag>
-        typename HookTrait<Tag>::FuncPtr get_original() const {
+        HookTrait<Tag>::FuncPtr get_original() const {
             return std::get<typename HookTrait<Tag>::FuncPtr>(originals);
         }
 
+        // TODO: ditto
         template<typename Tag>
         Stats &get_stats() {
             // Default-construct if not present
@@ -111,24 +112,43 @@ namespace ibv_hook {
         }
     };
 
-    // ============================================================================
-    // Hook Manager
-    // ============================================================================
+    // ================================================================
+    // Callback storage for registered hooks
+    // ================================================================
+    template<typename... Tags>
+    struct CallbackStorage {
+        std::tuple<std::vector<typename HookTrait<Tags>::PreCallback>...> pre_callbacks;
+        std::tuple<std::vector<typename HookTrait<Tags>::PostCallback>...> post_callbacks;
 
+        template<typename Tag>
+        std::vector<typename HookTrait<Tag>::PreCallback> &get_pre_callbacks() {
+            return std::get<std::vector<typename HookTrait<Tag>::PreCallback>>(pre_callbacks);
+        }
+
+        template<typename Tag>
+        std::vector<typename HookTrait<Tag>::PostCallback> &get_post_callbacks() {
+            return std::get<std::vector<typename HookTrait<Tag>::PostCallback>>(post_callbacks);
+        }
+    };
+
+    // ================================================================
+    // Hook Manager
+    // ================================================================
     template<typename Derived, typename... Tags>
     class HookManager {
     public:
-        using Storage = ContextStorage<Tags...>;
+        using Contexts = ContextStorage<Tags...>;
+        using Callbacks = CallbackStorage<Tags...>;
 
         static Derived &instance() {
             static Derived mgr;
             return mgr;
         }
 
-        Storage *install(ibv_context *ctx) {
+        Contexts *install(ibv_context *ctx) {
             std::lock_guard lock(m_mutex);
 
-            auto [it, inserted] = m_contexts.emplace(ctx, Storage{ctx});
+            auto [it, inserted] = m_contexts.emplace(ctx, Contexts{ctx});
             if (inserted) {
                 // Install our wrappers
                 ((HookTrait<Tags>::get_op(ctx) = &wrapper<Tags>), ...);
@@ -146,7 +166,7 @@ namespace ibv_hook {
             }
         }
 
-        Storage *find(ibv_context *ctx) {
+        Contexts *find(ibv_context *ctx) {
             std::lock_guard lock(m_mutex);
             if (auto it = m_contexts.find(ctx); it != m_contexts.end()) {
                 return &it->second;
@@ -162,23 +182,92 @@ namespace ibv_hook {
             }
         }
 
+        // Register a pre-hook callback for a given tag
+        // Usage: instance().register_pre<post_send_tag>([](ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) { ... });
+        template<typename Tag>
+        void register_pre(HookTrait<Tag>::PreCallback callback) {
+            std::lock_guard lock(m_mutex);
+            m_callbacks.template get_pre_callbacks<Tag>().push_back(std::move(callback));
+        }
+
+        // Register a post-hook callback for a given tag
+        // Usage: instance().register_post<post_send_tag>([](int ret, auto&& ...) { ... });
+        template<typename Tag>
+        void register_post(HookTrait<Tag>::PostCallback callback) {
+            std::lock_guard lock(m_mutex);
+            m_callbacks.template get_post_callbacks<Tag>().push_back(std::move(callback));
+        }
+
+        // Clear all registered callbacks for a specific tag
+        template<typename Tag>
+        void clear_callbacks() {
+            std::lock_guard lock(m_mutex);
+            m_callbacks.template get_pre_callbacks<Tag>().clear();
+            m_callbacks.template get_post_callbacks<Tag>().clear();
+        }
+
+        // Clear all registered callbacks
+        void clear_all_callbacks() {
+            std::lock_guard lock(m_mutex);
+            (m_callbacks.template get_pre_callbacks<Tags>().clear(), ...);
+            (m_callbacks.template get_post_callbacks<Tags>().clear(), ...);
+        }
+
+        /* TODO: There are currently two ways of adding hooks:
+         * `register_hook` like above, and `pre/post` like below
+         * It is currently unclear which way is better (performance-wise)
+         * so I have them both avialable here.
+         */
+        // Default pre-hooks - do nothing (override specific ones in derived class)
+        // Usage: void pre(post_send_tag, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) { ... }
+        template<typename Tag, typename... Args>
+        void pre(Tag, Args...) {}
+
+        // Default post-hooks - do nothing (override specific ones in derived class)
+        // Usage: void post(post_send_tag, int ret, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) { ... }
+        template<typename Tag, typename Ret, typename... Args>
+        void post(Tag, Ret, Args...) {}
+
     protected:
         HookManager() = default;
+
+        // Call all registered pre-callbacks for a tag
+        template<typename Tag, typename... Args>
+        void invoke_pre_callbacks(Args... args) {
+            // Note: m_mutex should already be held or we accept the race for performance
+            for (auto &cb: m_callbacks.template get_pre_callbacks<Tag>()) {
+                cb(args...);
+            }
+        }
+
+        // Call all registered post-callbacks for a tag
+        template<typename Tag, typename Ret, typename... Args>
+        void invoke_post_callbacks(Ret ret, Args... args) {
+            for (auto &cb: m_callbacks.template get_post_callbacks<Tag>()) {
+                cb(ret, args...);
+            }
+        }
 
         // Generic wrapper - calls derived class hooks
         template<typename Tag, typename... Args>
         static auto wrapper(Args... args) {
+            // TODO: maybe a mutex here so uninstall doesn't nuke this func
+
             using Trait = HookTrait<Tag>;
             auto &mgr = instance();
 
             auto *ctx = Trait::get_ctx(std::get<0>(std::tie(args...)));
             auto *storage = mgr.find(ctx);
 
-            // Pre-hook (in derived class)
-            mgr.template pre<Tag>(args...);
+            // Pre-hook (in derived class) - pass tag as first argument for overload resolution
+            static_cast<Derived &>(mgr).pre(Tag{}, args...);
+
+            // Call registered pre-callbacks
+            mgr.template invoke_pre_callbacks<Tag>(args...);
 
             // Time and call original
             const auto start = std::chrono::steady_clock::now();
+            // TODO: might break if void return
             auto ret = storage->template get_original<Tag>()(args...);
             const auto elapsed = std::chrono::steady_clock::now() - start;
 
@@ -186,28 +275,26 @@ namespace ibv_hook {
             storage->template get_stats<Tag>().record(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
 
-            // Post-hook (in derived class)
-            mgr.template post<Tag>(ret, args...);
+            // Post-hook (in derived class) - pass tag as first argument for overload resolution
+            static_cast<Derived &>(mgr).post(Tag{}, ret, args...);
+
+            // Call registered post-callbacks
+            mgr.template invoke_post_callbacks<Tag>(ret, args...);
 
             return ret;
         }
 
-        // Default hooks - do nothing (override in derived)
-        template<typename Tag, typename... Args>
-        void pre(Args...) {}
-
-        template<typename Tag, typename Ret, typename... Args>
-        void post(Ret, Args...) {}
-
         mutable std::mutex m_mutex;
-        std::unordered_map<ibv_context *, Storage> m_contexts;
+        std::unordered_map<ibv_context *, Contexts> m_contexts;
+        // TODO: maybe another template here so we don't have to specify callback type twice like
+        // std::get<std::vector<typename HookTrait<Tag>::PreCallback>>(pre_callbacks);
+        Callbacks m_callbacks;
     };
 
 
-    // ============================================================================
-    // Default hook set
-    // ============================================================================
-    // Simple manager with no custom hooks - just stats
+    // ================================================================
+    // Default hook set - just stats
+    // ================================================================
     struct DefaultHookManager : HookManager<DefaultHookManager, post_send_tag, post_recv_tag, poll_cq_tag,
                                             req_notify_cq_tag, post_srq_recv_tag> {};
 } // namespace ibv_hook

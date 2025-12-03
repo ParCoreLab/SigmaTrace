@@ -30,6 +30,7 @@ extern "C" ibv_context *ibv_open_device(ibv_device *device) {
         ActiveManager::instance().install(ctx);
         std::cout << "[ibv_hook] Hooks installed on " << ctx << "\n";
     }
+
     return ctx;
 }
 
