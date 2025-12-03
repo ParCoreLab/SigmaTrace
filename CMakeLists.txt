@@ -53,6 +53,12 @@ add_dependencies(nccl PRIVATE mlx5)
 
 target_link_libraries(Thing PRIVATE nccl)
 
+add_subdirectory(Ibtrace)
+add_dependencies(Thing Ibtrace)
+
+add_subdirectory(libibprof)
+add_dependencies(Thing libibprof)
+
 #get_cmake_property(_variableNames VARIABLES)
 #list(SORT _variableNames)
 #foreach (_variableName ${_variableNames})
