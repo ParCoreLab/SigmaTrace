@@ -29,7 +29,7 @@ constexpr int NUM_RANKS = 2;
 int main() {
     std::cout << "ok" << std::endl;
 
-    setenv("NCCL_DEBUG", "INFO", 1);
+    setenv("NCCL_DEBUG", "TRACE", 1);
 
     setenv("NCCL_IB_HCA", "mlx5_0", 1);
     setenv("NCCL_IB_DISABLE", "0", 1);
