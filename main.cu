@@ -83,8 +83,6 @@ int main() {
     }
 
     for (auto _ = 0; _ < 1; _++) {
-        std::cerr << "Sending" << std::endl;
-
         NCCL_CHECK(ncclGroupStart());
         for (auto i = 0; i < NUM_RANKS; i++) {
             const auto *send_buff = send_buffs[i];
