@@ -1,28 +1,27 @@
-#include <array>
 #include <cassert>
 #include <iostream>
+#include <thread>
 
 #include <cuda_runtime.h>
-
 #include <nccl.h>
 
-#define CUDA_CHECK(cmd) do {                        \
-    cudaError_t err = cmd;                          \
-    if (err != cudaSuccess) {                       \
-        printf("CUDA error %s:%d '%s'\n",           \
-        __FILE__,__LINE__,cudaGetErrorString(err)); \
-        exit(EXIT_FAILURE);                         \
-    }                                               \
-} while(0)
+#define CUDA_CHECK(cmd)                                                                                                \
+    do {                                                                                                               \
+        cudaError_t err = cmd;                                                                                         \
+        if (err != cudaSuccess) {                                                                                      \
+            printf("CUDA error %s:%d '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                            \
+            exit(EXIT_FAILURE);                                                                                        \
+        }                                                                                                              \
+    } while (0)
 
-#define NCCL_CHECK(cmd) do {                         \
-    ncclResult_t res = cmd;                         \
-    if (res != ncclSuccess) {                       \
-        printf("NCCL error %s:%d '%s'\n",           \
-        __FILE__,__LINE__,ncclGetErrorString(res)); \
-        exit(EXIT_FAILURE);                         \
-    }                                               \
-} while(0)
+#define NCCL_CHECK(cmd)                                                                                                \
+    do {                                                                                                               \
+        ncclResult_t res = cmd;                                                                                        \
+        if (res != ncclSuccess) {                                                                                      \
+            printf("NCCL error %s:%d '%s'\n", __FILE__, __LINE__, ncclGetErrorString(res));                            \
+            exit(EXIT_FAILURE);                                                                                        \
+        }                                                                                                              \
+    } while (0)
 
 constexpr size_t DATA_SIZE = 4096;
 constexpr int NUM_RANKS = 2;
@@ -83,13 +82,19 @@ int main() {
         std::cout << "ncclMemAlloc: " << recv_buffs[i] << std::endl;
     }
 
-    NCCL_CHECK(ncclGroupStart());
-    for (auto i = 0; i < NUM_RANKS; i++) {
-        const auto *send_buff = send_buffs[i];
-        auto *recv_buff = recv_buffs[i];
-        NCCL_CHECK(ncclAllGather(send_buff, recv_buff, DATA_SIZE, ncclFloat, nccl_comms[i], nullptr));
+    for (auto _ = 0; _ < 1; _++) {
+        std::cerr << "Sending" << std::endl;
+
+        NCCL_CHECK(ncclGroupStart());
+        for (auto i = 0; i < NUM_RANKS; i++) {
+            const auto *send_buff = send_buffs[i];
+            auto *recv_buff = recv_buffs[i];
+            NCCL_CHECK(ncclAllGather(send_buff, recv_buff, DATA_SIZE, ncclFloat, nccl_comms[i], nullptr));
+        }
+        NCCL_CHECK(ncclGroupEnd());
+
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-    NCCL_CHECK(ncclGroupEnd());
 
     for (const auto nccl_comm: nccl_comms) {
         ncclCommDestroy(nccl_comm);

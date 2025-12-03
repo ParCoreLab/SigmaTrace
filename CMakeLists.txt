@@ -1,10 +1,6 @@
 cmake_minimum_required(VERSION 4.0)
 project(Thing C CXX CUDA)
 
-# nccl is unusable when built in Debug mode
-# Needed when built with add_subdirectory, not ExternalProject_Add
-#set(CMAKE_BUILD_TYPE RelWithDebInfo)
-
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(CMAKE_CXX_STANDARD 20)
