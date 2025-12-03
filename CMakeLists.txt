@@ -9,12 +9,42 @@ set(CMAKE_CUDA_ARCHITECTURES "90")
 
 add_executable(Thing main.cu)
 
-# TODO: ExternalProject_Add with INSTALL might make more sense here
-add_subdirectory(rdma-core)
-target_link_libraries(Thing PRIVATE ibverbs)
-target_link_libraries(Thing PRIVATE mlx5)
-
 include(ExternalProject)
+
+ExternalProject_Add(rdma-core
+        SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rdma-core
+        BINARY_DIR ${CMAKE_BINARY_DIR}/rdma-core
+
+        CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DIN_PLACE=1
+
+        INSTALL_COMMAND ""
+        BUILD_ALWAYS ON
+)
+
+ExternalProject_Get_Property(rdma-core BINARY_DIR)
+set(RDMA_CORE_BINARY_DIR ${BINARY_DIR})
+file(MAKE_DIRECTORY "${BINARY_DIR}/include")
+
+add_library(ibverbs SHARED IMPORTED)
+set_target_properties(ibverbs PROPERTIES
+        IMPORTED_LOCATION ${BINARY_DIR}/lib/libibverbs.so
+        INTERFACE_INCLUDE_DIRECTORIES
+        "${BINARY_DIR}/include"
+)
+add_dependencies(ibverbs rdma-core)
+
+add_library(mlx5 SHARED IMPORTED)
+set_target_properties(mlx5 PROPERTIES
+        IMPORTED_LOCATION ${BINARY_DIR}/lib/libmlx5.so
+        INTERFACE_INCLUDE_DIRECTORIES
+        "${BINARY_DIR}/include"
+)
+add_dependencies(mlx5 rdma-core)
+
+target_link_libraries(Thing PRIVATE ibverbs)
+
 ExternalProject_Add(nccl_external
         SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/nccl
         BINARY_DIR ${CMAKE_BINARY_DIR}/nccl-build
@@ -34,10 +64,12 @@ ExternalProject_Add(nccl_external
         -DNET_PROFILER=ON
         -DMLX5DV=ON
 
-        -DVERBS_LIBRARY=${rdma-core_BINARY_DIR}/lib/libibverbs.so
+        -DVERBS_LIBRARY=${RDMA_CORE_BINARY_DIR}/lib/libibverbs.so
+        -DMLX5_LIBRARY=${RDMA_CORE_BINARY_DIR}/lib/libmlx5.so
 
         INSTALL_COMMAND ""
         BUILD_ALWAYS ON
+        DEPENDS rdma-core
 )
 
 add_library(nccl SHARED IMPORTED)
@@ -56,8 +88,8 @@ target_link_libraries(Thing PRIVATE nccl)
 add_subdirectory(Ibtrace)
 add_dependencies(Thing Ibtrace)
 
-add_subdirectory(libibprof)
-add_dependencies(Thing libibprof)
+#add_subdirectory(libibprof)
+#add_dependencies(Thing libibprof)
 
 #get_cmake_property(_variableNames VARIABLES)
 #list(SORT _variableNames)
