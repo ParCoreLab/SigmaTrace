@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <mutex>
@@ -16,17 +17,18 @@ namespace ibv_hook {
     // ============================================================================
 
     struct Stats {
-        std::uint64_t calls = 0;
-        std::uint64_t total_ns = 0;
+        std::atomic<std::uint64_t> calls = 0;
+        std::atomic<std::uint64_t> total_ns = 0;
 
         void record(const std::uint64_t ns) {
-            ++calls;
-            total_ns += ns;
+            calls.fetch_add(1, std::memory_order_relaxed);
+            total_ns.fetch_add(ns, std::memory_order_relaxed);
         }
 
         void print(const char *name, std::ostream &os = std::cout) const {
-            if (calls == 0)
+            if (calls == 0) {
                 return;
+            }
 
             // TODO: std::format
             os << "  " << name << ": " << calls << " calls, " << (total_ns / calls) << " ns avg\n";
