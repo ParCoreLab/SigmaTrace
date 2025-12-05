@@ -20,7 +20,12 @@ ExternalProject_Add(rdma-core
         -DIN_PLACE=1
 
         INSTALL_COMMAND ""
-        BUILD_ALWAYS ON
+)
+
+# Create a custom target that ensures rdma-core is built
+add_custom_target(rdma-core-build ALL
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/rdma-core
+        DEPENDS rdma-core
 )
 
 ExternalProject_Get_Property(rdma-core BINARY_DIR)
@@ -33,7 +38,7 @@ set_target_properties(ibverbs PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES
         "${BINARY_DIR}/include"
 )
-add_dependencies(ibverbs rdma-core)
+add_dependencies(ibverbs rdma-core-build)
 
 add_library(mlx5 SHARED IMPORTED)
 set_target_properties(mlx5 PROPERTIES
@@ -41,7 +46,7 @@ set_target_properties(mlx5 PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES
         "${BINARY_DIR}/include"
 )
-add_dependencies(mlx5 rdma-core)
+add_dependencies(mlx5 rdma-core-build)
 
 target_link_libraries(Thing PRIVATE ibverbs)
 
@@ -68,8 +73,13 @@ ExternalProject_Add(nccl_external
         -DMLX5_LIBRARY=${RDMA_CORE_BINARY_DIR}/lib/libmlx5.so
 
         INSTALL_COMMAND ""
-        BUILD_ALWAYS ON
         DEPENDS rdma-core
+)
+
+# Create a custom target that ensures nccl is built
+add_custom_target(nccl-build-target ALL
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/nccl-build
+        DEPENDS nccl_external
 )
 
 add_library(nccl SHARED IMPORTED)
@@ -79,7 +89,7 @@ set_target_properties(nccl PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES
         "${CMAKE_CURRENT_SOURCE_DIR}/nccl/src/include"
 )
-add_dependencies(nccl nccl_external)
+add_dependencies(nccl nccl-build-target)
 add_dependencies(nccl PRIVATE ibverbs)
 add_dependencies(nccl PRIVATE mlx5)
 
