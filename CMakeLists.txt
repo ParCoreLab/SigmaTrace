@@ -96,7 +96,10 @@ add_dependencies(nccl PRIVATE mlx5)
 target_link_libraries(Thing PRIVATE nccl)
 
 add_subdirectory(Ibtrace)
-add_dependencies(Thing Ibtrace)
+add_dependencies(Thing IbtraceTest)
+add_dependencies(Thing ProfilerTrace)
+
+#add_dependencies(Ibtrace rdma-core-build)
 
 #add_subdirectory(libibprof)
 #add_dependencies(Thing libibprof)
