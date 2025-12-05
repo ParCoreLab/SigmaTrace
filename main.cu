@@ -5,23 +5,7 @@
 #include <cuda_runtime.h>
 #include <nccl.h>
 
-#define CUDA_CHECK(cmd)                                                                                                \
-    do {                                                                                                               \
-        cudaError_t err = cmd;                                                                                         \
-        if (err != cudaSuccess) {                                                                                      \
-            printf("CUDA error %s:%d '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                            \
-            exit(EXIT_FAILURE);                                                                                        \
-        }                                                                                                              \
-    } while (0)
-
-#define NCCL_CHECK(cmd)                                                                                                \
-    do {                                                                                                               \
-        ncclResult_t res = cmd;                                                                                        \
-        if (res != ncclSuccess) {                                                                                      \
-            printf("NCCL error %s:%d '%s'\n", __FILE__, __LINE__, ncclGetErrorString(res));                            \
-            exit(EXIT_FAILURE);                                                                                        \
-        }                                                                                                              \
-    } while (0)
+#include "cuda_helper.hpp"
 
 constexpr size_t DATA_SIZE = 4096;
 constexpr int NUM_RANKS = 2;
@@ -77,9 +61,6 @@ int main() {
     for (auto i = 0; i < NUM_RANKS; i++) {
         ncclMemAlloc(&send_buffs[i], DATA_SIZE * sizeof(float));
         ncclMemAlloc(&recv_buffs[i], DATA_SIZE * sizeof(float));
-
-        std::cout << "ncclMemAlloc: " << send_buffs[i] << std::endl;
-        std::cout << "ncclMemAlloc: " << recv_buffs[i] << std::endl;
     }
 
     for (auto _ = 0; _ < 1; _++) {

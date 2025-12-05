@@ -7,7 +7,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_ARCHITECTURES "90")
 
+find_package(CUDAToolkit REQUIRED)
+
+add_library(cuda_helper INTERFACE)
+target_include_directories(cuda_helper INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/common")
+
 add_executable(Thing main.cu)
+
+#target_link_libraries(Thing PRIVATE CUDA::cudart)
 
 include(ExternalProject)
 
@@ -48,6 +55,7 @@ set_target_properties(mlx5 PROPERTIES
 )
 add_dependencies(mlx5 rdma-core-build)
 
+target_link_libraries(Thing PRIVATE cuda_helper)
 target_link_libraries(Thing PRIVATE ibverbs)
 
 ExternalProject_Add(nccl_external

@@ -5,6 +5,10 @@
 
 #include <dlfcn.h>
 
+#include <cuda_runtime.h>
+
+#include "cuda_helper.hpp"
+
 #include "ibverbs_trace.hpp"
 
 using namespace ibv_hook;

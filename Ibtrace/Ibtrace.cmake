@@ -36,9 +36,14 @@ set_target_properties(ProfilerTrace PROPERTIES
 # Link against dl for dlsym()
 target_link_libraries(ProfilerTrace PRIVATE dl)
 target_link_libraries(ProfilerTrace PRIVATE ibverbs)
+target_link_libraries(ProfilerTrace PRIVATE cuda_helper)
+target_link_libraries(ProfilerTrace PRIVATE CUDA::cudart)
 
 set_target_properties(ProfilerTrace PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 add_executable(ibverbs_profiler profiler.cpp)
 target_link_libraries(ibverbs_profiler PRIVATE ProfilerTrace ibverbs)
+target_link_libraries(ibverbs_profiler PRIVATE CUDA::cudart)
+
+# Ensure recompilation on change
 add_dependencies(ibverbs_profiler Thing)
