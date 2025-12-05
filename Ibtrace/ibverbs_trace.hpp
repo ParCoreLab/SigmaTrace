@@ -213,25 +213,51 @@ namespace ibv_hook {
             (m_callbacks.template get_post_callbacks<Tags>().clear(), ...);
         }
 
+        // TODO: need async versions maybe
         /* TODO: There are currently two ways of adding hooks:
          * `register_hook` like above, and `pre/post` like below
          * It is currently unclear which way is better (performance-wise)
          * so I have them both avialable here.
          */
         // Default pre-hooks - do nothing (override specific ones in derived class)
-        // Usage: void pre(post_send_tag, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) { ... }
+        // Usage: void pre(post_send_tag, Contexts& ctx, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) { ... }
         template<typename Tag, typename... Args>
-        void pre(Tag, Args...) {}
+        void pre(Tag, Contexts &, Args...) {}
 
         // Default post-hooks - do nothing (override specific ones in derived class)
-        // Usage: void post(post_send_tag, int ret, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) { ... }
+        // Usage: void post(post_send_tag, Contexts& ctx, int ret, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) {
+        // ... }
         template<typename Tag, typename Ret, typename... Args>
-        void post(Tag, Ret, Args...) {}
+        void post(Tag, Contexts &, Ret, Args...) {}
 
     protected:
         HookManager() = default;
 
-        // Call all registered pre-callbacks for a tag
+        // SFINAE helper to detect if Derived has a pre/post() overload for a given Tag
+        template<typename Tag, typename... Args>
+        static constexpr bool has_pre_v =
+                requires(Derived &d, Tag t, Contexts &ctx, Args... args) { d.pre(t, ctx, args...); };
+
+        template<typename Tag, typename Ret, typename... Args>
+        static constexpr bool has_post_v =
+                requires(Derived &d, Tag t, Contexts &ctx, Ret r, Args... args) { d.post(t, ctx, r, args...); };
+
+        // Helpers to conditionally call pre/post if overload exists
+        template<typename Tag, typename... Args>
+        void call_pre(Derived &derived, Tag tag, Contexts &ctx, Args... args) {
+            if constexpr (has_pre_v<Tag, Args...>) {
+                derived.pre(tag, ctx, args...);
+            }
+        }
+
+        template<typename Tag, typename Ret, typename... Args>
+        void call_post(Derived &derived, Tag tag, Contexts &ctx, Ret ret, Args... args) {
+            if constexpr (has_post_v<Tag, Ret, Args...>) {
+                derived.post(tag, ctx, ret, args...);
+            }
+        }
+
+        // Call all registered pre/post-callbacks for a tag
         template<typename Tag, typename... Args>
         void invoke_pre_callbacks(Args... args) {
             // Note: m_mutex should already be held or we accept the race for performance
@@ -240,7 +266,6 @@ namespace ibv_hook {
             }
         }
 
-        // Call all registered post-callbacks for a tag
         template<typename Tag, typename Ret, typename... Args>
         void invoke_post_callbacks(Ret ret, Args... args) {
             for (auto &cb: m_callbacks.template get_post_callbacks<Tag>()) {
@@ -252,18 +277,20 @@ namespace ibv_hook {
         template<typename Tag, typename... Args>
         static auto wrapper(Args... args) {
             // TODO: maybe a mutex here so uninstall doesn't nuke this func
-
             using Trait = HookTrait<Tag>;
             auto &mgr = instance();
 
             auto *ctx = Trait::get_ctx(std::get<0>(std::tie(args...)));
             auto *storage = mgr.find(ctx);
 
+            // ================================================================
             // Pre-hook (in derived class) - pass tag as first argument for overload resolution
-            static_cast<Derived &>(mgr).pre(Tag{}, args...);
+            // static_cast<Derived &>(mgr).pre(Tag{}, *storage, args...);
+            mgr.template call_pre<Tag>(static_cast<Derived &>(mgr), Tag{}, *storage, args...);
 
             // Call registered pre-callbacks
             mgr.template invoke_pre_callbacks<Tag>(args...);
+            // ================================================================
 
             // Time and call original
             const auto start = std::chrono::steady_clock::now();
@@ -272,14 +299,16 @@ namespace ibv_hook {
             const auto elapsed = std::chrono::steady_clock::now() - start;
 
             // Record stats
-            storage->template get_stats<Tag>().record(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+            auto &stats = storage->template get_stats<Tag>();
+            stats.record(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
 
-            // Post-hook (in derived class) - pass tag as first argument for overload resolution
-            static_cast<Derived &>(mgr).post(Tag{}, ret, args...);
+            // ================================================================
+            // Post-hook (in derived class) - only call if overload exists - pass tag as first argument for overload
+            mgr.template call_post<Tag>(static_cast<Derived &>(mgr), Tag{}, *storage, ret, args...);
 
             // Call registered post-callbacks
             mgr.template invoke_post_callbacks<Tag>(ret, args...);
+            // ================================================================
 
             return ret;
         }
