@@ -6,6 +6,7 @@
 #include <dlfcn.h>
 
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda_helper.hpp"
 
@@ -32,11 +33,51 @@ struct IbvCallLog {
     const char *op_name{nullptr};
 };
 
+// NVTX
+// TODO: what is going on here? Can I create this dynamically?
+// Categories start from 99 because idk someone has a conflict somewhere
+static const nvtx3::named_category NvtxHostCategory{99, "HOST"};
+static const std::array<nvtx3::named_category, 8> NvtxGpuCategories = {{
+        {100, "GPU 0"},
+        {101, "GPU 1"},
+        {102, "GPU 2"},
+        {103, "GPU 3"},
+        {104, "GPU 4"},
+        {105, "GPU 5"},
+        {106, "GPU 6"},
+        {107, "GPU 7"},
+}};
+
+struct NvtxRDMACategories {
+    static constexpr uint32_t SEND = 1;
+    static constexpr uint32_t RECV = 2;
+    static constexpr uint32_t RDMA_WRITE = 3;
+    static constexpr uint32_t RDMA_READ = 4;
+    static constexpr uint32_t MR_REG = 5;
+    static constexpr uint32_t CQ_POLL = 6;
+};
+
+struct NvtxPendingOperation {
+    nvtx3::unique_range range;
+    int gpu_device;
+    uint32_t qp_num;
+    // ibv_wr_opcode opcode;
+
+    // We can only move the range otherwise it'll leave weird empty traces
+    NvtxPendingOperation(nvtx3::unique_range &&_range, const int _gpu_device, const uint32_t _qp_num) :
+        range(std::move(_range)), gpu_device(_gpu_device), qp_num(_qp_num) {}
+
+    NvtxPendingOperation(NvtxPendingOperation &&) = default;
+    NvtxPendingOperation &operator=(NvtxPendingOperation &&) = default;
+
+    NvtxPendingOperation(const NvtxPendingOperation &) = delete;
+    NvtxPendingOperation &operator=(const NvtxPendingOperation &) = delete;
+};
+
 struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_tag
                               // req_notify_cq_tag,
                               // post_srq_recv_tag
                               > {
-
     // TODO: THIS SHOULD NOT BE A VECTOR OR A MAP (probably)
     // TODO: What happens if two GPUs on the same system have the same address range? (no UVA?)
     // TODO: mutex
@@ -44,20 +85,27 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
     // std::vector<std::tuple<uintptr_t, size_t>> m_registered_mrs;
     std::map<uintptr_t, std::tuple<size_t, int>> m_registered_mrs;
 
+    // pd -> device_id
+    std::map<uintptr_t, int> m_registered_mrs_pd;
+
     mutable std::mutex m_call_logs_mutex;
     std::deque<IbvCallLog> m_call_logs;
 
     std::atomic<size_t> m_total_send_bytes{0};
+
+    // NVTX
+    // (QP, WR_ID, opcode_type) -> NvtxPendingOperation
+    // (QP, WR_ID, is_send) -> NvtxPendingOperation
+    // TODO: not unordered_map?
+    std::mutex m_nvtx_pending_ops_mutex;
+    std::map<std::tuple<uint64_t, uint64_t, bool>, NvtxPendingOperation> m_nvtx_pending_ops;
 
     Profiler() {
         std::cout << "Profiler Initialized" << std::endl;
 
         // TODO: maybe this should receive context and other stuff too?
         this->register_pre<post_send_tag>([this](ibv_qp *qp, ibv_send_wr *wr, ibv_send_wr **bad_wr) {
-            std::cout << "==== [ibv_post_send] Pre Hook" << std::endl;
-
-            // assert(wr->next == nullptr && "TODO: only 1 WR for now");
-            assert(wr->num_sge == 1 && "TODO: only 1 SGE for now");
+            // std::cout << "==== [ibv_post_send] Pre Hook" << std::endl;
 
             for (const auto *wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
                 // TODO: Add total bytes for debug
@@ -71,13 +119,107 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
 
                     const auto gpu_idx = this->find_gpu_index(sg_addr);
 
+                    const auto sg_length = static_cast<size_t>(sg.length);
+
+                    // TODO: Build NVTX message
+                    char msg[256];
                     if (gpu_idx == -1) {
-                        std::cout << "  ==== [ibv_post_send] on host memory" << std::endl;
-                        return;
+                        snprintf(msg, sizeof(msg), "SEND QP%u HOST wr_id=%lu len=%zu", qp->qp_num, wr->wr_id,
+                                 sg_length);
+                    } else {
+                        snprintf(msg, sizeof(msg), "SEND QP%u GPU%d wr_id=%lu len=%zu", qp->qp_num, gpu_idx, wr->wr_id,
+                                 sg_length);
+                    }
+                    std::cout << msg << std::endl;
+
+                    const nvtx3::event_attributes nvtx_attr{
+                            nvtx3::message(msg),
+                            gpu_idx == -1 ? NvtxHostCategory : NvtxGpuCategories[gpu_idx],
+                    };
+
+                    NvtxPendingOperation pending_op{
+                            nvtx3::unique_range{nvtx_attr},
+                            gpu_idx,
+                            qp->qp_num,
+                    };
+
+                    std::lock_guard lock(m_nvtx_pending_ops_mutex);
+
+                    if (m_nvtx_pending_ops.contains({qp->qp_num, wr->wr_id, true})) {
+                        std::cout << "WARNING: Duplicate SEND wr_id=" << wr->wr_id << " on QP" << qp->qp_num
+                                  << std::endl;
                     }
 
-                    std::cout << "  ==== [ibv_post_send] from addr on GPU " << gpu_idx << std::endl;
+                    m_nvtx_pending_ops.insert({{qp->qp_num, wr->wr_id, true}, std::move(pending_op)});
                 }
+            }
+        });
+
+        this->register_pre<post_recv_tag>([this](ibv_qp *qp, ibv_recv_wr *wr, ibv_recv_wr **bad_wr) {
+            // assert(wr->num_sge == 1 && "TODO: More than 1 SGE found");
+            std::cout << "==== [ibv_post_recv] Pre Hook" << std::endl;
+
+            // TODO: put this in a function (see ibv_post_send)
+            for (const auto *wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
+                const auto gpu_idx = this->find_gpu_index_pd(reinterpret_cast<uintptr_t>(qp->pd));
+
+                // TODO: Build NVTX message
+                char msg[256];
+                if (gpu_idx == -1) {
+                    snprintf(msg, sizeof(msg), "RECV QP%u HOST wr_id=%lu", qp->qp_num, wr->wr_id);
+                } else {
+                    snprintf(msg, sizeof(msg), "RECV QP%u GPU%d wr_id=%lu", qp->qp_num, gpu_idx, wr->wr_id);
+                }
+                std::cout << msg << std::endl;
+
+                const nvtx3::event_attributes nvtx_attr{
+                        nvtx3::message(msg),
+                        gpu_idx == -1 ? NvtxHostCategory : NvtxGpuCategories[gpu_idx],
+                };
+
+                NvtxPendingOperation pending_op{
+                        nvtx3::unique_range{nvtx_attr},
+                        gpu_idx,
+                        qp->qp_num,
+                };
+
+                std::lock_guard lock(m_nvtx_pending_ops_mutex);
+
+                if (m_nvtx_pending_ops.contains({qp->qp_num, wr->wr_id, false})) {
+                    std::cout << "WARNING: Duplicate RECV wr_id=" << wr->wr_id << " on QP" << qp->qp_num << std::endl;
+                }
+
+                m_nvtx_pending_ops.insert({{qp->qp_num, wr->wr_id, false}, std::move(pending_op)});
+            }
+        });
+
+        this->register_post<poll_cq_tag>([this](int ret, ibv_cq *cq, int num_entries, ibv_wc *wc) {
+            std::lock_guard lock(m_nvtx_pending_ops_mutex);
+
+            // TODO: what is num_entries?
+            for (auto i = 0; i < ret; i++) {
+                const auto &wc_entry = wc[i];
+                const auto wr_id = wc_entry.wr_id;
+
+                // std::cout << "COMPLETED wc_entry.qp_num=" << wc_entry.qp_num << " wr_id=" << wr_id << std::endl;
+
+                bool is_send = (wc_entry.opcode != IBV_WC_RECV && wc_entry.opcode != IBV_WC_RECV_RDMA_WITH_IMM);
+
+                auto it = m_nvtx_pending_ops.find({wc_entry.qp_num, wr_id, is_send});
+                if (it == m_nvtx_pending_ops.end()) {
+                    continue;
+                }
+
+                const auto status = wc_entry.status;
+
+                // Add a completion marker
+                char msg[128];
+                snprintf(msg, sizeof(msg), "COMPLETE QP%u wr_id=%lu status=%s GPU%d", wc_entry.qp_num, wr_id,
+                         ibv_wc_status_str(status), it->second.gpu_device);
+                // std::cout << msg << std::endl;
+
+                // TODO: Maybe lockless or per-type buckets
+                m_nvtx_pending_ops.erase(it);
             }
         });
     }
@@ -175,6 +317,15 @@ private:
 
         return -1;
     }
+
+    int find_gpu_index_pd(const uintptr_t pd_addr) {
+        const auto &mr = m_registered_mrs_pd.find(pd_addr);
+        if (mr == m_registered_mrs_pd.end()) {
+            return -1;
+        }
+
+        return mr->second;
+    }
 };
 
 static ibv_context *(*real_open)(ibv_device *) = nullptr;
@@ -249,6 +400,7 @@ extern "C" ibv_mr *ibv_reg_mr_iova2(ibv_pd *pd, void *addr, size_t length, uint6
 
     auto &instance = Profiler::instance();
     auto &mrs_map = instance.m_registered_mrs;
+    auto &mrs_map_pd = instance.m_registered_mrs_pd;
 
     // TODO: dereg
     if (mrs_map.contains(reinterpret_cast<uintptr_t>(addr))) {
@@ -257,6 +409,9 @@ extern "C" ibv_mr *ibv_reg_mr_iova2(ibv_pd *pd, void *addr, size_t length, uint6
 
     // TODO: why reinterpret_cast?
     mrs_map.insert({reinterpret_cast<uintptr_t>(addr), {length, attrs.device}});
+
+    // TODO: not chceking for duplicates
+    mrs_map_pd.insert({reinterpret_cast<uintptr_t>(pd), attrs.device});
 
     return real_reg_mr_iova2(pd, addr, length, iova, access);
 }
@@ -284,28 +439,3 @@ extern "C" ibv_mr *ibv_reg_mr(ibv_pd *pd, void *addr, size_t length, int access)
 
     return real_reg_mr(pd, addr, length, access);
 }
-
-// TODO: for future
-// // Hook ibv_reg_mr with NVTX markers
-// {
-//     pthread_once(&init_once, init_real_functions);
-//
-//     int gpu_device = get_gpu_device(addr);
-//
-//     nvtxEventAttributes_t eventAttrib = {0};
-//     eventAttrib.version = NVTX_VERSION;
-//     eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
-//     eventAttrib.colorType = NVTX_COLOR_ARGB;
-//     eventAttrib.color = gpu_device >= 0 ? 0xFFFFAA00 : 0xFFAAAAAA;
-//     eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII;
-//
-//     char msg[256];
-//     snprintf(msg, sizeof(msg), "ibv_reg_mr GPU%d %p len=%zu", gpu_device, addr, length);
-//     eventAttrib.message.ascii = msg;
-//
-//     nvtxRangePushEx(&eventAttrib);
-//     struct ibv_mr *mr = real_ibv_reg_mr(pd, addr, length, access);
-//     nvtxRangePop();
-//
-//     return mr;
-// }
