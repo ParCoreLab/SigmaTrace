@@ -5,6 +5,7 @@ add_library(IbtraceTest SHARED
 )
 
 target_include_directories(IbtraceTest PRIVATE "${RDMA_CORE_BINARY_DIR}/include")
+target_link_libraries(IbtraceTest PUBLIC CUDA::nvtx3)
 
 set_target_properties(IbtraceTest PROPERTIES
         POSITION_INDEPENDENT_CODE ON
@@ -38,6 +39,7 @@ target_link_libraries(ProfilerTrace PRIVATE dl)
 target_link_libraries(ProfilerTrace PRIVATE ibverbs)
 target_link_libraries(ProfilerTrace PRIVATE cuda_helper)
 target_link_libraries(ProfilerTrace PRIVATE CUDA::cudart)
+target_link_libraries(ProfilerTrace PUBLIC CUDA::nvtx3)
 
 set_target_properties(ProfilerTrace PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 

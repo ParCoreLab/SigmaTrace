@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <nvtx3/nvtx3.hpp>
+
 #include "infiniband/verbs.h"
 
 namespace ibv_hook {
@@ -136,6 +138,11 @@ namespace ibv_hook {
     // ================================================================
     template<typename Derived, typename... Tags>
     class HookManager {
+        struct NvtxDomain {
+            static constexpr char const *name{"ibv Hooks"};
+        };
+        using NvtxDomainScopedRange = nvtx3::scoped_range_in<NvtxDomain>;
+
     public:
         using Contexts = ContextStorage<Tags...>;
         using Callbacks = CallbackStorage<Tags...>;
@@ -283,19 +290,36 @@ namespace ibv_hook {
             auto *ctx = Trait::get_ctx(std::get<0>(std::tie(args...)));
             auto *storage = mgr.find(ctx);
 
-            // ================================================================
-            // Pre-hook (in derived class) - pass tag as first argument for overload resolution
-            // static_cast<Derived &>(mgr).pre(Tag{}, *storage, args...);
-            mgr.template call_pre<Tag>(static_cast<Derived &>(mgr), Tag{}, *storage, args...);
+            // Encapsulates everything
+            NvtxDomainScopedRange r_all(nvtx3::event_attributes{Trait::op_name, nvtx3::rgb{0, 0, 255}});
 
-            // Call registered pre-callbacks
-            mgr.template invoke_pre_callbacks<Tag>(args...);
+            // ================================================================
+            // Pre-hooks
+            {
+                // TODO: Don't compute this every time. Save in the Trait
+                const auto nvtx_str = std::string(Trait::op_name) + "_profiler_pre_hooks";
+                NvtxDomainScopedRange r(nvtx3::event_attributes{nvtx_str, nvtx3::rgb{255, 0, 0}});
+
+                // static_cast<Derived &>(mgr).pre(Tag{}, *storage, args...);
+                mgr.template call_pre<Tag>(static_cast<Derived &>(mgr), Tag{}, *storage, args...);
+
+                // Call registered pre-callbacks
+                mgr.template invoke_pre_callbacks<Tag>(args...);
+            }
             // ================================================================
 
-            // Time and call original
+            int ret;
             const auto start = std::chrono::steady_clock::now();
-            // TODO: might break if void return
-            auto ret = storage->template get_original<Tag>()(args...);
+            // ================================================================
+            // Real function execution
+            {
+                const auto nvtx_str = std::string(Trait::op_name) + "_real";
+                NvtxDomainScopedRange r(nvtx3::event_attributes{nvtx_str, nvtx3::rgb{0, 255, 0}});
+
+                // TODO: might break if void return
+                ret = storage->template get_original<Tag>()(args...);
+            }
+            // ================================================================
             const auto elapsed = std::chrono::steady_clock::now() - start;
 
             // Record stats
@@ -303,11 +327,17 @@ namespace ibv_hook {
             stats.record(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
 
             // ================================================================
-            // Post-hook (in derived class) - only call if overload exists - pass tag as first argument for overload
-            mgr.template call_post<Tag>(static_cast<Derived &>(mgr), Tag{}, *storage, ret, args...);
+            // Post-hooks
+            {
+                const auto nvtx_str = std::string(Trait::op_name) + "_profiler_post_hooks";
+                NvtxDomainScopedRange r(nvtx3::event_attributes{nvtx_str, nvtx3::rgb{255, 0, 0}});
 
-            // Call registered post-callbacks
-            mgr.template invoke_post_callbacks<Tag>(ret, args...);
+                // Post-hook (in derived class) - only call if overload exists - pass tag as first argument for overload
+                mgr.template call_post<Tag>(static_cast<Derived &>(mgr), Tag{}, *storage, ret, args...);
+
+                // Call registered post-callbacks
+                mgr.template invoke_post_callbacks<Tag>(ret, args...);
+            }
             // ================================================================
 
             return ret;
