@@ -61,6 +61,8 @@ int main() {
     for (auto i = 0; i < NUM_RANKS; i++) {
         ncclMemAlloc(&send_buffs[i], DATA_SIZE * sizeof(float));
         ncclMemAlloc(&recv_buffs[i], DATA_SIZE * sizeof(float));
+        NCCL_MALLOC(&send_buffs[i], DATA_SIZE * sizeof(float));
+        NCCL_MALLOC(&recv_buffs[i], DATA_SIZE * sizeof(float));
     }
 
     for (auto _ = 0; _ < 1; _++) {

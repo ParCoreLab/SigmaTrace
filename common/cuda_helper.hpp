@@ -24,3 +24,9 @@
             std::exit(EXIT_FAILURE);                                                                                   \
         }                                                                                                              \
     } while (0)
+
+#if NCCL_VERSION_CODE >= NCCL_VERSION(2, 19, 0)
+#define NCCL_MALLOC(addr, size) NCCL_CHECK(ncclMemAlloc((addr), (size)))
+#else
+#define NCCL_MALLOC(addr, size) CUDA_CHECK(cudaMalloc((addr), (size)))
+#endif
