@@ -4,7 +4,7 @@ add_library(IbtraceTest SHARED
         ibverbs_preload.cpp
 )
 
-target_include_directories(IbtraceTest PRIVATE "${RDMA_CORE_BINARY_DIR}/include")
+target_include_directories(IbtraceTest PRIVATE "${RDMA_INCLUDE_DIR}")
 target_link_libraries(IbtraceTest PUBLIC CUDA::nvtx3)
 
 set_target_properties(IbtraceTest PROPERTIES
@@ -27,7 +27,7 @@ add_library(ProfilerTrace SHARED
         profiler_preload.cpp
 )
 
-target_include_directories(ProfilerTrace PRIVATE "${RDMA_CORE_BINARY_DIR}/include")
+target_include_directories(ProfilerTrace PRIVATE "${RDMA_INCLUDE_DIR}")
 
 set_target_properties(ProfilerTrace PROPERTIES
         POSITION_INDEPENDENT_CODE ON
