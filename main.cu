@@ -1,6 +1,8 @@
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
+#include <vector>
 
 #include <cuda_runtime.h>
 #include <nccl.h>
@@ -8,11 +10,8 @@
 #include "cuda_helper.hpp"
 
 constexpr size_t DATA_SIZE = 4096;
-constexpr int NUM_RANKS = 2;
 
-int main() {
-    std::cout << "ok" << std::endl;
-
+int main(int argc, char *argv[]) {
     setenv("NCCL_DEBUG", "TRACE", 1);
 
     setenv("NCCL_IB_HCA", "mlx5_0", 1);
@@ -39,35 +38,44 @@ int main() {
 
     setenv("NVSHMEM_NVTX", "common", 1);
 
-    int num_devices = 0;
-    cudaGetDeviceCount(&num_devices);
-    assert(num_devices >= NUM_RANKS && "Need at least two GPUs");
+    int available_devices = 0;
+    CUDA_CHECK(cudaGetDeviceCount(&available_devices));
+    assert(available_devices >= 1 && "Need at least one GPU");
+
+    int num_devices = available_devices;
+    if (argc > 1) {
+        num_devices = std::atoi(argv[1]);
+        if (num_devices < 1 || num_devices > available_devices) {
+            std::cerr << "Invalid number of GPUs: " << num_devices << " (available: " << available_devices << ")"
+                      << std::endl;
+            return 1;
+        }
+    }
+
+    std::cout << "Using " << num_devices << " of " << available_devices << " GPUs" << std::endl;
 
     cudaDeviceProp prop{};
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
 
-    ncclComm_t nccl_comms[NUM_RANKS];
-    constexpr int nccl_devs[NUM_RANKS] = {0, 1};
-    NCCL_CHECK(ncclCommInitAll(nccl_comms, NUM_RANKS, nccl_devs));
-
-    // Disable P2P access in case NCCL env doesn't do any
-    cudaSetDevice(nccl_devs[0]);
-    cudaDeviceDisablePeerAccess(nccl_devs[1]);
+    std::vector<ncclComm_t> nccl_comms(num_devices);
+    std::vector<int> nccl_devs(num_devices);
+    for (int i = 0; i < num_devices; i++) {
+        nccl_devs[i] = i;
+    }
+    NCCL_CHECK(ncclCommInitAll(nccl_comms.data(), num_devices, nccl_devs.data()));
 
     // GPU buffers
-    void *send_buffs[NUM_RANKS];
-    void *recv_buffs[NUM_RANKS];
+    std::vector<void *> send_buffs(num_devices);
+    std::vector<void *> recv_buffs(num_devices);
 
-    for (auto i = 0; i < NUM_RANKS; i++) {
-        ncclMemAlloc(&send_buffs[i], DATA_SIZE * sizeof(float));
-        ncclMemAlloc(&recv_buffs[i], DATA_SIZE * sizeof(float));
+    for (int i = 0; i < num_devices; i++) {
         NCCL_MALLOC(&send_buffs[i], DATA_SIZE * sizeof(float));
         NCCL_MALLOC(&recv_buffs[i], DATA_SIZE * sizeof(float));
     }
 
     for (auto _ = 0; _ < 1; _++) {
         NCCL_CHECK(ncclGroupStart());
-        for (auto i = 0; i < NUM_RANKS; i++) {
+        for (int i = 0; i < num_devices; i++) {
             const auto *send_buff = send_buffs[i];
             auto *recv_buff = recv_buffs[i];
             NCCL_CHECK(ncclAllGather(send_buff, recv_buff, DATA_SIZE, ncclFloat, nccl_comms[i], nullptr));
