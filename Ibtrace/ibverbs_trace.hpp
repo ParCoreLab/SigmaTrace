@@ -1,12 +1,12 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <functional>
 #include <iostream>
 #include <mutex>
 #include <tuple>
-#include <typeindex>
 #include <unordered_map>
 #include <vector>
 
@@ -16,9 +16,9 @@
 
 namespace ibv_hook {
     constexpr auto IBV_HOOK_VERSION = "IBVERBS_1.1";
-    // ============================================================================
+    // ================================================================
     // Statistics
-    // ============================================================================
+    // ================================================================
     struct Stats {
         std::atomic<std::uint64_t> calls = 0;
         std::atomic<std::uint64_t> total_ns = 0;
@@ -38,9 +38,9 @@ namespace ibv_hook {
         }
     };
 
-    // ============================================================================
+    // ================================================================
     // Hook trait - define one per IBV operation
-    // ============================================================================
+    // ================================================================
     template<typename Tag>
     struct HookTrait;
 
@@ -67,31 +67,42 @@ namespace ibv_hook {
     DEFINE_IBV_HOOK(req_notify_cq, int, ibv_cq *, int);
     DEFINE_IBV_HOOK(post_srq_recv, int, ibv_srq *, ibv_recv_wr *, ibv_recv_wr **);
 
-    // ============================================================================
+    // ================================================================
+    // Compile-time helper to find index of Tag in Tags...
+    // ================================================================
+    template<typename Tag, typename First, typename... Rest>
+    constexpr std::size_t TagIndex() {
+        if constexpr (std::is_same_v<Tag, First>) {
+            return 0;
+        } else {
+            return 1 + TagIndex<Tag, Rest...>();
+        }
+    }
+
+    // ================================================================
     // Per-context storage for original function pointers
-    // ============================================================================
+    // ================================================================
     template<typename... Tags>
     struct ContextStorage {
         ibv_context *ctx = nullptr;
         std::tuple<typename HookTrait<Tags>::FuncPtr...> originals;
-        std::unordered_map<std::type_index, Stats> stats;
+        // NOTE: this is inlined and not heap allocated for performance
+        // which also makes it non-movable/non-copyable because of atomics in Stats
+        std::array<Stats, sizeof...(Tags)> stats{};
 
         explicit ContextStorage(ibv_context *c) : ctx(c) {
             // Save original function pointers
             ((std::get<typename HookTrait<Tags>::FuncPtr>(originals) = HookTrait<Tags>::get_op(c)), ...);
         }
 
-        // TODO: MAYBE use index-based access
         template<typename Tag>
         HookTrait<Tag>::FuncPtr get_original() const {
             return std::get<typename HookTrait<Tag>::FuncPtr>(originals);
         }
 
-        // TODO: ditto
         template<typename Tag>
         Stats &get_stats() {
-            // Default-construct if not present
-            return stats[std::type_index(typeid(Tag))];
+            return stats[TagIndex<Tag, Tags...>()];
         }
 
         void print_stats(std::ostream &os = std::cout) const {
@@ -107,10 +118,7 @@ namespace ibv_hook {
 
         template<typename Tag>
         void print_single_tag(std::ostream &os) const {
-            auto it = stats.find(std::type_index(typeid(Tag)));
-            if (it != stats.end()) {
-                it->second.print(HookTrait<Tag>::op_name, os);
-            }
+            stats[TagIndex<Tag, Tags...>()].print(HookTrait<Tag>::op_name, os);
         }
     };
 
@@ -155,7 +163,7 @@ namespace ibv_hook {
         Contexts *install(ibv_context *ctx) {
             std::lock_guard lock(m_mutex);
 
-            auto [it, inserted] = m_contexts.emplace(ctx, Contexts{ctx});
+            auto [it, inserted] = m_contexts.try_emplace(ctx, ctx);
             if (inserted) {
                 // Install our wrappers
                 ((HookTrait<Tags>::get_op(ctx) = &wrapper<Tags>), ...);
