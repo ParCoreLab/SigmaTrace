@@ -121,8 +121,6 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
 
         // TODO: maybe this should receive context and other stuff too?
         this->register_pre<post_send_tag>([this](ibv_qp *qp, ibv_send_wr *wr, ibv_send_wr **bad_wr) {
-            // std::cout << "==== [ibv_post_send] Pre Hook" << std::endl;
-
             // TODO: probably an ibv lib function for this
             for (const auto *wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
                 // TODO: Add total bytes for debug
@@ -281,15 +279,9 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
         std::cout << "\n\n\n === Total send bytes: " << m_total_send_bytes.load(std::memory_order_relaxed) << std::endl;
     }
 
-    // void post(post_send_tag, int ret, ibv_qp *qp, ibv_send_wr *wr, ibv_send_wr **bad_wr) {
-    //     std::cout << "========= Pre post_send hook called 2 ========= " << std::endl;
-    // }
-
     // Global pre
     template<typename Tag, typename... Args>
     void pre(Tag, Contexts & /*ctx*/, Args...) {
-        // std::cout << "========= Calling " << HookTrait<Tag>::op_name << std::endl;
-
         // TODO: not efficient right now
         const IbvCallLog log{
                 .type = IbvCallLogType::Pre,
@@ -305,12 +297,6 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
     template<typename Tag, typename Ret, typename... Args>
     void post(Tag, Contexts &ctx, Ret /*ret*/, Args... args) {
         const auto &stats = ctx.get_stats<Tag>();
-        /*
-        std::cout << "  ========= Called " << HookTrait<Tag>::op_name
-                  << " (calls: " << stats.calls.load(std::memory_order_relaxed) << ", ctx: " << ctx.ctx << ")"
-                  << std::endl;
-        */
-
         // TODO: not efficient right now
         const IbvCallLog log{
                 .type = IbvCallLogType::Post,
@@ -327,7 +313,6 @@ private:
         {
             const auto &mr = m_registered_mrs.find(addr);
             if (mr != m_registered_mrs.end()) {
-                std::cout << "==== find_gpu_index found direct match" << std::endl;
                 // entry = (length, device_id)
                 const auto &entry = mr->second;
                 return std::get<1>(entry);
@@ -414,16 +399,15 @@ extern "C" ibv_mr *ibv_reg_mr_iova2(ibv_pd *pd, void *addr, size_t length, uint6
     // TODO: Somehow addr and iova are the same? Assert to verify in the future
     assert(addr == reinterpret_cast<decltype(addr)>(iova) && "TODO: addr and iova are not the same");
 
-    cudaPointerAttributes attrs;
+    cudaPointerAttributes attrs{};
     CUDA_CHECK(cudaPointerGetAttributes(&attrs, addr));
 
     // TODO: defer exit function caller
     // TODO: WHAT ABOUT HOST REGISTERED MEMORY
     if (attrs.type == cudaMemoryTypeUnregistered) {
+        std::cout << "Some sort of unregistered memory" << std::endl;
         return real_reg_mr_iova2(pd, addr, length, iova, access);
     }
-
-    // std::cout << "It is device memory!!!!! " << attrs.device << std::endl;
 
     // TODO: for future
     assert(cuda_dev == attrs.device && "TODO: Registered device memory on a different GPU device?");
