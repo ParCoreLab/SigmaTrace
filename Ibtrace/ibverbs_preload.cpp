@@ -4,7 +4,8 @@
 
 using namespace ibv_hook;
 
-using ActiveManager = DefaultHookManager;
+// using ActiveManager = DefaultHookManager;
+struct ActiveManager : HookManager<ActiveManager, post_send_tag> {};
 
 static ibv_context *(*real_open)(ibv_device *) = nullptr;
 
