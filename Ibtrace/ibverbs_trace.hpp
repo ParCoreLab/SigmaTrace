@@ -325,7 +325,8 @@ namespace ibv_hook {
                 NvtxDomainScopedRange r(nvtx3::event_attributes{nvtx_str, nvtx3::rgb{0, 255, 0}});
 
                 // TODO: might break if void return
-                ret = storage->template get_original<Tag>()(args...);
+                auto original = storage->template get_original<Tag>();
+                ret = original(args...);
             }
             // ================================================================
             const auto elapsed = std::chrono::steady_clock::now() - start;
