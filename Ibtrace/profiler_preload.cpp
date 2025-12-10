@@ -173,8 +173,7 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
         });
 
         this->register_pre<post_recv_tag>([this](ibv_qp *qp, ibv_recv_wr *wr, ibv_recv_wr **bad_wr) {
-            // assert(wr->num_sge == 1 && "TODO: More than 1 SGE found");
-            std::cout << "==== [ibv_post_recv] Pre Hook" << std::endl;
+            assert(wr->num_sge <= 1 && "TODO: More than 1 SGE found");
 
             // TODO: put this in a function (see ibv_post_send)
             for (const auto *wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
@@ -323,12 +322,16 @@ private:
             const auto [length, device_id] = mr_info;
 
             if (addr >= mr_addr && addr < (mr_addr + length)) {
-                std::cout << "==== find_gpu_index found range match" << std::endl;
                 return device_id;
             }
         }
 
-        std::cout << "==== find_gpu_index no match found" << std::endl;
+        // TODO: for debugging, remove later
+        {
+            cudaPointerAttributes attrs{};
+            CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<void *>(addr)));
+            assert(attrs.type == cudaMemoryTypeUnregistered && "CUDA Registered Address not previously registered");
+        }
 
         return -1;
     }
