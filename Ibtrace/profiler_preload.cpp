@@ -2,6 +2,8 @@
 #include <deque>
 #include <iostream>
 #include <map>
+#include <queue>
+#include <unordered_map>
 
 #include <dlfcn.h>
 
@@ -48,6 +50,7 @@ static const std::array<nvtx3::named_category, 8> NvtxGpuCategories = {{
         {107, "GPU 7"},
 }};
 
+// TODO: unused
 struct NvtxRDMACategories {
     static constexpr uint32_t SEND = 1;
     static constexpr uint32_t RECV = 2;
@@ -96,9 +99,22 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
     // NVTX
     // (QP, WR_ID, opcode_type) -> NvtxPendingOperation
     // (QP, WR_ID, is_send) -> NvtxPendingOperation
-    // TODO: not unordered_map?
+    struct PendingOpKey {
+        uint32_t qp_num;
+        uint64_t wr_id;
+        bool is_send_queue;
+
+        std::size_t operator()(const PendingOpKey &k) const {
+            return std::hash<uint32_t>()(k.qp_num) ^ (std::hash<uint64_t>()(k.wr_id) << 1) ^
+                   (std::hash<bool>()(k.is_send_queue) << 2);
+        }
+
+        bool operator==(const PendingOpKey &other) const {
+            return qp_num == other.qp_num && wr_id == other.wr_id && is_send_queue == other.is_send_queue;
+        }
+    };
     std::mutex m_nvtx_pending_ops_mutex;
-    std::map<std::tuple<uint64_t, uint64_t, bool>, NvtxPendingOperation> m_nvtx_pending_ops;
+    std::unordered_map<PendingOpKey, std::queue<NvtxPendingOperation>, PendingOpKey> m_nvtx_pending_ops;
 
     Profiler() {
         std::cout << "Profiler Initialized" << std::endl;
@@ -107,18 +123,15 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
         this->register_pre<post_send_tag>([this](ibv_qp *qp, ibv_send_wr *wr, ibv_send_wr **bad_wr) {
             // std::cout << "==== [ibv_post_send] Pre Hook" << std::endl;
 
+            // TODO: probably an ibv lib function for this
             for (const auto *wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
                 // TODO: Add total bytes for debug
                 for (auto sg_idx = 0; sg_idx < wr_it->num_sge; sg_idx++) {
                     const auto &sg = wr_it->sg_list[sg_idx];
                     m_total_send_bytes.fetch_add(sg.length, std::memory_order_relaxed);
 
-                    // TODO: probably an ibv lib function for this
-                    // TODO: only 1 WR and 1 SG for now
                     const auto sg_addr = sg.addr;
-
                     const auto gpu_idx = this->find_gpu_index(sg_addr);
-
                     const auto sg_length = static_cast<size_t>(sg.length);
 
                     // TODO: Build NVTX message
@@ -137,6 +150,10 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                             gpu_idx == -1 ? NvtxHostCategory : NvtxGpuCategories[gpu_idx],
                     };
 
+                    // TODO: pain
+                    // Upstream program won't ibv_poll_cq for non signaled sends, so maybe nvtx3::mark it here
+                    // if wr->send_flags & IBV_SEND_SIGNALED
+                    // TODO: very late initialization of unique_range
                     NvtxPendingOperation pending_op{
                             nvtx3::unique_range{nvtx_attr},
                             gpu_idx,
@@ -145,12 +162,14 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
 
                     std::lock_guard lock(m_nvtx_pending_ops_mutex);
 
-                    if (m_nvtx_pending_ops.contains({qp->qp_num, wr->wr_id, true})) {
+                    PendingOpKey pending_op_key{qp->qp_num, wr->wr_id, true};
+                    auto &queue_ref = m_nvtx_pending_ops[pending_op_key];
+                    if (!queue_ref.empty()) {
                         std::cout << "WARNING: Duplicate SEND wr_id=" << wr->wr_id << " on QP" << qp->qp_num
                                   << std::endl;
                     }
 
-                    m_nvtx_pending_ops.insert({{qp->qp_num, wr->wr_id, true}, std::move(pending_op)});
+                    queue_ref.push(std::move(pending_op));
                 }
             }
         });
@@ -185,11 +204,14 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
 
                 std::lock_guard lock(m_nvtx_pending_ops_mutex);
 
-                if (m_nvtx_pending_ops.contains({qp->qp_num, wr->wr_id, false})) {
+                PendingOpKey pending_op_key{qp->qp_num, wr->wr_id, false};
+                if (m_nvtx_pending_ops.contains(pending_op_key)) {
+                    // TODO: Duplicates SHOULD only appear on sends
                     std::cout << "WARNING: Duplicate RECV wr_id=" << wr->wr_id << " on QP" << qp->qp_num << std::endl;
+                    assert(false && "TODO: Duplicate RECV wr_id detected");
                 }
 
-                m_nvtx_pending_ops.insert({{qp->qp_num, wr->wr_id, false}, std::move(pending_op)});
+                m_nvtx_pending_ops[pending_op_key].push(std::move(pending_op));
             }
         });
 
@@ -201,25 +223,33 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                 const auto &wc_entry = wc[i];
                 const auto wr_id = wc_entry.wr_id;
 
-                // std::cout << "COMPLETED wc_entry.qp_num=" << wc_entry.qp_num << " wr_id=" << wr_id << std::endl;
-
                 bool is_send = (wc_entry.opcode != IBV_WC_RECV && wc_entry.opcode != IBV_WC_RECV_RDMA_WITH_IMM);
 
-                auto it = m_nvtx_pending_ops.find({wc_entry.qp_num, wr_id, is_send});
+                PendingOpKey pending_op_key{wc_entry.qp_num, wr_id, is_send};
+                auto it = m_nvtx_pending_ops.find(pending_op_key);
                 if (it == m_nvtx_pending_ops.end()) {
                     continue;
                 }
+
+                auto &queue_ref = it->second;
+                if (queue_ref.empty()) {
+                    continue;
+                }
+
+                // TODO: is this actually moving?
+                const auto &pending_op = std::move(queue_ref.front());
 
                 const auto status = wc_entry.status;
 
                 // Add a completion marker
                 char msg[128];
                 snprintf(msg, sizeof(msg), "COMPLETE QP%u wr_id=%lu status=%s GPU%d", wc_entry.qp_num, wr_id,
-                         ibv_wc_status_str(status), it->second.gpu_device);
-                // std::cout << msg << std::endl;
+                         ibv_wc_status_str(status), pending_op.gpu_device);
+                std::cout << msg << std::endl;
 
                 // TODO: Maybe lockless or per-type buckets
-                m_nvtx_pending_ops.erase(it);
+                // Empty the queue
+                std::remove_reference_t<decltype(queue_ref)>().swap(queue_ref);
             }
         });
     }
