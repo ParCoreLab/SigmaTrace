@@ -11,6 +11,15 @@
 
 constexpr size_t DATA_SIZE = 4096;
 
+__global__ void dummy_kernel(void *data, const size_t size) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        static_cast<float *>(data)[idx] = static_cast<float>(idx);
+    }
+
+    Clock_Block();
+}
+
 int main(int argc, char *argv[]) {
     setenv("NCCL_DEBUG", "TRACE", 1);
 
@@ -68,9 +77,35 @@ int main(int argc, char *argv[]) {
     std::vector<void *> send_buffs(num_devices);
     std::vector<void *> recv_buffs(num_devices);
 
+    auto memory_type_to_string = [](cudaMemoryType type) -> const char * {
+        switch (type) {
+            case cudaMemoryTypeUnregistered:
+                return "cudaMemoryTypeUnregistered";
+            case cudaMemoryTypeHost:
+                return "cudaMemoryTypeHost";
+            case cudaMemoryTypeDevice:
+                return "cudaMemoryTypeDevice";
+            case cudaMemoryTypeManaged:
+                return "cudaMemoryTypeManaged";
+            default:
+                return "Unknown";
+        }
+    };
+
     for (int i = 0; i < num_devices; i++) {
-        NCCL_MALLOC(&send_buffs[i], DATA_SIZE * sizeof(float));
-        NCCL_MALLOC(&recv_buffs[i], DATA_SIZE * sizeof(float));
+        auto send_buff = &send_buffs[i];
+        auto recv_buff = &recv_buffs[i];
+
+        NCCL_MALLOC(send_buff, DATA_SIZE * sizeof(float));
+        NCCL_MALLOC(recv_buff, DATA_SIZE * sizeof(float));
+
+        cudaPointerAttributes send_attrs{};
+        cudaPointerAttributes recv_attrs{};
+        CUDA_CHECK(cudaPointerGetAttributes(&send_attrs, *send_buff));
+        CUDA_CHECK(cudaPointerGetAttributes(&recv_attrs, *recv_buff));
+
+        std::cout << "Send buffer on device " << i << ": " << memory_type_to_string(send_attrs.type) << std::endl;
+        std::cout << "Recv buffer on device " << i << ": " << memory_type_to_string(recv_attrs.type) << std::endl;
     }
 
     for (auto _ = 0; _ < 1; _++) {
@@ -83,6 +118,14 @@ int main(int argc, char *argv[]) {
         NCCL_CHECK(ncclGroupEnd());
 
         std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    std::cout << "Launching dummy kernel" << std::endl;
+    for (int i = 0; i < num_devices; i++) {
+        cudaSetDevice(i);
+        CUDA_CHECK(cudaDeviceSynchronize());
+        dummy_kernel<<<(DATA_SIZE + 255) / 256, 256>>>(send_buffs[i], DATA_SIZE);
+        CUDA_CHECK(cudaDeviceSynchronize());
     }
 
     for (const auto nccl_comm: nccl_comms) {
