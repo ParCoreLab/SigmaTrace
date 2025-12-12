@@ -14,6 +14,13 @@
 
 #include "ibverbs_trace.hpp"
 
+// TODO: events
+#include "EventRecorder.hpp"
+#include "IbverbsEvents.hpp"
+
+using Events::EventRecorder;
+using namespace Events::Ibv;
+
 // TODO
 #ifdef ibv_reg_mr
 #undef ibv_reg_mr
@@ -187,6 +194,11 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                     snprintf(msg, sizeof(msg), "RECV QP%u GPU%d wr_id=%lu", qp->qp_num, gpu_idx, wr->wr_id);
                 }
                 std::cout << msg << std::endl;
+
+                // TODO: debugging
+                {
+                    EventRecorder::instance().Record<SimpleEvent>({.hello = wr_it->wr_id});
+                }
 
                 const nvtx3::event_attributes nvtx_attr{
                         nvtx3::message(msg),
