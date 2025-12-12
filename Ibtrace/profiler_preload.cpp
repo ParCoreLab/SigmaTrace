@@ -148,7 +148,7 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                         snprintf(msg, sizeof(msg), "SEND QP%u GPU%d wr_id=%lu len=%zu", qp->qp_num, gpu_idx, wr->wr_id,
                                  sg_length);
                     }
-                    std::cout << msg << std::endl;
+                    // std::cout << msg << std::endl;
 
                     const nvtx3::event_attributes nvtx_attr{
                             nvtx3::message(msg),
@@ -170,8 +170,8 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                     PendingOpKey pending_op_key{qp->qp_num, wr->wr_id, true};
                     auto &queue_ref = m_nvtx_pending_ops[pending_op_key];
                     if (!queue_ref.empty()) {
-                        std::cout << "WARNING: Duplicate SEND wr_id=" << wr->wr_id << " on QP" << qp->qp_num
-                                  << std::endl;
+                        // std::cout << "WARNING: Duplicate SEND wr_id=" << wr->wr_id << " on QP" << qp->qp_num
+                        // << std::endl;
                     }
 
                     queue_ref.push(std::move(pending_op));
@@ -193,7 +193,7 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                 } else {
                     snprintf(msg, sizeof(msg), "RECV QP%u GPU%d wr_id=%lu", qp->qp_num, gpu_idx, wr->wr_id);
                 }
-                std::cout << msg << std::endl;
+                // std::cout << msg << std::endl;
 
                 // TODO: debugging
                 {
@@ -216,7 +216,8 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                 PendingOpKey pending_op_key{qp->qp_num, wr->wr_id, false};
                 if (m_nvtx_pending_ops.contains(pending_op_key)) {
                     // TODO: Duplicates SHOULD only appear on sends
-                    std::cout << "WARNING: Duplicate RECV wr_id=" << wr->wr_id << " on QP" << qp->qp_num << std::endl;
+                    // std::cout << "WARNING: Duplicate RECV wr_id=" << wr->wr_id << " on QP" << qp->qp_num <<
+                    // std::endl;
                     assert(false && "TODO: Duplicate RECV wr_id detected");
                 }
 
@@ -254,7 +255,7 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
                 char msg[128];
                 snprintf(msg, sizeof(msg), "COMPLETE QP%u wr_id=%lu status=%s GPU%d", wc_entry.qp_num, wr_id,
                          ibv_wc_status_str(status), pending_op.gpu_device);
-                std::cout << msg << std::endl;
+                // std::cout << msg << std::endl;
 
                 // TODO: Maybe lockless or per-type buckets
                 // Empty the queue
@@ -403,7 +404,7 @@ extern "C" ibv_mr *ibv_reg_mr_iova2(ibv_pd *pd, void *addr, size_t length, uint6
     // TODO: defer exit function caller
     // TODO: WHAT ABOUT HOST REGISTERED MEMORY
     if (attrs.type == cudaMemoryTypeUnregistered) {
-        std::cout << "Some sort of unregistered memory" << std::endl;
+        // std::cout << "Some sort of unregistered memory" << std::endl;
         return real_reg_mr_iova2(pd, addr, length, iova, access);
     }
 

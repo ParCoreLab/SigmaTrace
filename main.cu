@@ -21,7 +21,7 @@ __global__ void dummy_kernel(void *data, const size_t size) {
 }
 
 int main(int argc, char *argv[]) {
-    setenv("NCCL_DEBUG", "TRACE", 1);
+    // setenv("NCCL_DEBUG", "TRACE", 1);
 
     setenv("NCCL_IB_HCA", "mlx5_0", 1);
     setenv("NCCL_IB_DISABLE", "0", 1);
