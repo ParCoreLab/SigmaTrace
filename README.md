@@ -39,6 +39,9 @@ cmake -S .. -DBUILD_NCCL=OFF -DBUILD_RDMA_CORE=OFF
 make -j
 ```
 
+### Note:
+First run with locally compiled NCCL may take longer than what seems normal to start
+
 ### Dependencies:
 - CMAKE 4.0+ (gnumake only, ninja may break)
 - CUDA Toolkit 13.0+
