@@ -11,7 +11,6 @@ target_sources(Events INTERFACE
 
 target_include_directories(Events INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
 # Require C++20 for concepts
