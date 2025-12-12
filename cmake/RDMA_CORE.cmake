@@ -8,7 +8,7 @@ set(MLX5_LIBRARY_PATH "")
 if (BUILD_RDMA_CORE)
     include(ExternalProject)
     ExternalProject_Add(rdma-core
-            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rdma-core"
+            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Imports/rdma-core"
             BINARY_DIR "${CMAKE_BINARY_DIR}/rdma-core"
             CMAKE_ARGS
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
@@ -21,6 +21,8 @@ if (BUILD_RDMA_CORE)
             BUILD_BYPRODUCTS
             "${CMAKE_BINARY_DIR}/rdma-core/lib/libibverbs.so"
             "${CMAKE_BINARY_DIR}/rdma-core/lib/libmlx5.so"
+
+            BUILD_ALWAYS ON
     )
 
     ExternalProject_Get_Property(rdma-core BINARY_DIR)

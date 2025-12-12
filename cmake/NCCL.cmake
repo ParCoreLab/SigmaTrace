@@ -9,7 +9,7 @@ if (BUILD_NCCL)
 
     include(ExternalProject)
     ExternalProject_Add(nccl_external
-            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/nccl"
+            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Imports/nccl"
             BINARY_DIR "${CMAKE_BINARY_DIR}/nccl-build"
             CMAKE_ARGS
             -DCMAKE_BUILD_TYPE=Release
@@ -26,13 +26,15 @@ if (BUILD_NCCL)
             DEPENDS ${NCCL_DEPENDS_LIST}
             BUILD_BYPRODUCTS
             "${CMAKE_BINARY_DIR}/nccl-build/lib/libnccl.so"
+
+            BUILD_ALWAYS ON
     )
 
     add_library(nccl SHARED IMPORTED)
     ExternalProject_Get_Property(nccl_external BINARY_DIR)
     set_target_properties(nccl PROPERTIES
             IMPORTED_LOCATION "${BINARY_DIR}/lib/libnccl.so"
-            INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/nccl/src/include"
+            INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/Imports/nccl/src/include"
     )
     # Ensure nccl_external is built before we try to link 'nccl'
     add_dependencies(nccl nccl_external)
