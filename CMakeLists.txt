@@ -30,6 +30,9 @@ target_link_libraries(Thing PRIVATE cuda_helper)
 target_link_libraries(Thing PRIVATE ibverbs)
 target_link_libraries(Thing PRIVATE nccl)
 
+# Events library
+add_subdirectory(Events)
+
 # Trace library
 add_subdirectory(Ibtrace)
 
