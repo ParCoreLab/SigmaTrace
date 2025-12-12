@@ -1,11 +1,21 @@
-#define _GNU_SOURCE
 #include <dlfcn.h>
+
 #include "ibverbs_trace.hpp"
 
 using namespace ibv_hook;
 
 // using ActiveManager = DefaultHookManager;
-struct ActiveManager : HookManager<ActiveManager, post_send_tag> {};
+struct ActiveManager : HookManager<ActiveManager, post_send_tag> {
+    template<typename Tag, typename... Args>
+    void pre(Tag, Contexts &, Args...) {
+        std::cout << "[ibv_hook] Pre " << HookTrait<Tag>::op_name << std::endl;
+    }
+
+    template<typename Tag, typename Ret, typename... Args>
+    void post(Tag, Ret ret, Contexts &, Args...) {
+        std::cout << "[ibv_hook] Post " << HookTrait<Tag>::op_name << "(" << ret << ")" << std::endl;
+    }
+};
 
 static ibv_context *(*real_open)(ibv_device *) = nullptr;
 

@@ -12,7 +12,7 @@
 constexpr size_t DATA_SIZE = 4096;
 
 __global__ void dummy_kernel(void *data, const size_t size) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
         static_cast<float *>(data)[idx] = static_cast<float>(idx);
     }

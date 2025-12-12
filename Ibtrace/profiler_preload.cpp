@@ -253,29 +253,12 @@ struct Profiler : HookManager<Profiler, post_send_tag, post_recv_tag, poll_cq_ta
 
     virtual ~Profiler() {
         std::cout << "Profiler Destroyed" << std::endl;
-        for (const auto &log: m_call_logs) {
-            std::string type_str;
-            switch (log.type) {
-                case IbvCallLogType::Pre:
-                    type_str = "Pre";
-                    break;
-                case IbvCallLogType::Post:
-                    type_str = "Post";
-                    break;
-                default:
-                    type_str = "None";
-                    break;
-            }
 
-            // std::cout << "[" << type_str << "] " << log.op_name << " at "
-            //           << std::chrono::duration_cast<std::chrono::microseconds>(log.time.time_since_epoch()).count()
-            //           << " us" << std::endl;
-        }
+        // auto &thread_buffers = Events::ThreadBufferRegistry::instance().get_thread_buffers();
 
-        std::cout << "Total logs: " << m_call_logs.size() << std::endl;
-
-        // TODO: debug test
-        std::cout << "\n\n\n === Total send bytes: " << m_total_send_bytes.load(std::memory_order_relaxed) << std::endl;
+        // thread_buffers.for_each_buffer([](auto &&...) {
+        // std::cout << "Thread buffer stuff" << std::endl;
+        // });
     }
 
     // Global pre
