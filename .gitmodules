@@ -5,3 +5,7 @@
 [submodule "rdma-core"]
 	path = Imports/rdma-core
 	url = https://github.com/linux-rdma/rdma-core.git
+[submodule "Imports/nvshmem"]
+	path = Imports/nvshmem
+	url = https://github.com/NVIDIA/nvshmem.git
+	tag = v3.4.5-0
