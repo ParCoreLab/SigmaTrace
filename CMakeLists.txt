@@ -12,10 +12,17 @@ project(Thing LANGUAGES C CXX CUDA)
 # CUDA Toolkit
 find_package(CUDAToolkit REQUIRED)
 
+# This is so we don't have to LD_LIBRARY_PATH the cudart library location
+# May break ld for other dependencies
+function(set_cuda_rpath target)
+    set_target_properties(${target} PROPERTIES LINK_FLAGS "-Wl,-rpath,${CUDAToolkit_LIBRARY_DIR}")
+endfunction()
+
 # Dependencies
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(RDMA_CORE)
 include(NCCL)
+include(NVSHMEM)
 
 # Helper Library
 add_library(cuda_helper INTERFACE)
@@ -29,6 +36,16 @@ target_link_libraries(Thing PRIVATE cuda_helper)
 # Link Dependencies defined in modules
 target_link_libraries(Thing PRIVATE ibverbs)
 target_link_libraries(Thing PRIVATE nccl)
+
+add_executable(ThingNVSHMEM main_nvshmem.cu)
+set_cuda_rpath(ThingNVSHMEM)
+
+set_target_properties(ThingNVSHMEM PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries(ThingNVSHMEM PRIVATE cuda_helper)
+target_link_libraries(ThingNVSHMEM PRIVATE CUDA::cudart)
+target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_host)
+target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_device)
 
 # Events library
 add_subdirectory(Events)
