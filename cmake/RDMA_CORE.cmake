@@ -17,10 +17,13 @@ if (BUILD_RDMA_CORE)
             -DENABLE_RESOLVE_NEIGH=0
             # Disabled for faster build
             -DNO_MAN_PAGES=1
+            # TODO: this will probably be useful in the future
+            -DNO_PYVERBS=1
             INSTALL_COMMAND ""
             BUILD_BYPRODUCTS
             "${CMAKE_BINARY_DIR}/rdma-core/lib/libibverbs.so"
             "${CMAKE_BINARY_DIR}/rdma-core/lib/libmlx5.so"
+            "${CMAKE_BINARY_DIR}/rdma-core/lib/librdmacm.so"
 
             BUILD_ALWAYS ON
     )
@@ -39,6 +42,10 @@ if (BUILD_RDMA_CORE)
             COMMAND ${CMAKE_COMMAND} --build "${RDMA_BINARY_DIR}"
             DEPENDS rdma-core
     )
+
+    # TODO: unsure if this is proper
+    set(CMAKE_DISABLE_FIND_PACKAGE_ibverbs TRUE)
+    set(CMAKE_DISABLE_FIND_PACKAGE_mlx5 TRUE)
 else ()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(RDMA REQUIRED libibverbs libmlx5)
@@ -66,13 +73,20 @@ else ()
 endif ()
 
 # Imported Targets for RDMA
-add_library(ibverbs UNKNOWN IMPORTED)
+add_library(ibverbs SHARED IMPORTED GLOBAL)
 set_target_properties(ibverbs PROPERTIES
         IMPORTED_LOCATION "${IBVERBS_LIBRARY_PATH}"
         INTERFACE_INCLUDE_DIRECTORIES "${RDMA_INCLUDE_DIR}"
 )
 
-add_library(mlx5 UNKNOWN IMPORTED)
+# NCCL looks for verbs
+add_library(verbs SHARED IMPORTED GLOBAL)
+set_target_properties(verbs PROPERTIES
+        IMPORTED_LOCATION "${IBVERBS_LIBRARY_PATH}"
+        INTERFACE_INCLUDE_DIRECTORIES "${RDMA_INCLUDE_DIR}"
+)
+
+add_library(mlx5 SHARED IMPORTED GLOBAL)
 set_target_properties(mlx5 PROPERTIES
         IMPORTED_LOCATION "${MLX5_LIBRARY_PATH}"
         INTERFACE_INCLUDE_DIRECTORIES "${RDMA_INCLUDE_DIR}"
@@ -80,5 +94,6 @@ set_target_properties(mlx5 PROPERTIES
 
 if (BUILD_RDMA_CORE)
     add_dependencies(ibverbs rdma-core)
+    add_dependencies(verbs rdma-core)
     add_dependencies(mlx5 rdma-core)
 endif ()
