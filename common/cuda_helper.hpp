@@ -3,9 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-// TODO: maybe don't include these
 #include <cuda_runtime.h>
-#include <nccl.h>
 
 #include "nvtx3/nvToolsExt.h"
 
@@ -18,6 +16,7 @@
         }                                                                                                              \
     } while (0)
 
+#ifdef NCCL_MINOR
 #define NCCL_CHECK(cmd)                                                                                                \
     do {                                                                                                               \
         ncclResult_t res = cmd;                                                                                        \
@@ -32,7 +31,9 @@
 #else
 #define NCCL_MALLOC(addr, size) CUDA_CHECK(cudaMalloc((addr), (size)))
 #endif
+#endif
 
+#ifdef NVTX_VERSION
 const uint32_t colors[] = {0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff};
 const int num_colors = sizeof(colors) / sizeof(uint32_t);
 
@@ -51,6 +52,7 @@ const int num_colors = sizeof(colors) / sizeof(uint32_t);
     }
 
 #define POP_RANGE nvtxRangePop();
+#endif
 
 // From cuda samples
 // This subroutine does no real work but runs for at least the specified number
