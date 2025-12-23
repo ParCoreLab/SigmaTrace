@@ -42,8 +42,14 @@ set_cuda_rpath(ThingNVSHMEM)
 
 set_target_properties(ThingNVSHMEM PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
+target_compile_options(ThingNVSHMEM PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
+        --generate-line-info
+        -g
+        >)
+
 target_link_libraries(ThingNVSHMEM PRIVATE cuda_helper)
 target_link_libraries(ThingNVSHMEM PRIVATE CUDA::cudart)
+target_link_libraries(ThingNVSHMEM PRIVATE CUDA::nvml)
 target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_host)
 target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_device)
 

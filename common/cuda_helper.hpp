@@ -4,16 +4,38 @@
 #include <cstdlib>
 
 // TODO: maybe don't include these
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <nccl.h>
+#include <nvml.h>
 
 #include "nvtx3/nvToolsExt.h"
+
+#define CU_CHECK(cmd)                                                                                                  \
+    do {                                                                                                               \
+        CUresult err = cmd;                                                                                            \
+        if (err != CUDA_SUCCESS) {                                                                                     \
+            const char *str;                                                                                           \
+            cuGetErrorString(err, &str);                                                                               \
+            std::printf("CU error %s:%d '%s'\n", __FILE__, __LINE__, str);                                             \
+            std::exit(EXIT_FAILURE);                                                                                   \
+        }                                                                                                              \
+    } while (0)
 
 #define CUDA_CHECK(cmd)                                                                                                \
     do {                                                                                                               \
         cudaError_t err = cmd;                                                                                         \
         if (err != cudaSuccess) {                                                                                      \
             std::printf("CUDA error %s:%d '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                       \
+            std::exit(EXIT_FAILURE);                                                                                   \
+        }                                                                                                              \
+    } while (0)
+
+#define NVML_CHECK(cmd)                                                                                                \
+    do {                                                                                                               \
+        nvmlReturn_t err = cmd;                                                                                        \
+        if (err != NVML_SUCCESS) {                                                                                     \
+            std::printf("NVML error %s:%d '%s'\n", __FILE__, __LINE__, nvmlErrorString(err));                          \
             std::exit(EXIT_FAILURE);                                                                                   \
         }                                                                                                              \
     } while (0)
