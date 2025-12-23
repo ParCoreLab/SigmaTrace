@@ -59,6 +59,9 @@ add_subdirectory(Events)
 # Trace library
 add_subdirectory(Ibtrace)
 
+# Sample apps
+add_subdirectory(Apps)
+
 # Ensure Thing builds *after* the trace libraries are ready, if it depends on them or if they need to exist.
 #add_dependencies(Thing IbtraceTest)
 #add_dependencies(Thing ProfilerTrace)
