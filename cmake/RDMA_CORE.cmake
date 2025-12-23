@@ -25,7 +25,7 @@ if (BUILD_RDMA_CORE)
             "${CMAKE_BINARY_DIR}/rdma-core/lib/libmlx5.so"
             "${CMAKE_BINARY_DIR}/rdma-core/lib/librdmacm.so"
 
-            BUILD_ALWAYS ON
+            BUILD_ALWAYS OFF
     )
 
     ExternalProject_Get_Property(rdma-core BINARY_DIR)

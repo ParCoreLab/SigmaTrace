@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
 
     setenv("NCCL_DEBUG_SUBSYS", "INIT,NET", 1);
 
-    setenv("NVSHMEM_NVTX", "common", 1);
+    setenv("NCCL_NVTX", "common", 1);
 
     int available_devices = 0;
     CUDA_CHECK(cudaGetDeviceCount(&available_devices));

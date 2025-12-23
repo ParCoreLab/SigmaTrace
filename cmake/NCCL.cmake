@@ -31,7 +31,7 @@ if (BUILD_NCCL)
             BUILD_BYPRODUCTS
             "${CMAKE_BINARY_DIR}/nccl-build/lib/libnccl.so"
 
-            BUILD_ALWAYS ON
+            BUILD_ALWAYS OFF
     )
 
     add_library(nccl SHARED IMPORTED)
