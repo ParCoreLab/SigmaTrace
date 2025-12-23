@@ -89,6 +89,6 @@ if (BUILD_NVSHMEM)
     #        INTERFACE_LINK_LIBRARIES "${_nvshmem_interface_libs}"
     #)
 else ()
-    # TODO: untested
-    find_package(NVSHMEM REQUIRED HINTS ${NCCL_ROOT})
+    # TODO: Version might break it
+    find_package(NVSHMEM 3 REQUIRED PATHS "${NVSHMEM_ROOT}")
 endif ()
