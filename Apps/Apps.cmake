@@ -1,6 +1,6 @@
 # TODO: add to a helper module
 function(add_nvshmem_target target)
-    add_executable(${target} "${target}.cu")
+    add_executable(${target} EXCLUDE_FROM_ALL "${target}.cu")
     set_cuda_rpath(${target})
 
     set_target_properties(${target} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
