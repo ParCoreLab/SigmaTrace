@@ -93,5 +93,6 @@ if (BUILD_NVSHMEM)
     #)
 else ()
     # TODO: Version might break it
-    find_package(NVSHMEM 3 REQUIRED PATHS "${NVSHMEM_ROOT}")
+    # Bit of a hack to get NVSHMEM from nvhpc toolkit
+    find_package(NVSHMEM REQUIRED PATHS "${NVSHMEM_ROOT}" "${CUDAToolkit_LIBRARY_ROOT}/../../comm_libs/nvshmem")
 endif ()
