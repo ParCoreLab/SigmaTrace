@@ -12,10 +12,13 @@ if (BUILD_NVSHMEM)
             SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Imports/nvshmem"
             BINARY_DIR "${CMAKE_BINARY_DIR}/nvshmem-build"
             CMAKE_ARGS
+            # Performance killers
+            # Release build also kills compile time
+            -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_VERBOSE_MAKEFILE=ON
-            -DCMAKE_BUILD_TYPE=Debug
+            -DNVSHMEM_DEBUG=OFF
             -DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}
-            -DCUDA_HOME=${CUDAToolkit_ROOT}
+            -DCUDA_HOME=${CUDAToolkit_LIBRARY_ROOT}
             # -DNCCL_HOME=                           # TODO
             -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}
             -DNVSHMEM_PREFIX=${CMAKE_BINARY_DIR}/nvshmem-build
@@ -29,21 +32,21 @@ if (BUILD_NVSHMEM)
             -DNVSHMEM_BUILD_RPM_PACKAGE=OFF
             -DNVSHMEM_BUILD_TGZ_PACKAGE=OFF           # TODO
             -DNVSHMEM_BUILD_TXZ_PACKAGE=OFF           # TODO
-            -DNVSHMEM_DEBUG=ON
             -DNVSHMEM_IBDEVX_SUPPORT=ON
             -DNVSHMEM_IBGDA_SUPPORT=ON
             -DNVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY=ON    # TODO
             -DNVSHMEM_DEVEL=OFF
-            -DNVSHMEM_ENABLE_ALL_DEVICE_INLINING=ON # TODO
+            # Compile time killer
+            -DNVSHMEM_ENABLE_ALL_DEVICE_INLINING=OFF  # TODO
             # -DNVSHMEM_GPU_COLL_USE_LDST=ON          # TODO
-            -DNVSHMEM_TRACE=ON
+            -DNVSHMEM_TRACE=OFF
             -DNVSHMEM_USE_GDRCOPY=ON                  # TODO
             -DNVSHMEM_USE_MLX5DV=ON
             -DNVSHMEM_MPI_SUPPORT=ON
             -DNVSHMEM_PMIX_SUPPORT=OFF
             -DNVSHMEM_UCX_SUPPORT=OFF                 # TODO
             -DNVSHMEM_NVTX=ON
-            -DNVSHMEM_VERBOSE=OFF                     # PTX compiler output
+            -DNVSHMEM_VERBOSE=ON                     # PTX compiler output
             -DNVSHMEM_USE_NCCL=OFF
             -DVERBS_LIBRARY=${IBVERBS_LIBRARY_PATH}
             -DMLX5_lib=${MLX5_LIBRARY_PATH}
