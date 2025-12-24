@@ -1,6 +1,6 @@
 #include <cassert>
-#include <sys/wait.h>
 #include <iostream>
+#include <sys/wait.h>
 #include <thread>
 #include <vector>
 
