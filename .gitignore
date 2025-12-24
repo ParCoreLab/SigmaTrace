@@ -4,3 +4,6 @@ build/
 cmake-build-*/
 
 libibprof/
+
+# NVBIT is downloaded during configure/build
+Imports/nvbit*

@@ -26,6 +26,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(RDMA_CORE)
 include(NCCL)
 include(NVSHMEM)
+include(NVBIT)
 
 # Helper Library
 add_library(cuda_helper INTERFACE)
@@ -64,6 +65,7 @@ add_subdirectory(Ibtrace)
 
 # CUDA Trace libraries
 add_subdirectory(CUDATrace)
+add_dependencies(Thing NvbitMemoryTracker)
 add_dependencies(Thing SanitizerMemoryTracker)
 
 # Sample apps
