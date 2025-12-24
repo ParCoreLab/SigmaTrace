@@ -59,8 +59,12 @@ target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_device)
 # Events library
 add_subdirectory(Events)
 
-# Trace library
+# IB Trace library
 add_subdirectory(Ibtrace)
+
+# CUDA Trace libraries
+add_subdirectory(CUDATrace)
+add_dependencies(Thing SanitizerMemoryTracker)
 
 # Sample apps
 add_subdirectory(Apps)
