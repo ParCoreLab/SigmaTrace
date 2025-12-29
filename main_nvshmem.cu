@@ -12,15 +12,45 @@
 
 #include "cuda_helper.hpp"
 
-__global__ void simple_shift(int *destination) {
-    int mype = nvshmem_my_pe();
-    int npes = nvshmem_n_pes();
-    int peer = (mype + 1) % npes;
+constexpr auto NumElements = 8192;
+constexpr auto ThreadsPerBlock = 1024;
+constexpr auto NumBlocks = NumElements / ThreadsPerBlock;
+static_assert(NumElements % ThreadsPerBlock == 0, "NumElements must be multiple of ThreadsPerBlock");
 
-    nvshmem_int_p(destination, mype, peer);
+constexpr auto NumRepeats = 1000;
+constexpr auto ReferenceTimeNs = 31262269; // nanoseconds; it was revealed to me in a dream
+
+__global__ void set_and_shift_kernel(float *send_data, float *recv_data, int num_elems, int mype, int npes) {
+    int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    /* set the corresponding element of send_data */
+    if (thread_idx < num_elems) {
+        send_data[thread_idx] = mype;
+    }
+
+    // asm volatile("st.release.gpu.global.L1::no_allocate.b32 [%0], %1;" : : "l"((uint32_t*)0), "r"(0));
+    // asm volatile("st.release.gpu.global.L1::no_allocate.b64 [%0], %1;" : : "l"((uint64_t*)0), "l"((uint64_t)0));
+
+    int peer = (mype + 1) % npes;
+    /* Every thread in block 0 calls nvshmemx_float_put_block. Alternatively,
+       every thread can call shmem_float_p, but shmem_float_p has a disadvantage
+       that when the destination GPU is connected via IB, there will be one rma
+       message for every single element which can be detrimental to performance.
+       And the disadvantage with shmem_float_put is that when the destination GPU is p2p
+       connected, it cannot leverage multiple threads to copy the data to the destination
+       GPU. */
+    int block_offset = blockIdx.x * blockDim.x;
+
+    // All threads in a block call the API with the same arguments
+    auto *dest = recv_data + block_offset;
+    const auto *src = send_data + block_offset;
+    nvshmemx_float_put_block(dest, src, min(blockDim.x, num_elems - block_offset), peer);
 }
 
+// NVSHMEM program start point
 void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices) {
+    // ================================================================
+    // NVSHMEM Initialization
+    // ================================================================
     std::cout << "=== Initializing " << device_id << std::endl;
 
     CUDA_CHECK(cudaSetDevice(device_id));
@@ -37,15 +67,45 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
     std::cout << "=== Hello from PE " << my_pe << " of " << n_pes << std::endl;
 
     nvshmem_barrier_all();
+    // ================================================================
 
-    auto *destination = static_cast<int *>(nvshmem_malloc(sizeof(int)));
-    simple_shift<<<1, 1, 0, nullptr>>>(destination);
+    // ================================================================
+    // Kernel prep and launch
+    // ================================================================c
+    auto *send_data = static_cast<float *>(nvshmem_malloc(sizeof(float) * NumElements));
+    auto *recv_data = static_cast<float *>(nvshmem_malloc(sizeof(float) * NumElements));
+    assert(send_data != nullptr && recv_data != nullptr);
+
+    // Warmup
+    set_and_shift_kernel<<<NumBlocks, ThreadsPerBlock>>>(send_data, recv_data, NumElements, my_pe, n_pes);
+
+    const auto start = std::chrono::high_resolution_clock::now();
+    for (auto _ = 0; _ < NumRepeats; _++) {
+        set_and_shift_kernel<<<NumBlocks, ThreadsPerBlock>>>(send_data, recv_data, NumElements, my_pe, n_pes);
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+    nvshmem_barrier_all();
+    const auto end = std::chrono::high_resolution_clock::now();
+
+    const auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    const auto performance_delta =
+            static_cast<double>(duration - ReferenceTimeNs) / static_cast<double>(ReferenceTimeNs) * 100.0;
+
+    std::cout << "=== PE " << my_pe << " took " << duration << " ns ";
+    std::cout << "(" << std::showpos << (duration - ReferenceTimeNs) << "ns/" << performance_delta << "%)" << std::endl;
+
     nvshmem_barrier_all();
 
-    int msg;
-    CUDA_CHECK(cudaMemcpyAsync(&msg, destination, sizeof(int), cudaMemcpyDeviceToHost, nullptr));
+    // Data validation
+    std::array<float, NumElements> recv_data_host;
+    CUDA_CHECK(cudaMemcpy(recv_data_host.data(), recv_data, NumElements * sizeof(float), cudaMemcpyDefault));
+    const auto ref = (my_pe - 1 + n_pes) % n_pes;
+    for (auto i = 0; i < NumElements; ++i) {
+        assert(recv_data_host[i] == ref && "Host data validation failed");
+    }
 
-    std::cout << "=== PE " << my_pe << " received " << msg << std::endl;
+    nvshmem_free(send_data);
+    nvshmem_free(recv_data);
 
     nvshmem_finalize();
 }
@@ -119,7 +179,7 @@ int main(int argc, char *argv[]) {
     // Can't initialize cuda here if we're forking
     NVML_CHECK(nvmlInit());
 
-    unsigned int available_devices;
+    unsigned int available_devices{};
     NVML_CHECK(nvmlDeviceGetCount(&available_devices));
 
     NVML_CHECK(nvmlShutdown());
@@ -138,7 +198,7 @@ int main(int argc, char *argv[]) {
 
     std::cout << "Using " << num_devices << " of " << available_devices << " GPUs" << std::endl;
 
-    // TODO: is this ok? The process calling this won't be initialiedzedinitializing nvshmeminitializing nvshmem
+    // TODO: is this ok? The process calling this won't be initializing nvshmem
     nvshmemx_uniqueid_t id = NVSHMEMX_UNIQUEID_INITIALIZER;
     nvshmemx_get_uniqueid(&id);
 
