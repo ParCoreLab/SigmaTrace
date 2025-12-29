@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
     // TODO: Set to disable DMAbuf in any IB based remote transport.
     // Logs say: The system does not support registering the NIC control buffers with DMABUF.
     // Fallback to use either nv_peer_mem or nvidia_peermem
-    // setenv("NVSHMEM_IB_DISABLE_DMABUF", "1", 1);
+    setenv("NVSHMEM_IB_DISABLE_DMABUF", "1", 1);
 
     // TODO: Set to enable multiple NICs per PE if available.
     // setenv("NVSHMEM_IBGDA_ENABLE_MULTI_PORT", "1", 1);

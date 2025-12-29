@@ -18,6 +18,9 @@
 #include "EventRecorder.hpp"
 #include "IbverbsEvents.hpp"
 
+// Helper dl_iterate_phdr walker
+extern void *find_symbol_in_lib(const char *lib_pattern, const char *symbol_name);
+
 using Events::EventRecorder;
 using namespace Events::Ibv;
 
@@ -346,10 +349,17 @@ static ibv_context *(*real_open)(ibv_device *) = nullptr;
 static int (*real_close)(ibv_context *) = nullptr;
 static ibv_mr *(*real_reg_mr)(ibv_pd *, void *, size_t, int) = nullptr;
 static int (*real_dereg_mr)(ibv_mr *mr) = nullptr;
-static ibv_mr *(*real_reg_mr_iova2)(ibv_pd *pd, void *addr, size_t length, uint64_t iova,
-                                    unsigned int access) = nullptr;
+static ibv_mr *(*real_reg_mr_iova2)(ibv_pd *, void *, size_t, uint64_t, unsigned int) = nullptr;
+static ibv_mr *(*real_reg_dmabuf_mr)(ibv_pd *, uint64_t, size_t, uint64_t, int, int) = nullptr;
+
+// Store the real dlsym/dlvsym
+static void *(*real_dlsym)(void *, const char *) = nullptr;
+static void *(*real_dlvsym)(void *, const char *, const char *) = nullptr;
 
 static void __attribute__((constructor)) init() {
+    real_dlsym = reinterpret_cast<decltype(real_dlsym)>(find_symbol_in_lib("libc", "dlsym"));
+    real_dlvsym = reinterpret_cast<decltype(real_dlvsym)>(find_symbol_in_lib("libc", "dlvsym"));
+
     Profiler::instance();
     std::cout << "[ibv_hook] Loaded\n";
 }
@@ -357,6 +367,59 @@ static void __attribute__((constructor)) init() {
 static void __attribute__((destructor)) finalize() {
     std::cout << "[ibv_hook] Unloaded\n";
     Profiler::instance().print_stats();
+}
+
+// TODO
+#define REGISTER_DLSYM_MAP(name, real_func)                                                                            \
+    {                                                                                                                  \
+        #name, { reinterpret_cast<void *>(name), reinterpret_cast<void **>(&real_func) }                               \
+    }
+
+// Map of <ibv func name -> {hook function ptr, real function ptr}>
+std::map<std::string, std::tuple<void *, void **>> DlsymMap = {
+        REGISTER_DLSYM_MAP(ibv_open_device, real_open),
+        REGISTER_DLSYM_MAP(ibv_close_device, real_close),
+        REGISTER_DLSYM_MAP(ibv_reg_mr, real_reg_mr),
+        REGISTER_DLSYM_MAP(ibv_dereg_mr, real_dereg_mr),
+};
+
+// Intercept dlsym
+extern "C" void *dlsym(void *handle, const char *symbol) {
+    assert(real_dlsym);
+
+    const auto &dlsym_entry = DlsymMap.find(symbol);
+    if (dlsym_entry != DlsymMap.end()) {
+        // std::cout << "[ibv_hook] dlsym overriding " << symbol << std::endl;
+
+        auto &dlsym_functions = dlsym_entry->second;
+        auto &[hook_function, real_function] = dlsym_functions;
+
+        // Ensure we are targeting the same function the upstream caller wanted to load
+        *real_function = real_dlsym(handle, symbol);
+
+        return hook_function;
+    }
+
+    return real_dlsym(handle, symbol);
+}
+
+extern "C" void *dlvsym(void *handle, const char *symbol, const char *version) {
+    assert(real_dlvsym);
+
+    const auto &dlsym_entry = DlsymMap.find(symbol);
+    if (dlsym_entry != DlsymMap.end()) {
+        std::cout << "[ibv_hook] dlvsym overriding " << symbol << std::endl;
+
+        auto &dlsym_functions = dlsym_entry->second;
+        auto &[hook_function, real_function] = dlsym_functions;
+
+        // Ensure we are targeting the same function the upstream caller wanted to load
+        *real_function = real_dlvsym(handle, symbol, version);
+
+        return hook_function;
+    }
+
+    return real_dlvsym(handle, symbol, version);
 }
 
 extern "C" ibv_context *ibv_open_device(ibv_device *device) {
@@ -444,11 +507,19 @@ extern "C" int ibv_dereg_mr(ibv_mr *mr) {
 #define PROFILER_HOOK_FATAL_ERROR assert(false && (std::string(__func__) + " hook called! To be handled").c_str())
 
 extern "C" ibv_mr *ibv_reg_mr(ibv_pd *pd, void *addr, size_t length, int access) {
-    PROFILER_HOOK_FATAL_ERROR;
-
-    if (!real_reg_mr) {
-        real_reg_mr = reinterpret_cast<decltype(real_reg_mr)>(dlvsym(RTLD_NEXT, "real_reg_mr", IBV_HOOK_VERSION));
-    }
+    std::cout << "=== [ibv_hook] Called ibv_reg_mr " << std::hex << addr << " Length: " << length << std::endl;
 
     return real_reg_mr(pd, addr, length, access);
+}
+
+// TODO: NVSHMEM uses this when env NVSHMEM_IB_DISABLE_DMABUF=0 (default)
+extern "C" ibv_mr *ibv_reg_dmabuf_mr(ibv_pd *pd, uint64_t offset, size_t length, uint64_t iova, int fd, int access) {
+    PROFILER_HOOK_FATAL_ERROR;
+
+    if (!real_reg_dmabuf_mr) {
+        real_reg_dmabuf_mr = reinterpret_cast<decltype(real_reg_dmabuf_mr)>(
+                dlvsym(RTLD_NEXT, "ibv_reg_dmabuf_mr", IBV_HOOK_VERSION));
+    }
+
+    return real_reg_dmabuf_mr(pd, offset, length, iova, fd, access);
 }
