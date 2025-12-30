@@ -1,31 +1,35 @@
-# TODO: Remove duplicate library definition
-add_library(IbtraceTest SHARED
-        ibverbs_trace.hpp
-        ibverbs_preload.cpp
-        IbverbsEvents.hpp
-)
-
-target_include_directories(IbtraceTest PRIVATE "${RDMA_INCLUDE_DIR}")
-target_link_libraries(IbtraceTest PUBLIC CUDA::nvtx3)
-
-set_target_properties(IbtraceTest PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME "ibverbs_trace_test"
-)
-
-# Link against dl for dlsym()
-target_link_libraries(IbtraceTest PUBLIC dl)
-#target_link_libraries(IbtraceTest PRIVATE ibverbs)
-
-set_target_properties(IbtraceTest PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
-
-add_executable(test_ibtrace test_ibtrace.cpp)
-target_link_libraries(test_ibtrace PRIVATE IbtraceTest ibverbs)
+## TODO: Remove duplicate library definition
+#add_library(IbtraceTest SHARED
+#        ibverbs_trace.hpp
+#        ibverbs_preload.cpp
+#        IbverbsEvents.hpp
+#)
+#
+#target_include_directories(IbtraceTest PRIVATE "${RDMA_INCLUDE_DIR}")
+#target_link_libraries(IbtraceTest PUBLIC CUDA::nvtx3)
+#
+#set_target_properties(IbtraceTest PROPERTIES
+#        POSITION_INDEPENDENT_CODE ON
+#        OUTPUT_NAME "ibverbs_trace_test"
+#)
+#
+## Link against dl for dlsym()
+#target_link_libraries(IbtraceTest PUBLIC dl)
+##target_link_libraries(IbtraceTest PRIVATE ibverbs)
+#
+#set_target_properties(IbtraceTest PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+#
+#add_executable(test_ibtrace test_ibtrace.cpp)
+#target_link_libraries(test_ibtrace PRIVATE IbtraceTest ibverbs)
 
 # Profiler trace, same config as above
 add_library(ProfilerTrace SHARED
-        ibverbs_trace.hpp
-        profiler_preload.cpp
+#        ibverbs_trace.hpp
+#        ibverbs_nonctx_hooks.hpp
+        IbverbsHooks.hpp
+        IbverbsEventSource.hpp
+#        profiler_preload.cpp
+        IbverbsPreload.cpp
         IbverbsEvents.hpp
         dl_symbol_resolver.cpp
 )
@@ -39,12 +43,17 @@ set_target_properties(ProfilerTrace PROPERTIES
 
 # Link against dl for dlsym()
 target_link_libraries(ProfilerTrace PUBLIC dl)
-#target_link_libraries(ProfilerTrace PRIVATE ibverbs)
+# This breaks things
+# Should load symbols dynamically
+# TODO: not having it here breaks other things...
+target_link_libraries(ProfilerTrace PRIVATE ibverbs)
 target_link_libraries(ProfilerTrace PRIVATE cuda_helper)
 target_link_libraries(ProfilerTrace PRIVATE CUDA::cudart)
 target_link_libraries(ProfilerTrace PUBLIC CUDA::nvtx3)
 
 target_link_libraries(ProfilerTrace PRIVATE Events)
+
+target_link_libraries(ProfilerTrace PUBLIC HookLib)
 
 set_target_properties(ProfilerTrace PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 

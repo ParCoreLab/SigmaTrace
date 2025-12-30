@@ -60,6 +60,9 @@ target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_device)
 # Events library
 add_subdirectory(Events)
 
+# Events library
+add_subdirectory(Hook)
+
 # IB Trace library
 add_subdirectory(Ibtrace)
 
