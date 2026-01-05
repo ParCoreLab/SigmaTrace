@@ -12,6 +12,7 @@ namespace hook {
     enum class HookType {
         ObjectOps, // Replace function pointer in object (ctx->ops.X)
         Preload,   // LD_PRELOAD / dlsym interception
+        Custom,
         // Mixed,
     };
 
@@ -116,6 +117,23 @@ namespace hook {
         static constexpr const char *symbol_name = sym_name;                                                           \
     }
 
+    // TODO: this is WRONG. There should not be pre/post callbacks..........
+    // C++23 will fix this (maybe)
+#define DEFINE_CUSTOM_HOOK(ns, name, ...)                                                                              \
+    namespace ns {                                                                                                     \
+        struct name##_tag {};                                                                                          \
+    }                                                                                                                  \
+    template<>                                                                                                         \
+    struct hook::HookTrait<ns::name##_tag> {                                                                           \
+        using FuncPtr = void (*)(__VA_ARGS__);                                                                                    \
+        using RetType = void;                                                                                          \
+        using Callback = std::function<void(__VA_ARGS__)>;                                                             \
+        using PreCallback = std::function<void(__VA_ARGS__)>;                                                                     \
+        using PostCallback = std::function<void(__VA_ARGS__)>;                                                                    \
+        static constexpr hook::HookType type = hook::HookType::Custom;                                                 \
+        static constexpr const char *name = #name;                                                                     \
+    }
+
     // ================================================================
     // Type traits for hook categorization
     // ================================================================
@@ -130,5 +148,11 @@ namespace hook {
 
     template<typename Tag>
     inline constexpr bool is_object_ops_hook_v = is_object_ops_hook<Tag>::value;
+
+    template<typename Tag>
+    struct is_custom_hook : std::bool_constant<HookTrait<Tag>::type == HookType::Custom> {};
+
+    template<typename Tag>
+    inline constexpr bool is_custom_hook_v = is_custom_hook<Tag>::value;
 
 } // namespace hook
