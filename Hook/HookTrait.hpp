@@ -44,15 +44,27 @@ namespace hook {
     // Concept for valid hook tags
     // ================================================================
     template<typename Tag>
-    concept ValidHookTag = requires {
-        typename HookTrait<Tag>::FuncPtr;
-        typename HookTrait<Tag>::RetType;
-        typename HookTrait<Tag>::PreCallback;
-        typename HookTrait<Tag>::PostCallback;
+    concept BaseValidTag = requires {
         { HookTrait<Tag>::type } -> std::convertible_to<HookType>;
         // TODO:
         // { HookTrait<Tag>::name } -> std::convertible_to<const char *>;
     };
+
+    template<typename Tag>
+    concept ValidEventTag = BaseValidTag<Tag> && requires { typename HookTrait<Tag>::Callback; };
+
+    // TODO: bad naming 1
+    template<typename Tag>
+    concept ValidCallbackTag = BaseValidTag<Tag> && requires {
+        typename HookTrait<Tag>::FuncPtr;
+        typename HookTrait<Tag>::RetType;
+        typename HookTrait<Tag>::PreCallback;
+        typename HookTrait<Tag>::PostCallback;
+    };
+
+    // TODO: bad naming 2
+    template<typename Tag>
+    concept ValidHookTag = ValidEventTag<Tag> || ValidCallbackTag<Tag>;
 
     // ================================================================
     // Macro to define a preload-style hook (global function interposition)
@@ -61,7 +73,7 @@ namespace hook {
     //   DEFINE_PRELOAD_HOOK(namespace, func_name, symbol_name, symbol_version, ret_type, arg_types...)
     //
     // Example:
-    //   DEFINE_PRELOAD_HOOK(ibv, reg_mr, "ibv_reg_mr", "IBVERBS_1.1", ibv_mr*, ibv_pd*, void*, size_t, int)
+    //   DEFINE_PRELOAD_HOOK(ibv, reg_mr, "ibv_reg_mr", ibv_mr*, ibv_pd*, void*, size_t, int)
     //
     // TODO: merge and add HookType as an argument
     // ================================================================

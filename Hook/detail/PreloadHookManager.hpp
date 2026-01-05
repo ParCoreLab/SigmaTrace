@@ -59,13 +59,13 @@ namespace hook::detail {
         // Real function pointer management
         // ================================================================
 
-        template<ValidHookTag Tag>
+        template<ValidCallbackTag Tag>
             requires is_preload_hook_v<Tag>
         HookTrait<Tag>::FuncPtr &real_func() {
             return m_real_funcs.template get<Tag>();
         }
 
-        template<ValidHookTag Tag, typename DlsymFunc>
+        template<ValidCallbackTag Tag, typename DlsymFunc>
             requires is_preload_hook_v<Tag>
         void resolve_real(void *handle, DlsymFunc &&dlsym_func) {
             auto &real = m_real_funcs.template get<Tag>();
@@ -90,7 +90,7 @@ namespace hook::detail {
         // ================================================================
         // Static wrapper - called from LD_PRELOAD hook functions
         // ================================================================
-        template<ValidHookTag Tag, typename... Args>
+        template<ValidCallbackTag Tag, typename... Args>
             requires is_preload_hook_v<Tag>
         auto invoke(Args... args) -> HookTrait<Tag>::RetType {
             auto real = this->real_func<Tag>();

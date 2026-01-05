@@ -58,12 +58,22 @@ namespace hook {
         using Base::register_pre;
 
         // ================================================================
+        // 1. Custom event hooks
+        // ================================================================
+        template<ValidEventTag Tag, typename... Args>
+            requires is_custom_hook_v<Tag>
+        void invoke_custom(Args... args) {
+            // TODO: pre only
+            this->template invoke_all_pre<Tag>(args...);
+        }
+
+        // ================================================================
         // 1. Preload hook management
         // ================================================================
         // using PreloadBase::real_func;
-        void resolve_all(auto&&... args) { m_preload_impl.resolve_all(std::forward<decltype(args)>(args)...); }
+        void resolve_all(auto &&...args) { m_preload_impl.resolve_all(std::forward<decltype(args)>(args)...); }
 
-        template<ValidHookTag Tag>
+        template<ValidCallbackTag Tag>
             requires is_preload_hook_v<Tag>
         HookTrait<Tag>::FuncPtr &real_func() {
             return m_preload_impl.template real_func<Tag>();
@@ -89,7 +99,7 @@ namespace hook {
 
         // Static wrapper for preload hooks
         // TODO: remove, possibly. We can already call these through the instance
-        template<ValidHookTag Tag, typename... Args>
+        template<ValidCallbackTag Tag, typename... Args>
             requires is_preload_hook_v<Tag>
         static auto invoke_preload(Args... args) -> HookTrait<Tag>::RetType {
             auto &mgr = instance();
@@ -162,7 +172,7 @@ namespace hook {
         // }
 
         // Static wrapper for object-ops hooks
-        template<ValidHookTag Tag, typename... Args>
+        template<ValidCallbackTag Tag, typename... Args>
             requires is_object_ops_hook_v<Tag>
         static auto invoke_object_ops(Args... args) -> typename HookTrait<Tag>::RetType {
             auto &mgr = instance();
@@ -199,7 +209,7 @@ namespace hook {
         using Base::invoke_all_pre;
 
         // Context-aware invocation for object-ops
-        template<ValidHookTag Tag, typename... Args>
+        template<ValidCallbackTag Tag, typename... Args>
         void invoke_pre_with_context(Context &ctx, Args... args) {
             if constexpr (requires(Derived &d, Tag t, Context &c, Args... a) { d.pre(t, c, a...); }) {
                 static_cast<Derived &>(*this).pre(Tag{}, ctx, args...);
@@ -207,7 +217,7 @@ namespace hook {
             Base::template invoke_pre_callbacks<Tag>(args...);
         }
 
-        template<ValidHookTag Tag, typename Ret, typename... Args>
+        template<ValidCallbackTag Tag, typename Ret, typename... Args>
         void invoke_post_with_context(Context &ctx, Ret ret, Args... args) {
             if constexpr (requires(Derived &d, Tag t, Context &c, Ret r, Args... a) { d.post(t, c, r, a...); }) {
                 static_cast<Derived &>(*this).post(Tag{}, ctx, ret, args...);
@@ -223,7 +233,7 @@ namespace hook {
             (install_if_object_ops<std::tuple_element_t<Is, std::tuple<Tags...>>>(obj, ctx), ...);
         }
 
-        template<ValidHookTag Tag>
+        template<ValidCallbackTag Tag>
         void install_if_object_ops(ObjectType *obj, Context &ctx) {
             if constexpr (is_object_ops_hook_v<Tag>) {
                 auto &op = static_cast<Derived &>(*this).template get_op<Tag>(obj);
@@ -237,7 +247,7 @@ namespace hook {
             (uninstall_if_object_ops<std::tuple_element_t<Is, std::tuple<Tags...>>>(obj, ctx), ...);
         }
 
-        template<ValidHookTag Tag>
+        template<ValidCallbackTag Tag>
         void uninstall_if_object_ops(ObjectType *obj, Context &ctx) {
             if constexpr (is_object_ops_hook_v<Tag>) {
                 auto &op = static_cast<Derived &>(*this).template get_op<Tag>(obj);

@@ -16,12 +16,12 @@ namespace hook::detail {
     public:
         // Original function pointers
         // TODO: remove
-        template<ValidHookTag Tag>
+        template<ValidCallbackTag Tag>
         HookTrait<Tag>::FuncPtr &original() {
             return std::get<typename HookTrait<Tag>::FuncPtr>(m_originals);
         }
 
-        template<ValidHookTag Tag>
+        template<ValidCallbackTag Tag>
         HookTrait<Tag>::FuncPtr original() const {
             return std::get<typename HookTrait<Tag>::FuncPtr>(m_originals);
         }
@@ -113,7 +113,7 @@ namespace hook::detail {
         // wrapper template
         // Called by the installed wrapper functions
         // ================================================================
-        template<ValidHookTag Tag, typename ObjectType, typename... Args>
+        template<ValidCallbackTag Tag, typename ObjectType, typename... Args>
             requires is_object_ops_hook_v<Tag>
         auto wrapper(ObjectType *obj, Args... args) -> HookTrait<Tag>::RetType {
             // Get object from arguments (derived class must implement this)
@@ -147,7 +147,7 @@ namespace hook::detail {
         // Hook invocation with context
         // ================================================================
         // TODO
-        // template<ValidHookTag Tag, typename... Args>
+        // template<ValidCallbackTag Tag, typename... Args>
         // void invoke_all_pre_with_context(Context &ctx, Args... args) {
         //     // Call derived class pre hook if it exists
         //     if constexpr (requires(Derived &d, Tag t, Context &c, Args... a) { d.pre(t, c, a...); }) {
@@ -159,7 +159,7 @@ namespace hook::detail {
         // }
 
         // TODO
-        // template<ValidHookTag Tag, typename Ret, typename... Args>
+        // template<ValidCallbackTag Tag, typename Ret, typename... Args>
         // void invoke_all_post_with_context(Context &ctx, Ret ret, Args... args) {
         //     // Call derived class post hook if it exists
         //     if constexpr (requires(Derived &d, Tag t, Context &c, Ret r, Args... a) { d.post(t, c, r, a...); }) {
