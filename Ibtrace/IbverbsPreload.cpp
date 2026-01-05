@@ -13,36 +13,38 @@ extern void *find_symbol_in_lib(const char *lib_pattern, const char *symbol_name
 // Ibv profiler class with the hooks we care about
 // ================================================================
 namespace ibv {
-    struct Profiler : IbverbsEventSource<Profiler> {
-        Profiler() {
-            std::cout << "Profiler Initialized" << std::endl;
+    Profiler::Profiler() {
+        std::cout << "Profiler Initialized" << std::endl;
 
-            // ================================================================
-            // Set up for installing hooks into ctx
-            // ================================================================
-            this->register_post<open_device_tag>([this](ibv_context *ctx, ibv_device *device) {
-                if (ctx) {
-                    this->install(ctx);
-                    std::cout << "[ibv_hook] Hooks installed on " << ctx << "\n";
-                }
-            });
+        // GetSharedInstance();
 
-            this->register_post<close_device_tag>([this](int, ibv_context *ctx) {
-                if (ctx) {
-                    this->uninstall(ctx);
-                    std::cout << "[ibv_hook] Hooks uninstalled on " << ctx << "\n";
-                }
-            });
-            // ================================================================
-            // this->register_pre<reg_mr_tag>([](auto&& ...) {});
+        // GetSharedInstance2();
 
-            this->register_pre<post_send_tag>([](auto &&...) {
-                std::cout << "Send received\n" << std::endl;
-            });
-        }
+        // ================================================================
+        // Set up for installing hooks into ctx
+        // ================================================================
+        this->register_post<open_device_tag>([this](ibv_context *ctx, ibv_device *device) {
+            if (ctx) {
+                this->install(ctx);
+                std::cout << "[ibv_hook] Hooks installed on " << ctx << "\n";
+            }
+        });
 
-        virtual ~Profiler() { std::cout << "Profiler Destroyed" << std::endl; }
-    };
+        this->register_post<close_device_tag>([this](int, ibv_context *ctx) {
+            if (ctx) {
+                this->uninstall(ctx);
+                std::cout << "[ibv_hook] Hooks uninstalled on " << ctx << "\n";
+            }
+        });
+        // ================================================================
+        // this->register_pre<reg_mr_tag>([](auto&& ...) {});
+
+        this->register_pre<post_send_tag>([](auto &&...) {
+            std::cout << "Send received\n" << std::endl;
+        });
+    }
+
+    Profiler::~Profiler() { std::cout << "Profiler Destroyed" << std::endl; }
 } // namespace ibv
 
 // Store the real dlsym/dlvsym
@@ -146,7 +148,7 @@ static void *get_hook_for_symbol(const char *symbol) {
 extern "C" void *dlsym(void *handle, const char *symbol) {
     assert(real_dlsym);
 
-    std::cout << "Loading " << symbol << std::endl;
+    // std::cout << "Loading " << symbol << std::endl;
 
     auto *hook = get_hook_for_symbol(symbol);
 
@@ -163,7 +165,7 @@ extern "C" void *dlsym(void *handle, const char *symbol) {
 
     void **real_func_ptr = profiler.real_func_by_name(sym);
     if (real_func_ptr) {
-        std::cout << "=== [ibv_hook] dlsym replaced " << sym << std::endl;
+        // std::cout << "=== [ibv_hook] dlsym replaced " << sym << std::endl;
         *real_func_ptr = real_fn;
     }
 
@@ -172,8 +174,6 @@ extern "C" void *dlsym(void *handle, const char *symbol) {
 
 extern "C" void *dlvsym(void *handle, const char *symbol, const char *version) {
     assert(real_dlvsym);
-
-    std::cout << "asdasdasdsadsadsa " << symbol << std::endl;
 
     auto *hook = get_hook_for_symbol(symbol);
 
@@ -190,7 +190,7 @@ extern "C" void *dlvsym(void *handle, const char *symbol, const char *version) {
 
     void **real_func_ptr = profiler.real_func_by_name(sym);
     if (real_func_ptr) {
-        std::cout << "=== [ibv_hook] dlvsym replaced " << sym << std::endl;
+        // std::cout << "=== [ibv_hook] dlvsym replaced " << sym << std::endl;
         *real_func_ptr = real_fn;
     }
 

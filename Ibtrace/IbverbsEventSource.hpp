@@ -90,6 +90,11 @@ namespace ibv {
     protected:
         IbverbsEventSource() = default;
     };
+    // ================================================================
+    struct Profiler : IbverbsEventSource<Profiler> {
+        Profiler();
+        virtual ~Profiler();
+    };
 
     // ================================================================
     // LiteEventSource - Pre-built lightweight version

@@ -72,5 +72,8 @@ add_subdirectory(Ibtrace)
 # CUDA Trace libraries
 add_subdirectory(CUDATrace)
 
+# Unified Profiler
+add_subdirectory(Profiler)
+
 # Sample apps
 add_subdirectory(Apps)
