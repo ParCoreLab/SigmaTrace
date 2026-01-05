@@ -29,12 +29,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <assert.h>
+#include <cassert>
+#include <cstdint>
+#include <cstdio>
 #include <map>
 #include <pthread.h>
 #include <sstream>
-#include <stdint.h>
-#include <stdio.h>
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
@@ -55,6 +55,12 @@
 #define HEX(x) "0x" << std::setfill('0') << std::setw(16) << std::hex << (uint64_t) x << std::dec
 
 #define CHANNEL_SIZE (1l << 20)
+
+#include "CUDAEventSource.hpp"
+
+namespace cuda_trace {
+    NvbitProfiler::NvbitProfiler() = default;
+} // namespace cuda_trace
 
 enum class RecvThreadState {
     WORKING,
@@ -111,6 +117,9 @@ void nvbit_at_init() {
     GET_VAR_INT(verbose, "TOOL_VERBOSE", 0, "Enable verbosity inside the tool");
     std::string pad(100, '-');
     printf("%s\n", pad.c_str());
+
+    /* Profiler event source */
+    cuda_trace::NvbitProfiler::instance();
 
     /* set mutex as recursive */
     pthread_mutexattr_t attr;
@@ -447,11 +456,18 @@ void *recv_thread_fun(void *args) {
                    << "," << ma->cta_id_y << "," << ma->cta_id_z << " - warp " << ma->warp_id << " - "
                    << id_to_opcode_map[ma->opcode_id] << " - ";
 
-                for (int i = 0; i < 32; i++) {
-                    ss << HEX(ma->addrs[i]) << " ";
-                }
+                // std::cout << "\n\n === ";
+                // for (int i = 0; i < 32; i++) {
+                //     std::cout << HEX(ma->addrs[i]) << " ";
+                // }
 
-                printf("MEMTRACE: %s\n", ss.str().c_str());
+
+                std::cout << "Sending" << std::endl;
+                profiler.invoke_custom<cuda_trace::cuda_trace_tag>(0);
+
+                // cuda_trace::Profiler::invoke_preload<cuda_trace::cuda_trace_tag>(0);
+
+                // printf("MEMTRACE: %s\n", ss.str().c_str());
                 num_processed_bytes += sizeof(mem_access_t);
             }
         }
