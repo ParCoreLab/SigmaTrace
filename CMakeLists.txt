@@ -60,6 +60,9 @@ target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_device)
 # Events library
 add_subdirectory(Events)
 
+# Launcher library
+add_subdirectory(Launcher)
+
 # Events library
 add_subdirectory(Hook)
 
