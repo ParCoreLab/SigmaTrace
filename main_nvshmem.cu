@@ -1,3 +1,4 @@
+#include <array>
 #include <cassert>
 #include <iostream>
 #include <sys/wait.h>
@@ -97,7 +98,7 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
     nvshmem_barrier_all();
 
     // Data validation
-    std::array<float, NumElements> recv_data_host;
+    std::array<float, NumElements> recv_data_host{};
     CUDA_CHECK(cudaMemcpy(recv_data_host.data(), recv_data, NumElements * sizeof(float), cudaMemcpyDefault));
     const auto ref = (my_pe - 1 + n_pes) % n_pes;
     for (auto i = 0; i < NumElements; ++i) {
