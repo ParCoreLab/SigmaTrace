@@ -1,3 +1,5 @@
+// TODO: VERY deprecated
+
 #include <atomic>
 #include <cstring>
 #include <iostream>
