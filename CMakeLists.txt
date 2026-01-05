@@ -68,12 +68,6 @@ add_subdirectory(Ibtrace)
 
 # CUDA Trace libraries
 add_subdirectory(CUDATrace)
-add_dependencies(Thing NvbitMemoryTracker)
-add_dependencies(Thing SanitizerMemoryTracker)
 
 # Sample apps
 add_subdirectory(Apps)
-
-# Ensure Thing builds *after* the trace libraries are ready, if it depends on them or if they need to exist.
-#add_dependencies(Thing IbtraceTest)
-#add_dependencies(Thing ProfilerTrace)
