@@ -12,6 +12,8 @@ if (BUILD_RDMA_CORE)
             BINARY_DIR "${CMAKE_BINARY_DIR}/rdma-core"
             CMAKE_ARGS
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+#            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+#            -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
             -DIN_PLACE=1
             # TODO: this breaks on some systems but might be important
             -DENABLE_RESOLVE_NEIGH=0

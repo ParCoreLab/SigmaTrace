@@ -22,7 +22,7 @@ function(set_cuda_rpath target)
 endfunction()
 
 # Dependencies
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Imports")
 include(RDMA_CORE)
 include(NCCL)
 include(NVSHMEM)

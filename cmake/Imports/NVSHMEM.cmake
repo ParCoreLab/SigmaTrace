@@ -4,7 +4,7 @@ set(NVSHMEM_ROOT "" CACHE PATH "Prefix where system NVSHMEM is installed")
 if (BUILD_NVSHMEM)
     set(NVSHMEM_DEPENDS_LIST "")
     if (BUILD_RDMA_CORE)
-        list(APPEND NVSHMEM_DEPENDS_LIST rdma-core)
+        list(APPEND NVSHMEM_DEPENDS_LIST rdma-core ibverbs verbs mlx5)
     endif ()
 
     include(ExternalProject)
@@ -14,11 +14,12 @@ if (BUILD_NVSHMEM)
             CMAKE_ARGS
             # Performance killers
             # Release build also kills compile time
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            # -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            # -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -DCUDA_HOME=${CUDAToolkit_LIBRARY_ROOT}
             -DCMAKE_VERBOSE_MAKEFILE=ON
             -DNVSHMEM_DEBUG=OFF
-            -DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}
-            -DCUDA_HOME=${CUDAToolkit_LIBRARY_ROOT}
             # -DNCCL_HOME=                           # TODO
             -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}
             -DNVSHMEM_PREFIX=${CMAKE_BINARY_DIR}/nvshmem-build
@@ -46,7 +47,7 @@ if (BUILD_NVSHMEM)
             -DNVSHMEM_PMIX_SUPPORT=OFF
             -DNVSHMEM_UCX_SUPPORT=OFF                 # TODO
             -DNVSHMEM_NVTX=ON
-            -DNVSHMEM_VERBOSE=ON                     # PTX compiler output
+            -DNVSHMEM_VERBOSE=ON                      # PTX compiler output
             -DNVSHMEM_USE_NCCL=OFF
             -DVERBS_LIBRARY=${IBVERBS_LIBRARY_PATH}
             -DMLX5_lib=${MLX5_LIBRARY_PATH}
