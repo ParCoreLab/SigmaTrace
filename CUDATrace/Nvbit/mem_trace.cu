@@ -232,6 +232,9 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_l
         assert(cudaGetLastError() == cudaSuccess);
     }
 
+    /* Early initialize the profiler */
+    cuda_trace::NvbitProfiler::instance();
+
     /* instrument */
     instrument_function_if_needed(ctx, func);
 
@@ -443,6 +446,8 @@ void *recv_thread_fun(void *args) {
     pthread_mutex_unlock(&mutex);
     char *recv_buffer = (char *) malloc(CHANNEL_SIZE);
 
+    auto &profiler = cuda_trace::NvbitProfiler::instance();
+
     while (ctx_state->recv_thread_done == RecvThreadState::WORKING) {
         /* receive buffer from channel */
         uint32_t num_recv_bytes = ch_host->recv(recv_buffer, CHANNEL_SIZE);
@@ -461,8 +466,6 @@ void *recv_thread_fun(void *args) {
                 //     std::cout << HEX(ma->addrs[i]) << " ";
                 // }
 
-
-                std::cout << "Sending" << std::endl;
                 profiler.invoke_custom<cuda_trace::cuda_trace_tag>(0);
 
                 // cuda_trace::Profiler::invoke_preload<cuda_trace::cuda_trace_tag>(0);
