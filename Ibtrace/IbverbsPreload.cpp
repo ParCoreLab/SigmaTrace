@@ -1,5 +1,6 @@
 #include <deque>
 #include <iostream>
+#include <sstream>
 
 #include <cassert>
 #include <dlfcn.h>
@@ -9,16 +10,58 @@
 // Helper dl_iterate_phdr walker
 extern void *find_symbol_in_lib(const char *lib_pattern, const char *symbol_name);
 
+constexpr bool DebugPrint = false;
+
+// TODO: odd implementation
+static void LogDebug(auto &&ss) {
+    if constexpr (DebugPrint) {
+        std::cout << "=== [ibv_hook] " << ss << std::endl;
+    }
+}
+
+template<typename Tag, typename Tuple, std::size_t... Is>
+static void LogCallImpl(Tuple &&args, std::index_sequence<Is...>) {
+    std::stringstream ss;
+    // clang-format off
+    ss << "=== [ibv_hook] Called "
+              << hook::HookTrait<Tag>::symbol_name
+              << " (";
+
+    ((ss
+          << (Is == 0 ? "" : ", ")
+          << std::get<Is>(hook::HookTrait<Tag>::arg_names)
+          << ": "
+          << std::get<Is>(args)), ...);
+    // clang-format on
+
+    ss << ')';
+
+    LogDebug(ss.str());
+}
+
+template<typename Tag, typename... Args>
+static void LogCall(Args &&...args) {
+    static_assert(sizeof...(Args) == std::tuple_size_v<decltype(hook::HookTrait<Tag>::arg_names)>,
+                  "Argument count does not match arg_names");
+
+    LogCallImpl<Tag>(std::forward_as_tuple(std::forward<Args>(args)...), std::index_sequence_for<Args...>{});
+}
+
 // ================================================================
 // Ibv profiler class with the hooks we care about
 // ================================================================
 namespace ibv {
     Profiler::Profiler() {
-        std::cout << "Profiler Initialized" << std::endl;
+        LogDebug("Profiler Initialized");
 
-        // GetSharedInstance();
-
-        // GetSharedInstance2();
+        // ================================================================
+        // DEBUG: Log al calls
+        // ================================================================
+        if constexpr (DebugPrint) {
+            this->register_all_pre([]<typename Tag>(auto &&...args) {
+                LogCall<Tag>(std::forward<decltype(args)>(args)...);
+            });
+        }
 
         // ================================================================
         // Set up for installing hooks into ctx
@@ -26,25 +69,21 @@ namespace ibv {
         this->register_post<open_device_tag>([this](ibv_context *ctx, ibv_device *device) {
             if (ctx) {
                 this->install(ctx);
-                std::cout << "[ibv_hook] Hooks installed on " << ctx << "\n";
+
+                LogDebug("Hooks installed");
             }
         });
 
         this->register_post<close_device_tag>([this](int, ibv_context *ctx) {
             if (ctx) {
                 this->uninstall(ctx);
-                std::cout << "[ibv_hook] Hooks uninstalled on " << ctx << "\n";
-            }
-        });
-        // ================================================================
-        // this->register_pre<reg_mr_tag>([](auto&& ...) {});
 
-        this->register_pre<post_send_tag>([](auto &&...) {
-            std::cout << "Send received\n" << std::endl;
+                LogDebug("Hooks uninstalled");
+            }
         });
     }
 
-    Profiler::~Profiler() { std::cout << "Profiler Destroyed" << std::endl; }
+    Profiler::~Profiler() { LogDebug("Profiler Destroyed"); }
 } // namespace ibv
 
 // Store the real dlsym/dlvsym
@@ -60,15 +99,12 @@ static void __attribute__((constructor)) init() {
     real_dlvsym = reinterpret_cast<decltype(real_dlvsym)>(find_symbol_in_lib("libc", "dlvsym"));
 
     // Initialize profiler
-    auto &profiler = ibv::Profiler::instance();
+    ibv::Profiler::instance();
 
-    std::cout << "[ibv_hook] Loaded\n";
+    LogDebug("Loaded");
 }
 
-static void __attribute__((destructor)) finalize() {
-    std::cout << "[ibv_hook] Unloaded\n";
-    // ibv::Profiler::instance().print_stats();
-}
+static void __attribute__((destructor)) finalize() { LogDebug("Unloaded"); }
 
 // ================================================================
 // dlsym/dlvsym interception for libraries that dynamically load ibv funcs
@@ -100,22 +136,16 @@ extern "C" int ibv_close_device(ibv_context *context) {
 #undef ibv_reg_mr
 #endif
 extern "C" ibv_mr *ibv_reg_mr(ibv_pd *pd, void *addr, size_t length, int access) {
-    std::cout << "=== [ibv_hook] Called ibv_reg_mr " << std::hex << addr << " Length: " << length << std::endl;
     return ibv::Profiler::invoke_preload<ibv::reg_mr_tag>(pd, addr, length, access);
 }
 
-extern "C" int ibv_dereg_mr(ibv_mr *mr) {
-    std::cout << "=== [ibv_hook] Called ibv_dereg_mr " << std::hex << mr << std::endl;
-    return ibv::Profiler::invoke_preload<ibv::dereg_mr_tag>(mr);
-}
+extern "C" int ibv_dereg_mr(ibv_mr *mr) { return ibv::Profiler::invoke_preload<ibv::dereg_mr_tag>(mr); }
 
 extern "C" ibv_mr *ibv_reg_mr_iova2(ibv_pd *pd, void *addr, size_t length, uint64_t iova, unsigned int access) {
-    std::cout << "=== [ibv_hook] Called ibv_reg_mr_iova2 " << std::hex << addr << " Length: " << length << std::endl;
     return ibv::Profiler::invoke_preload<ibv::reg_mr_iova2_tag>(pd, addr, length, iova, access);
 }
 
 extern "C" ibv_mr *ibv_reg_dmabuf_mr(ibv_pd *pd, uint64_t offset, size_t length, uint64_t iova, int fd, int access) {
-    std::cout << "=== [ibv_hook] Called ibv_reg_mr_iova2 " << fd << " Length: " << length << std::endl;
     return ibv::Profiler::invoke_preload<ibv::reg_dmabuf_mr_tag>(pd, offset, length, iova, fd, access);
 }
 

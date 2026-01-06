@@ -67,6 +67,24 @@ namespace hook {
         using Base::register_pre;
 
         // ================================================================
+        // Helper to register pre-callbacks for all tags automatically
+        // Callback signature: void(const char* symbol_name, Args...)
+        // ================================================================
+        template<typename Callback>
+        void register_all_pre(Callback &&callback) {
+            (register_pre_for_tag<Tags>(std::forward<Callback>(callback)), ...);
+        }
+
+    private:
+        template<typename Tag, typename Callback>
+        void register_pre_for_tag(Callback &&callback) {
+            this->template register_pre<Tag>([callback](auto &&...args) {
+                callback.template operator()<Tag>(std::forward<decltype(args)>(args)...);
+            });
+        }
+
+    public:
+        // ================================================================
         // 1. Custom event hooks
         // ================================================================
         template<ValidEventTag Tag, typename... Args>
