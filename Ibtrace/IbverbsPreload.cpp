@@ -201,55 +201,56 @@ static void *get_hook_for_symbol(std::string_view symbol) {
 //     return handle;
 // }
 
-extern "C" void *dlsym(void *handle, const char *symbol) {
-    assert(real_dlsym);
+template<typename Func>
+static void *load_symbol(const Func &real_func, void *handle, const char *symbol) {
+    std::string_view symbol_str{symbol};
 
-    // std::cout << "Loading " << symbol << std::endl;
+    auto *hook = get_hook_for_symbol(symbol_str);
 
-    auto *hook = get_hook_for_symbol(symbol);
-
+    // We don't have a hook for it, pass the real symbol directly
     if (!hook) {
-        return real_dlsym(handle, symbol);
+        if constexpr (DebugPrint) {
+            if (symbol_str.starts_with("ibv_")) {
+                std::stringstream ss;
+                ss << "Warning " << symbol_str << " loaded but not hooked!";
+                LogDebug(ss.str());
+            }
+        }
+
+        return real_func(handle, symbol);
     }
 
     // Resolve the real function and store it in the manager
-    void *real_fn = real_dlsym(handle, symbol);
+    void *real_fn = real_func(handle, symbol);
 
     // Update the real function pointer in the profiler
     auto &profiler = ibv::Profiler::instance();
-    std::string_view sym{symbol};
 
-    void **real_func_ptr = profiler.real_func_by_name(sym);
+    void **real_func_ptr = profiler.real_func_by_name(symbol_str);
     if (real_func_ptr) {
-        // std::cout << "=== [ibv_hook] dlsym replaced " << sym << std::endl;
+        if constexpr (DebugPrint) {
+            std::stringstream ss;
+            ss << "dlsym replaced " << symbol_str;
+            LogDebug(ss.str());
+        }
+
         *real_func_ptr = real_fn;
     }
 
     return hook;
 }
 
+extern "C" void *dlsym(void *handle, const char *symbol) {
+    assert(real_dlsym);
+    return load_symbol(real_dlsym, handle, symbol);
+}
+
 extern "C" void *dlvsym(void *handle, const char *symbol, const char *version) {
     assert(real_dlvsym);
 
-    auto *hook = get_hook_for_symbol(symbol);
+    // TODO: inline lambda might be better
+    auto dlsym_func = std::bind(real_dlvsym, std::placeholders::_1, std::placeholders::_2, version);
 
-    if (!hook) {
-        return real_dlvsym(handle, symbol, version);
-    }
-
-    // Resolve the real function and store it in the manager
-    void *real_fn = real_dlvsym(handle, symbol, version);
-
-    // Update the real function pointer in the profiler
-    auto &profiler = ibv::Profiler::instance();
-    std::string_view sym{symbol};
-
-    void **real_func_ptr = profiler.real_func_by_name(sym);
-    if (real_func_ptr) {
-        // std::cout << "=== [ibv_hook] dlvsym replaced " << sym << std::endl;
-        *real_func_ptr = real_fn;
-    }
-
-    return hook;
+    return load_symbol(dlsym_func, handle, symbol);
 }
 // ================================================================
