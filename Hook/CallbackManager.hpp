@@ -8,6 +8,19 @@
 #include "HookTrait.hpp"
 
 namespace hook {
+    // ================================================================
+    // Tagged wrappers to ensure unique types in the tuple
+    // (multiple tags may have the same callback signature)
+    // ================================================================
+    template<typename Tag>
+    struct TaggedPreCallbacks {
+        std::vector<typename HookTrait<Tag>::PreCallback> list;
+    };
+
+    template<typename Tag>
+    struct TaggedPostCallbacks {
+        std::vector<typename HookTrait<Tag>::PostCallback> list;
+    };
 
     // ================================================================
     // Callback storage for a set of tags
@@ -18,60 +31,43 @@ namespace hook {
         static_assert((ValidHookTag<Tags> && ...), "All tags must have valid HookTrait specializations");
 
     public:
-        // TODO: consider reserving some spaced
         template<typename Tag>
         using PreCallbackList = std::vector<typename HookTrait<Tag>::PreCallback>;
-
-        // TODO: C++23 constrained pack alias ValidCallbackTag<Tags> && ...)
-        // template<typename Tag>
-        // using PreCallbackList = std::conditional_t<ValidCallbackTag<Tag>,
-        //                                            std::vector<typename HookTrait<Tag>::PreCallback>,
-        //                                            std::monostate>;
-
-        // template<typename Tag>
-        // using PostCallbackList = std::conditional_t<ValidCallbackTag<Tag>,
-        //                                             std::vector<typename HookTrait<Tag>::PostCallback>,
-        //                                             std::monostate>;
-
-        // template<typename Tag>
-        // using CustomCallbackList = std::vector<typename HookTrait<Tag>::Callback>;
 
         template<typename Tag>
         using PostCallbackList = std::vector<typename HookTrait<Tag>::PostCallback>;
 
-        // TODO: consider const
         template<typename Tag>
         PreCallbackList<Tag> &pre_callbacks() {
-            return std::get<PreCallbackList<Tag>>(m_pre_callbacks);
+            return std::get<TaggedPreCallbacks<Tag>>(m_pre_callbacks).list;
         }
 
         template<typename Tag>
         const PreCallbackList<Tag> &pre_callbacks() const {
-            return std::get<PreCallbackList<Tag>>(m_pre_callbacks);
+            return std::get<TaggedPreCallbacks<Tag>>(m_pre_callbacks).list;
         }
 
         template<typename Tag>
         PostCallbackList<Tag> &post_callbacks() {
-            return std::get<PostCallbackList<Tag>>(m_post_callbacks);
+            return std::get<TaggedPostCallbacks<Tag>>(m_post_callbacks).list;
         }
 
         template<typename Tag>
         const PostCallbackList<Tag> &post_callbacks() const {
-            return std::get<PostCallbackList<Tag>>(m_post_callbacks);
+            return std::get<TaggedPostCallbacks<Tag>>(m_post_callbacks).list;
         }
 
         template<typename Tag>
         void clear() {
-            std::get<PreCallbackList<Tag>>(m_pre_callbacks).clear();
-            std::get<PostCallbackList<Tag>>(m_post_callbacks).clear();
+            std::get<TaggedPreCallbacks<Tag>>(m_pre_callbacks).list.clear();
+            std::get<TaggedPostCallbacks<Tag>>(m_post_callbacks).list.clear();
         }
 
         void clear_all() { (clear<Tags>(), ...); }
 
     private:
-        std::tuple<PreCallbackList<Tags>...> m_pre_callbacks;
-        std::tuple<PostCallbackList<Tags>...> m_post_callbacks;
-        // std::tuple<CustomCallbackList<Tags>...> m_custom_callbacks;
+        std::tuple<TaggedPreCallbacks<Tags>...> m_pre_callbacks;
+        std::tuple<TaggedPostCallbacks<Tags>...> m_post_callbacks;
     };
 
     // ================================================================
