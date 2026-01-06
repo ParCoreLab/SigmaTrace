@@ -119,9 +119,30 @@ extern "C" ibv_mr *ibv_reg_dmabuf_mr(ibv_pd *pd, uint64_t offset, size_t length,
     return ibv::Profiler::invoke_preload<ibv::reg_dmabuf_mr_tag>(pd, offset, length, iova, fd, access);
 }
 
+extern "C" ibv_pd *ibv_alloc_pd(ibv_context *context) {
+    return ibv::Profiler::invoke_preload<ibv::alloc_pd_tag>(context);
+}
+
+extern "C" ibv_cq *ibv_create_cq(ibv_context *context, int cqe, void *cq_context, ibv_comp_channel *channel,
+                                 int comp_vector) {
+    return ibv::Profiler::invoke_preload<ibv::create_cq_tag>(context, cqe, cq_context, channel, comp_vector);
+}
+
+extern "C" ibv_qp *ibv_create_qp(ibv_pd *pd, ibv_qp_init_attr *qp_init_attr) {
+    return ibv::Profiler::invoke_preload<ibv::create_qp_tag>(pd, qp_init_attr);
+}
+
+extern "C" int ibv_modify_qp(ibv_qp *qp, ibv_qp_attr *attr, int attr_mask) {
+    return ibv::Profiler::invoke_preload<ibv::modify_qp_tag>(qp, attr, attr_mask);
+}
+
+extern "C" ibv_ah *ibv_create_ah(ibv_pd *pd, ibv_ah_attr *attr) {
+    return ibv::Profiler::invoke_preload<ibv::create_ah_tag>(pd, attr);
+}
+
 // Map of <ibv func name -> hook function ptr>
 // Note: We use the new architecture where real funcs are stored in the manager
-static void *get_hook_for_symbol(const char *symbol) {
+static void *get_hook_for_symbol(std::string_view symbol) {
     // Map symbol names to our hook functions
     static const std::unordered_map<std::string_view, void *> hook_map = {
             {"ibv_open_device", reinterpret_cast<void *>(ibv_open_device)},
@@ -130,6 +151,11 @@ static void *get_hook_for_symbol(const char *symbol) {
             {"ibv_dereg_mr", reinterpret_cast<void *>(ibv_dereg_mr)},
             {"ibv_reg_mr_iova2", reinterpret_cast<void *>(ibv_reg_mr_iova2)},
             {"ibv_reg_dmabuf_mr", reinterpret_cast<void *>(ibv_reg_dmabuf_mr)},
+            {"ibv_alloc_pd", reinterpret_cast<void *>(ibv_alloc_pd)},
+            {"ibv_create_cq", reinterpret_cast<void *>(ibv_create_cq)},
+            {"ibv_create_qp", reinterpret_cast<void *>(ibv_create_qp)},
+            {"ibv_modify_qp", reinterpret_cast<void *>(ibv_modify_qp)},
+            {"ibv_create_ah", reinterpret_cast<void *>(ibv_create_ah)},
     };
 
     auto it = hook_map.find(symbol);
