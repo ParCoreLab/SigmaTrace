@@ -9,6 +9,14 @@
 
 namespace hook {
     // ================================================================
+    // Concepts for better error messages
+
+    // Check if Derived implements get_op
+    template<typename D, typename Tag, typename Obj>
+    concept has_get_op_for = requires(D &d, Obj *obj) { d.template get_op<Tag>(obj); };
+    // ===============================================================
+
+    // ================================================================
     // CompositeHookManager - Combines preload and object-ops hooks
     //
     // This provides a unified interface for registering callbacks
@@ -237,6 +245,9 @@ namespace hook {
         template<ValidCallbackTag Tag>
         void install_if_object_ops(ObjectType *obj, Context &ctx) {
             if constexpr (is_object_ops_hook_v<Tag>) {
+                static_assert(has_get_op_for<Derived, Tag, ObjectType>,
+                              "Derived must provide: `template <...> get_op<Tag>(ObjectType*)` for object-ops hooks");
+
                 auto &op = static_cast<Derived &>(*this).template get_op<Tag>(obj);
                 ctx.template original<Tag>() = op;
                 op = &Derived::template invoke_object_ops<Tag>;
