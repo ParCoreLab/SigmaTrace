@@ -10,15 +10,13 @@ set_target_properties(ProfilerShim PROPERTIES
         OUTPUT_NAME "profiler_shim"
 )
 
-# Link against dl for dlsym()
-target_link_libraries(ProfilerShim PUBLIC dl)
-
 # This makes it so we can propagate overridden functions I think?
 target_link_libraries(ProfilerShim PUBLIC
         -Wl,--whole-archive
         SmartDlsym
         IbverbsTraceStatic
         NvbitMemoryTrackerStatic
+        Mlx5dvTraceSourcesStatic
         -Wl,--no-whole-archive
 )
 target_include_directories(ProfilerShim PRIVATE ${CMAKE_SOURCE_DIR}/Ibtrace)

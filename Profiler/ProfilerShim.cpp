@@ -3,6 +3,7 @@
 
 #include "CUDAEventSource.hpp"
 #include "IbverbsEventSource.hpp"
+#include "Mlx5dvEventSource.hpp"
 
 struct ProfilerCtx {
     // <addr, length>
@@ -11,6 +12,13 @@ struct ProfilerCtx {
     ProfilerCtx() {
         m_ibv_profiler = &ibv::Profiler::instance();
         m_cuda_profiler = &cuda_trace::NvbitProfiler::instance();
+
+        // TODO
+        m_mlx5dv_profiler = &mlx5dv::Profiler::instance();
+
+        m_mlx5dv_profiler->register_pre<mlx5dv::init_obj_tag>([](auto &&...) {
+            std::cout << "[Profiler] mlx5dv is alive!" << std::endl;
+        });
 
         m_ibv_profiler->register_pre<ibv::open_device_tag>([](auto &&...) {
             std::cout << "[Profiler] ibv_open_device received" << std::endl;
@@ -60,6 +68,7 @@ struct ProfilerCtx {
 
     ibv::Profiler *m_ibv_profiler;
     cuda_trace::NvbitProfiler *m_cuda_profiler;
+    mlx5dv::Profiler *m_mlx5dv_profiler;
 };
 
 static void __attribute__((constructor)) init() { ProfilerCtx::instance(); }

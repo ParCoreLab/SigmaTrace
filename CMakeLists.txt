@@ -72,6 +72,9 @@ add_subdirectory(Hook)
 # IB Trace library
 add_subdirectory(Ibtrace)
 
+# mlx5dv Trace library
+add_subdirectory(Mlx5dvTrace)
+
 # CUDA Trace libraries
 add_subdirectory(CUDATrace)
 
