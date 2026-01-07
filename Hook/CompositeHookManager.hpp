@@ -38,6 +38,9 @@ namespace hook {
     // TODO: Get rid of ObjectType
     template<typename Derived, typename ObjectType, typename... Tags>
     class CompositeHookManager : public CallbackManager<Derived, Tags...> {
+        static_assert(!ValidHookTag<ObjectType>,
+                      "Missing ObjectType. Did you mistakenly define as <Derived, ...Tags>?");
+
         using Base = CallbackManager<Derived, Tags...>;
 
         /*
@@ -134,6 +137,13 @@ namespace hook {
             mgr.template invoke_all_pre<Tag>(args...);
 
             auto real = mgr.template real_func<Tag>();
+
+            // It can die silently otherwise
+            if (!real) {
+                std::cerr << "ERROR: Real function for Tag " << HookTrait<Tag>::name << " is empty!" << std::endl;
+                assert(false);
+            }
+
             auto ret = real(args...);
 
             mgr.template invoke_all_post<Tag>(ret, args...);
