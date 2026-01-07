@@ -126,6 +126,8 @@ int main(int argc, char *argv[]) {
     // setenv("NVSHMEM_DISABLE_NVLS", "1", 1);
 
     setenv("NVSHMEM_DISABLE_NCCL", "1", 1);
+
+    // This is the most important flag. Default is ibrc which uses host-deside asdasA
     setenv("NVSHMEM_REMOTE_TRANSPORT", "ibdevx", 1);
 
     // TODO: maybe later
