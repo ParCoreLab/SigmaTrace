@@ -57,6 +57,9 @@ target_link_libraries(ThingNVSHMEM PRIVATE CUDA::nvml)
 target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_host)
 target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_device)
 
+# Dlsym shims
+add_subdirectory(SmartDlsym)
+
 # Events library
 add_subdirectory(Events)
 

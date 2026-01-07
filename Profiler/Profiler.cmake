@@ -16,6 +16,7 @@ target_link_libraries(ProfilerShim PUBLIC dl)
 # This makes it so we can propagate overridden functions I think?
 target_link_libraries(ProfilerShim PUBLIC
         -Wl,--whole-archive
+        SmartDlsym
         IbverbsTraceStatic
         NvbitMemoryTrackerStatic
         -Wl,--no-whole-archive

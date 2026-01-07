@@ -1,14 +1,12 @@
+#include <dlfcn.h>
+
 #include <deque>
 #include <iostream>
 #include <sstream>
 
-#include <cassert>
-#include <dlfcn.h>
+#include "Dlsym.hpp"
 
 #include "IbverbsEventSource.hpp"
-
-// Helper dl_iterate_phdr walker
-extern void *find_symbol_in_lib(const char *lib_pattern, const char *symbol_name);
 
 constexpr bool DebugPrint = false;
 
@@ -66,7 +64,7 @@ namespace ibv {
         // ================================================================
         // Set up for installing hooks into ctx
         // ================================================================
-        this->register_post<open_device_tag>([this](ibv_context *ctx, ibv_device *device) {
+        this->register_post<open_device_tag>([this](ibv_context *ctx, ibv_device *) {
             if (ctx) {
                 this->install(ctx);
 
@@ -86,24 +84,6 @@ namespace ibv {
     Profiler::~Profiler() { LogDebug("Profiler Destroyed"); }
 } // namespace ibv
 
-// Store the real dlsym/dlvsym
-static void *(*real_dlopen)(const char *, int) = nullptr;
-
-static void *(*real_dlsym)(void *, const char *) = nullptr;
-static void *(*real_dlvsym)(void *, const char *, const char *) = nullptr;
-
-static void __attribute__((constructor)) init() {
-    real_dlopen = reinterpret_cast<decltype(real_dlopen)>(find_symbol_in_lib("libc", "dlopen"));
-
-    real_dlsym = reinterpret_cast<decltype(real_dlsym)>(find_symbol_in_lib("libc", "dlsym"));
-    real_dlvsym = reinterpret_cast<decltype(real_dlvsym)>(find_symbol_in_lib("libc", "dlvsym"));
-
-    // Initialize profiler
-    ibv::Profiler::instance();
-
-    LogDebug("Loaded");
-}
-
 static void __attribute__((destructor)) finalize() { LogDebug("Unloaded"); }
 
 // ================================================================
@@ -121,8 +101,8 @@ extern "C" ibv_context *ibv_open_device(ibv_device *device) {
     auto &profiler = ibv::Profiler::instance();
     auto &real_func = profiler.real_func<ibv::open_device_tag>();
     if (!real_func) {
-        auto *libibverbs_handle = real_dlopen("libibverbs.so", RTLD_NOW);
-        profiler.resolve_all(libibverbs_handle, real_dlsym);
+        auto *libibverbs_handle = smart_dlsym::real_dlopen("libibverbs.so", RTLD_NOW);
+        profiler.resolve_all(libibverbs_handle, smart_dlsym::real_dlsym);
     }
 
     return ibv::Profiler::invoke_preload<ibv::open_device_tag>(device);
@@ -170,11 +150,9 @@ extern "C" ibv_ah *ibv_create_ah(ibv_pd *pd, ibv_ah_attr *attr) {
     return ibv::Profiler::invoke_preload<ibv::create_ah_tag>(pd, attr);
 }
 
-// Map of <ibv func name -> hook function ptr>
-// Note: We use the new architecture where real funcs are stored in the manager
-static void *get_hook_for_symbol(std::string_view symbol) {
-    // Map symbol names to our hook functions
-    static const std::unordered_map<std::string_view, void *> hook_map = {
+// ================================================================
+static void register_symbols() {
+    static const std::unordered_map<std::string, void *> hook_map = {
             {"ibv_open_device", reinterpret_cast<void *>(ibv_open_device)},
             {"ibv_close_device", reinterpret_cast<void *>(ibv_close_device)},
             {"ibv_reg_mr", reinterpret_cast<void *>(ibv_reg_mr)},
@@ -188,69 +166,33 @@ static void *get_hook_for_symbol(std::string_view symbol) {
             {"ibv_create_ah", reinterpret_cast<void *>(ibv_create_ah)},
     };
 
-    auto it = hook_map.find(symbol);
-    return it != hook_map.end() ? it->second : nullptr;
-}
-
-// extern "C" void *dlopen(const char *filename, int flags) {
-//     assert(real_dlopen);
-//
-//     std::cout << "dlopen: " << filename << std::endl;
-//
-//     void* handle = real_dlopen(filename, RTLD_LAZY | RTLD_GLOBAL | flags);
-//     return handle;
-// }
-
-template<typename Func>
-static void *load_symbol(const Func &real_func, void *handle, const char *symbol) {
-    std::string_view symbol_str{symbol};
-
-    auto *hook = get_hook_for_symbol(symbol_str);
-
-    // We don't have a hook for it, pass the real symbol directly
-    if (!hook) {
-        if constexpr (DebugPrint) {
-            if (symbol_str.starts_with("ibv_")) {
-                std::stringstream ss;
-                ss << "Warning " << symbol_str << " loaded but not hooked!";
-                LogDebug(ss.str());
-            }
-        }
-
-        return real_func(handle, symbol);
-    }
-
-    // Resolve the real function and store it in the manager
-    void *real_fn = real_func(handle, symbol);
-
-    // Update the real function pointer in the profiler
     auto &profiler = ibv::Profiler::instance();
 
-    void **real_func_ptr = profiler.real_func_by_name(symbol_str);
-    if (real_func_ptr) {
-        if constexpr (DebugPrint) {
-            std::stringstream ss;
-            ss << "dlsym replaced " << symbol_str;
-            LogDebug(ss.str());
-        }
+    for (auto &[symbol_name, symbol_hook]: hook_map) {
+        smart_dlsym::register_symbol(symbol_name, [&symbol_name, &profiler, symbol_hook](void *real_func, auto &&...) {
+            // Update the real function pointer in the profiler
+            void **real_func_ptr = profiler.real_func_by_name(symbol_name);
+            if (real_func_ptr) {
+                if constexpr (DebugPrint) {
+                    std::stringstream ss;
+                    ss << "dlsym replaced " << symbol_name;
+                    LogDebug(ss.str());
+                }
 
-        *real_func_ptr = real_fn;
+                *real_func_ptr = real_func;
+            }
+
+            return symbol_hook;
+        });
     }
-
-    return hook;
 }
 
-extern "C" void *dlsym(void *handle, const char *symbol) {
-    assert(real_dlsym);
-    return load_symbol(real_dlsym, handle, symbol);
-}
+static void __attribute__((constructor /* (201) */)) init() {
+    register_symbols();
 
-extern "C" void *dlvsym(void *handle, const char *symbol, const char *version) {
-    assert(real_dlvsym);
+    // Initialize profiler
+    ibv::Profiler::instance();
 
-    // TODO: inline lambda might be better
-    auto dlsym_func = std::bind(real_dlvsym, std::placeholders::_1, std::placeholders::_2, version);
-
-    return load_symbol(dlsym_func, handle, symbol);
+    LogDebug("Loaded");
 }
 // ================================================================

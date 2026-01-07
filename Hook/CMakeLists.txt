@@ -1,7 +1,6 @@
 add_library(HookLib INTERFACE)
 
 target_sources(HookLib INTERFACE
-        detail/singleton_api.h
         CallbackManager.hpp
         CompositeHookManager.hpp
         HookTrait.hpp
