@@ -64,8 +64,7 @@ namespace hook {
     template<typename Tag>
     concept BaseValidTag = requires {
         { HookTrait<Tag>::type } -> std::convertible_to<HookType>;
-        // TODO:
-        // { HookTrait<Tag>::name } -> std::convertible_to<const char *>;
+        { HookTrait<Tag>::name } -> std::convertible_to<const char *>;
     };
 
     template<typename Tag>
@@ -96,18 +95,18 @@ namespace hook {
     // TODO: merge and add HookType as an argument
     // TODO: ret_type before sym_name, so it looks more natural. e.g. ... int "ibv_open_device" ...
     // ================================================================
-#define DEFINE_PRELOAD_HOOK(ns, name, sym_name, ret_type, ...)                                                         \
+#define DEFINE_PRELOAD_HOOK(ns, hook_name, sym_name, ret_type, ...)                                                    \
     namespace ns {                                                                                                     \
-        struct name##_tag {};                                                                                          \
+        struct hook_name##_tag {};                                                                                     \
     }                                                                                                                  \
     template<>                                                                                                         \
-    struct hook::HookTrait<ns::name##_tag> {                                                                           \
+    struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__);                                                                     \
         using RetType = ret_type;                                                                                      \
         using PreCallback = std::function<void(__VA_ARGS__)>;                                                          \
         using PostCallback = std::function<void(ret_type, __VA_ARGS__)>;                                               \
         static constexpr hook::HookType type = hook::HookType::Preload;                                                \
-        static constexpr const char *name = #name;                                                                     \
+        static constexpr const char *name = #hook_name;                                                                \
         static constexpr const char *symbol_name = sym_name;                                                           \
         static constexpr auto arg_names = VA_ARGS_TO_STRING_TUPLE(__VA_ARGS__);                                        \
     }
@@ -121,37 +120,37 @@ namespace hook {
     // Example:
     //   DEFINE_OBJECT_OPS_HOOK(ibv, post_send, int, ibv_qp*, ibv_send_wr*, ibv_send_wr**)
     // ================================================================
-#define DEFINE_OBJECT_OPS_HOOK(ns, name, sym_name, ret_type, ...)                                                      \
+#define DEFINE_OBJECT_OPS_HOOK(ns, hook_name, sym_name, ret_type, ...)                                                 \
     namespace ns {                                                                                                     \
-        struct name##_tag {};                                                                                          \
+        struct hook_name##_tag {};                                                                                     \
     }                                                                                                                  \
     template<>                                                                                                         \
-    struct hook::HookTrait<ns::name##_tag> {                                                                           \
+    struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__);                                                                     \
         using RetType = ret_type;                                                                                      \
         using PreCallback = std::function<void(__VA_ARGS__)>;                                                          \
         using PostCallback = std::function<void(ret_type, __VA_ARGS__)>;                                               \
         static constexpr hook::HookType type = hook::HookType::ObjectOps;                                              \
-        static constexpr const char *name = #name;                                                                     \
+        static constexpr const char *name = #hook_name;                                                                \
         static constexpr const char *symbol_name = sym_name;                                                           \
         static constexpr auto arg_names = VA_ARGS_TO_STRING_TUPLE(__VA_ARGS__);                                        \
     }
 
     // TODO: this is WRONG. There should not be pre/post callbacks..........
     // C++23 will fix this (maybe)
-#define DEFINE_CUSTOM_HOOK(ns, name, ...)                                                                              \
+#define DEFINE_CUSTOM_HOOK(ns, hook_name, ...)                                                                         \
     namespace ns {                                                                                                     \
-        struct name##_tag {};                                                                                          \
+        struct hook_name##_tag {};                                                                                     \
     }                                                                                                                  \
     template<>                                                                                                         \
-    struct hook::HookTrait<ns::name##_tag> {                                                                           \
+    struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = void (*)(__VA_ARGS__);                                                                         \
         using RetType = void;                                                                                          \
         using Callback = std::function<void(__VA_ARGS__)>;                                                             \
         using PreCallback = std::function<void(__VA_ARGS__)>;                                                          \
         using PostCallback = std::function<void(__VA_ARGS__)>;                                                         \
         static constexpr hook::HookType type = hook::HookType::Custom;                                                 \
-        static constexpr const char *name = #name;                                                                     \
+        static constexpr const char *name = #hook_name;                                                                \
         static constexpr auto arg_names = VA_ARGS_TO_STRING_TUPLE(__VA_ARGS__);                                        \
     }
 
