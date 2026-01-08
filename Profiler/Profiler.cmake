@@ -1,5 +1,7 @@
 # Profiler trace, same config as above
 add_library(ProfilerShim SHARED
+        mlx5/mlx5_ifc.h
+        mlx5/mlx5_prm.h
         ProfilerShim.cpp
 )
 
@@ -19,11 +21,14 @@ target_link_libraries(ProfilerShim PUBLIC
         Mlx5dvTraceSourcesStatic
         -Wl,--no-whole-archive
 )
-target_include_directories(ProfilerShim PRIVATE ${CMAKE_SOURCE_DIR}/Ibtrace)
+set_target_properties(ProfilerShim PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
+# Shim dependencies
+target_include_directories(ProfilerShim PRIVATE ${CMAKE_SOURCE_DIR}/Ibtrace)
 target_link_libraries(ProfilerShim PUBLIC CUDATrace)
 
-set_target_properties(ProfilerShim PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+# For infiniband/mlx5dv.h
+target_include_directories(ProfilerShim PRIVATE "${RDMA_INCLUDE_DIR}")
 
 add_executable(Profiler Profiler.cpp)
 target_link_libraries(Profiler PRIVATE Launcher)

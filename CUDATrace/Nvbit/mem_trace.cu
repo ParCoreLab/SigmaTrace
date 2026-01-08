@@ -40,6 +40,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include <regex>
+
 /* every tool needs to include this once */
 #include "nvbit_tool.h"
 
@@ -100,11 +102,16 @@ uint32_t instr_end_interval = UINT32_MAX;
 int verbose = 0;
 
 /* opcode to id map and reverse map  */
-std::map<std::string, int> opcode_to_id_map;
-std::map<int, std::string> id_to_opcode_map;
+using OpcodeID = size_t;
+std::map<std::string, OpcodeID> opcode_to_id_map;
+std::map<OpcodeID, std::string> id_to_opcode_map;
 
 /* grid launch id, incremented at every launch */
 uint64_t global_grid_launch_id = 0;
+
+const std::unordered_set<std::string_view> IgnoredFunctions{
+        "nvshmemi_init_array_kernel" // Load/Store heavy, no useful info
+};
 
 void *recv_thread_fun(void *args);
 
@@ -118,7 +125,7 @@ void nvbit_at_init() {
     std::string pad(100, '-');
     printf("%s\n", pad.c_str());
 
-    /* Profiler event source */
+    /* Early initialize the profiler */
     cuda_trace::NvbitProfiler::instance();
 
     /* set mutex as recursive */
@@ -133,9 +140,48 @@ void nvbit_at_init() {
 /* Set used to avoid re-instrumenting the same functions multiple times */
 std::unordered_set<CUfunction> already_instrumented;
 
+// TODO: inefficients
+std::string_view parse_function_name(const std::string &function_name) {
+    // [unsigned long*] kernel_name[<int*, int&>][(int*, int&)]
+    // Group 0:  entire string
+    // Group 1?: type
+    // Group 2:  kernel name
+    // Group 3?: template
+    // Group 4:  args
+    static const std::regex function_regex(R"|((.+ )?([\w_]+)(<.*>)?(\(.+\))?)|");
+
+    std::smatch pieces_match;
+
+    if (!std::regex_match(function_name, pieces_match, function_regex)) {
+        return function_name;
+    }
+
+    // Unmatched optional groups should still count
+    assert(pieces_match.size() > 3 && "Regex is malformed and has fewer than 3 matches");
+
+    const auto &match = pieces_match[2];
+    if (!match.matched) {
+        return function_name;
+    }
+
+    std::string_view match_str{function_name.data() + std::distance(function_name.begin(), match.first),
+                               static_cast<size_t>(match.length())};
+
+    return match_str;
+}
+
 void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
-    assert(ctx_state_map.find(ctx) != ctx_state_map.end());
-    CTXstate *ctx_state = ctx_state_map[ctx];
+    // if (already_instrumented.contains(func)) {
+    //     return;
+    // }
+
+    auto ctx_entry = ctx_state_map.find(ctx);
+    assert(ctx_entry != ctx_state_map.end());
+    CTXstate *ctx_state = ctx_entry->second;
+
+    // TODO: is this actually the kernel?
+    // const auto kernel_name = nvbit_get_func_name(ctx, func);
+    // std::cout << "Entering: " << kernel_name << std::endl;
 
     /* Get related functions of the kernel (device function that can be
      * called by the kernel) */
@@ -152,34 +198,99 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
             continue;
         }
 
+        // TODO: I don't know what nvbit_get_func_name returns. Unsure if this is OK
+        const std::string function_signature{nvbit_get_func_name(ctx, f)};
+        std::string_view function_name = parse_function_name(function_signature);
+
+        if (IgnoredFunctions.contains(function_name)) {
+            continue;
+        }
+        // std::cout << "Entering: " << function_signature << std::endl;
+
         /* get vector of instructions of function "f" */
         const std::vector<Instr *> &instrs = nvbit_get_instrs(ctx, f);
 
+        const std::string_view func_name{nvbit_get_func_name(ctx, f)};
+
         if (verbose) {
-            printf("MEMTRACE: CTX %p, Inspecting CUfunction %p name %s at address "
-                   "0x%lx\n",
-                   ctx, f, nvbit_get_func_name(ctx, f), nvbit_get_func_addr(ctx, f));
+            std::cout << "Instrumenting " << func_name << std::endl;
         }
 
-        uint32_t cnt = 0;
         /* iterate on all the static instructions in the function */
         for (auto instr: instrs) {
-            if (cnt < instr_begin_interval || cnt >= instr_end_interval ||
-                instr->getMemorySpace() != InstrType::MemorySpace::GLOBAL) {
-                cnt++;
+            // TODO: not sure why this is here
+            // if (cnt < instr_begin_interval || cnt >= instr_end_interval) {
+            //     cnt++;
+            //     continue;
+            // }
+
+            const auto instr_memory_space = instr->getMemorySpace();
+            if (instr_memory_space == InstrType::MemorySpace::NONE ||
+                instr_memory_space == InstrType::MemorySpace::LOCAL ||
+                instr_memory_space == InstrType::MemorySpace::SHARED ||
+                instr_memory_space == InstrType::MemorySpace::CONSTANT) {
                 continue;
             }
+
+            // TODO: testing if non-globals touch NIC
+            // if (instr_memory_space == InstrType::MemorySpace::GLOBAL) {
+            //     continue;
+            // }
+
+            // if (instr_memory_space != InstrType::MemorySpace::GLOBAL) {
+            //     continue;
+            // }
+
+            // continue;
+
+            // TODO: trying to figure out stores for now
+            // if (!instr->isStore()) {
+            //     continue;
+            // }
+
+            // Some GENERIC memory space instructions have .STRONG
+            // might be relevant
+            const std::string_view sass{instr->getSass()};
+
+            // // TODO: should be .STRONG.SYS/.STRONG.GPU. Not sure honestly
+            // if (sass.find(".STRONG") == std::string::npos) {
+            // // if (sass.find("STG.E") == std::string::npos) {
+            // continue;
+            // }
+
+            // if (sass.find("STG.E.NA.64.STRONG.GPU") == std::string::npos) {
+            // continue;
+            // }
+
+            // if (sass.find("ST.E.STRONG.SYS") == std::string::npos) {
+            //     continue;
+            // }
+
+            // Some GENERIC instructions also have .STRONG?
+            // if (instr_memory_space == InstrType::MemorySpace::GENERIC) {
+            //     continue;
+            // }
+            //
+            // // We only care about global writes
+            // if (instr_memory_space != InstrType::MemorySpace::GLOBAL) {
+            //     continue;
+            // }
+
             if (verbose) {
-                instr->printDecoded();
+                // instr->printDecoded();
             }
 
-            if (opcode_to_id_map.find(instr->getOpcode()) == opcode_to_id_map.end()) {
-                int opcode_id = opcode_to_id_map.size();
-                opcode_to_id_map[instr->getOpcode()] = opcode_id;
-                id_to_opcode_map[opcode_id] = std::string(instr->getOpcode());
+            // Ensure opcode is in the maps
+            // TODO: ineffient
+            const auto &[opcode_entry, inserted] =
+                    opcode_to_id_map.try_emplace(instr->getOpcode(), opcode_to_id_map.size());
+            // opcode_to_id_map.try_emplace(std::string(sass), opcode_to_id_map.size());
+            if (inserted) {
+                id_to_opcode_map[opcode_entry->second] = std::string(instr->getOpcode());
+                // id_to_opcode_map[opcode_entry->second] = sass;
             }
 
-            int opcode_id = opcode_to_id_map[instr->getOpcode()];
+            // int opcode_id = opcode_to_id_map[instr->getOpcode()];
             int mref_idx = 0;
             /* iterate on the operands */
             for (int i = 0; i < instr->getNumOperands(); i++) {
@@ -193,7 +304,7 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
                     /* predicate value */
                     nvbit_add_call_arg_guard_pred_val(instr);
                     /* opcode id */
-                    nvbit_add_call_arg_const_val32(instr, opcode_id);
+                    nvbit_add_call_arg_const_val32(instr, opcode_entry->second);
                     /* memory reference 64 bit address */
                     nvbit_add_call_arg_mref_addr64(instr, mref_idx);
                     /* add "space" for kernel function pointer that will be set
@@ -205,7 +316,6 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
                     mref_idx++;
                 }
             }
-            cnt++;
         }
     }
 }
@@ -226,27 +336,25 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_l
                                 void *params, bool stream_capture = false, bool build_graph = false) {
     // no need to sync during stream capture or manual graph build, since no
     // kernel is actually launched.
+    // TODO: Probably not necessary
     if (!stream_capture && !build_graph) {
         /* Make sure GPU is idle */
         cudaDeviceSynchronize();
         assert(cudaGetLastError() == cudaSuccess);
     }
 
-    /* Early initialize the profiler */
-    cuda_trace::NvbitProfiler::instance();
-
     /* instrument */
     instrument_function_if_needed(ctx, func);
 
-    int nregs = 0;
-    CUDA_SAFECALL(cuFuncGetAttribute(&nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, func));
-
-    int shmem_static_nbytes = 0;
-    CUDA_SAFECALL(cuFuncGetAttribute(&shmem_static_nbytes, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, func));
-
-    /* get function name and pc */
-    const char *func_name = nvbit_get_func_name(ctx, func);
-    uint64_t pc = nvbit_get_func_addr(ctx, func);
+    // int nregs = 0;
+    // CUDA_SAFECALL(cuFuncGetAttribute(&nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, func));
+    //
+    // int shmem_static_nbytes = 0;
+    // CUDA_SAFECALL(cuFuncGetAttribute(&shmem_static_nbytes, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, func));
+    //
+    // /* get function name and pc */
+    // const char *func_name = nvbit_get_func_name(ctx, func);
+    // uint64_t pc = nvbit_get_func_addr(ctx, func);
 
     // during stream capture or manual graph build, no kernel is launched, so
     // do not set launch argument, do not print kernel info, do not increase
@@ -255,24 +363,25 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_l
         /* set grid launch id at launch time */
         nvbit_set_at_launch(ctx, func, (uint64_t) grid_launch_id);
 
-        if (cbid == API_CUDA_cuLaunchKernelEx_ptsz || cbid == API_CUDA_cuLaunchKernelEx) {
-            cuLaunchKernelEx_params *p = (cuLaunchKernelEx_params *) params;
-            printf("MEMTRACE: CTX 0x%016lx - LAUNCH - Kernel pc 0x%016lx - "
-                   "Kernel name %s - grid launch id %ld - grid size %d,%d,%d "
-                   "- block size %d,%d,%d - nregs %d - shmem %d - cuda stream "
-                   "id %ld\n",
-                   (uint64_t) ctx, pc, func_name, grid_launch_id, p->config->gridDimX, p->config->gridDimY,
-                   p->config->gridDimZ, p->config->blockDimX, p->config->blockDimY, p->config->blockDimZ, nregs,
-                   shmem_static_nbytes + p->config->sharedMemBytes, (uint64_t) p->config->hStream);
-        } else {
-            cuLaunchKernel_params *p = (cuLaunchKernel_params *) params;
-            printf("MEMTRACE: CTX 0x%016lx - LAUNCH - Kernel pc 0x%016lx - "
-                   "Kernel name %s - grid launch id %ld - grid size %d,%d,%d "
-                   "- block size %d,%d,%d - nregs %d - shmem %d - cuda stream "
-                   "id %ld\n",
-                   (uint64_t) ctx, pc, func_name, grid_launch_id, p->gridDimX, p->gridDimY, p->gridDimZ, p->blockDimX,
-                   p->blockDimY, p->blockDimZ, nregs, shmem_static_nbytes + p->sharedMemBytes, (uint64_t) p->hStream);
-        }
+        // if (cbid == API_CUDA_cuLaunchKernelEx_ptsz || cbid == API_CUDA_cuLaunchKernelEx) {
+        //     cuLaunchKernelEx_params *p = (cuLaunchKernelEx_params *) params;
+        //     printf("MEMTRACE: CTX 0x%016lx - LAUNCH - Kernel pc 0x%016lx - "
+        //            "Kernel name %s - grid launch id %ld - grid size %d,%d,%d "
+        //            "- block size %d,%d,%d - nregs %d - shmem %d - cuda stream "
+        //            "id %ld\n",
+        //            (uint64_t) ctx, pc, func_name, grid_launch_id, p->config->gridDimX, p->config->gridDimY,
+        //            p->config->gridDimZ, p->config->blockDimX, p->config->blockDimY, p->config->blockDimZ, nregs,
+        //            shmem_static_nbytes + p->config->sharedMemBytes, (uint64_t) p->config->hStream);
+        // } else {
+        //     cuLaunchKernel_params *p = (cuLaunchKernel_params *) params;
+        //     printf("MEMTRACE: CTX 0x%016lx - LAUNCH - Kernel pc 0x%016lx - "
+        //            "Kernel name %s - grid launch id %ld - grid size %d,%d,%d "
+        //            "- block size %d,%d,%d - nregs %d - shmem %d - cuda stream "
+        //            "id %ld\n",
+        //            (uint64_t) ctx, pc, func_name, grid_launch_id, p->gridDimX, p->gridDimY, p->gridDimZ,
+        //            p->blockDimX, p->blockDimY, p->blockDimZ, nregs, shmem_static_nbytes + p->sharedMemBytes,
+        //            (uint64_t) p->hStream);
+        // }
 
         // increment grid launch id for next launch
         // grid id can be changed here, since nvbit_set_at_launch() has copied
@@ -448,6 +557,8 @@ void *recv_thread_fun(void *args) {
 
     auto &profiler = cuda_trace::NvbitProfiler::instance();
 
+    // profiler.invoke_custom<cuda_trace::cuda_trace_tag>(0);
+
     while (ctx_state->recv_thread_done == RecvThreadState::WORKING) {
         /* receive buffer from channel */
         uint32_t num_recv_bytes = ch_host->recv(recv_buffer, CHANNEL_SIZE);
@@ -456,17 +567,17 @@ void *recv_thread_fun(void *args) {
             while (num_processed_bytes < num_recv_bytes) {
                 mem_access_t *ma = (mem_access_t *) &recv_buffer[num_processed_bytes];
 
-                std::stringstream ss;
-                ss << "CTX " << HEX(ctx) << " - grid_launch_id " << ma->grid_launch_id << " - CTA " << ma->cta_id_x
-                   << "," << ma->cta_id_y << "," << ma->cta_id_z << " - warp " << ma->warp_id << " - "
-                   << id_to_opcode_map[ma->opcode_id] << " - ";
+                // std::stringstream ss;
+                // ss << "CTX " << HEX(ctx) << " - grid_launch_id " << ma->grid_launch_id << " - CTA " << ma->cta_id_x
+                //    << "," << ma->cta_id_y << "," << ma->cta_id_z << " - warp " << ma->warp_id << " - "
+                //    << id_to_opcode_map[ma->opcode_id] << " - ";
 
                 // std::cout << "\n\n === ";
                 // for (int i = 0; i < 32; i++) {
                 //     std::cout << HEX(ma->addrs[i]) << " ";
                 // }
 
-                profiler.invoke_custom<cuda_trace::cuda_trace_tag>(0);
+                profiler.invoke_custom<cuda_trace::cuda_trace_tag>(ma->addrs[0], id_to_opcode_map[ma->opcode_id]);
 
                 // cuda_trace::Profiler::invoke_preload<cuda_trace::cuda_trace_tag>(0);
 
