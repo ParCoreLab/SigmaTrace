@@ -20,17 +20,19 @@ namespace Events {
         IbvReqNotifyCq = 104,
         IbvCompletion = 105, // Individual work completion
 
+        Mlx5dvDoorbellRing = 200,
+
         // CUDA events (200-299) - reserved for future
-        CudaKernelLaunch = 200,
-        CudaMemcpy = 201,
-        CudaMemset = 202,
-        CudaSync = 203,
+        CudaKernelLaunch = 300,
+        CudaMemcpy = 301,
+        CudaMemset = 302,
+        CudaSync = 303,
 
         // NCCL events (300-399) - reserved for future
-        NcclAllReduce = 300,
-        NcclAllGather = 301,
-        NcclBroadcast = 302,
-        NcclReduceScatter = 303,
+        NcclAllReduce = 400,
+        NcclAllGather = 401,
+        NcclBroadcast = 402,
+        NcclReduceScatter = 403,
 
         // User-defined events start at 1000
         UserDefined = 1000,

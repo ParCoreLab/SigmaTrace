@@ -4,7 +4,12 @@
 #include <type_traits>
 #include <vector>
 
-#include "Events/Simple.pb.h"
+#include "EventRecorder.hpp"
+#include "EventTrait.hpp"
+#include "Events.hpp"
+
+// Profiler Event definitions
+#include "Events/Mlx5DvEvents.hpp"
 
 #include "infiniband/mlx5dv.h"
 #include "infiniband/verbs.h"
@@ -95,14 +100,11 @@ struct ProfilerCtx {
     ~ProfilerCtx() { std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl; }
 
     ProfilerCtx() {
-        Profiler::ProfilerEvent a{};
-        std::cout << a.hello() << std::endl;
-
         m_ibv_profiler = &ibv::Profiler::instance();
         m_cuda_profiler = &cuda_trace::NvbitProfiler::instance();
-
-        // TODO
         m_mlx5dv_profiler = &mlx5dv::Profiler::instance();
+
+        m_event_recorder = &Events::EventRecorder<>::instance();
 
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>([](auto &&, mlx5dv_obj *obj, uint64_t obj_type) {
             std::cout << "[Profiler] mlx5dv is alive!" << std::endl;
@@ -298,6 +300,11 @@ struct ProfilerCtx {
                     std::cout << queue_type_str << " | UMEM yes | " << sass_str << " @ " << std::hex << addr;
                     std::cout << " -> " << alloc_type_str << " + " << std::dec << addr - alloc_addr << std::endl;
 
+                    if (alloc_type == UmemAllocationType::Doorbell) {
+                        Profiler::Events::DoorbellRing event{.addr = addr};
+                        m_event_recorder->Record(event);
+                    }
+
                     num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
                     return;
                 }
@@ -352,6 +359,8 @@ struct ProfilerCtx {
     ibv::Profiler *m_ibv_profiler;
     cuda_trace::NvbitProfiler *m_cuda_profiler;
     mlx5dv::Profiler *m_mlx5dv_profiler;
+
+    Events::EventRecorder<> *m_event_recorder;
 };
 
 static void __attribute__((constructor)) init() { ProfilerCtx::instance(); }

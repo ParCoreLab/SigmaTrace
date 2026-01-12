@@ -1,3 +1,3 @@
-set(PROTO_SOURCES Simple.proto)
-
 EventsGenerateProtobuf(ProfilerProtoSimple Simple.proto)
+EventsGenerateProtobuf(ProfilerProtoMlx5dv Mlx5dv.proto)
+

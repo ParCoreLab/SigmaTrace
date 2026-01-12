@@ -27,8 +27,12 @@ target_include_directories(ProfilerShim PRIVATE ${CMAKE_SOURCE_DIR}/Ibtrace)
 target_link_libraries(ProfilerShim PUBLIC CUDATrace)
 
 # Tracing and Logging
-add_subdirectory(Events)
-target_link_libraries(ProfilerShim PRIVATE EventsLibProtobuf ProfilerProtoSimple)
+target_link_libraries(ProfilerShim PRIVATE EventsLib)
+
+# Not using protobuf for now
+#add_subdirectory(Events)
+#target_link_libraries(ProfilerShim PRIVATE EventsLibProtobuf ProfilerProtoSimple)
+#target_link_libraries(ProfilerShim PRIVATE EventsLibProtobuf ProfilerProtoMlx5dv)
 target_include_directories(ProfilerShim PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")
 
 # For infiniband/mlx5dv.h
@@ -44,3 +48,7 @@ set_property(TARGET Profiler PROPERTY ENABLE_EXPORTS ON)
 
 target_link_libraries(Profiler PRIVATE CUDATrace)
 #target_link_libraries(Profiler PRIVATE NvbitMemoryTracker)
+
+add_executable(ProfilerEventReader ProfilerEventReader.cpp)
+target_link_libraries(ProfilerEventReader PRIVATE EventsLib)
+target_include_directories(ProfilerEventReader PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")
