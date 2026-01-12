@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 
 namespace Events {
     using EventId_T = uint16_t;

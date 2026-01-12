@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "Events/Simple.pb.h"
+
 #include "infiniband/mlx5dv.h"
 #include "infiniband/verbs.h"
 
@@ -93,6 +95,9 @@ struct ProfilerCtx {
     ~ProfilerCtx() { std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl; }
 
     ProfilerCtx() {
+        Profiler::ProfilerEvent a{};
+        std::cout << a.hello() << std::endl;
+
         m_ibv_profiler = &ibv::Profiler::instance();
         m_cuda_profiler = &cuda_trace::NvbitProfiler::instance();
 

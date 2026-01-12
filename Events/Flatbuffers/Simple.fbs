@@ -1,0 +1,7 @@
+struct SimpleEventFlat {
+  hello:int64;
+}
+
+table Something {}
+
+root_type Something;

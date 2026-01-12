@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <concepts>
 #include <cstdint>
 
 namespace Events {
@@ -23,22 +24,23 @@ namespace Events {
         static constexpr size_t padded_size = ((sizeof(EventHeader) + sizeof(EventT) + 7) / 8) * 8;
     };
 
-    // High-resolution timestamp source
-    // Uses steady_clock for monotonic, portable timing
-    // TODO: maybe an interface in the future
+    // High-resolution timestamp source concept
+    // Zero-overhead compile-time polymorphism using C++20 concepts
     // TODO: correction mechanism
-    /*
-     * TODO: consider using RDTSC
-     * __asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
-     * return ((uint64_t)hi << 32) | lo;
-     */
-    class TimestampSource {
+    template<typename T>
+    concept TimestampSource = requires(const T source) {
+        { source.now() } noexcept -> std::same_as<Timestamp>;
+    };
+
+    // Steady clock-based timestamp source
+    // Monotonic, portable timing with nanosecond resolution
+    class ChronoTimestampSource {
     public:
         using Clock = std::chrono::steady_clock;
 
-        TimestampSource() : m_epoch(Clock::now()) {}
+        ChronoTimestampSource() noexcept : m_epoch(Clock::now()) {}
 
-        [[nodiscard]] Timestamp now() const {
+        [[nodiscard]] Timestamp now() const noexcept {
             const auto duration = Clock::now() - m_epoch;
             return static_cast<Timestamp>(std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
         }
@@ -46,5 +48,28 @@ namespace Events {
     private:
         Clock::time_point m_epoch;
     };
+
+    // RDTSC-based timestamp source for minimal latency
+    // x86-64 only - measures CPU cycles, not wall time
+    // WARNING: Not portable, affected by frequency scaling
+    class RdtscTimestampSource {
+    public:
+        [[nodiscard]] Timestamp now() const noexcept {
+            uint32_t lo, hi;
+            __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+            return (static_cast<uint64_t>(hi) << 32) | lo;
+        }
+    };
+
+    // Returns 0 for debugging convenience
+    class FakeTimestampSource {
+    public:
+        [[nodiscard]] Timestamp now() const noexcept { return 0; }
+    };
+
+    // Verify implementations satisfy the concept
+    static_assert(TimestampSource<ChronoTimestampSource>);
+    static_assert(TimestampSource<RdtscTimestampSource>);
+    static_assert(TimestampSource<FakeTimestampSource>);
 
 } // namespace Events

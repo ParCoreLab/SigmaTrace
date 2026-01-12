@@ -6,12 +6,15 @@
 #include <unordered_map>
 #include <vector>
 
+#include "EventRecorderConfig.hpp"
 #include "EventTrait.hpp"
 #include "ThreadLocalRingBuffer.hpp"
 
 // TODO: MAYBE consider using https://github.com/cameron314/concurrentqueue/blob/master/concurrentqueue.h
 
 namespace Events {
+    static constexpr size_t DefaultCapacity = 128;
+    // using DefaultCapacity = std::integral_constant<size_t, 16>;
 
     // Type-erased buffer interface for registry and iteration
     class IEventBuffer {
@@ -19,21 +22,27 @@ namespace Events {
         virtual ~IEventBuffer() = default;
         [[nodiscard]] virtual EventTypeId type_id() const = 0;
         [[nodiscard]] virtual const char *type_name() const = 0;
-        [[nodiscard]] virtual size_t size() const = 0;
+        // [[nodiscard]] virtual size_t size() const = 0;
         [[nodiscard]] virtual size_t capacity() const = 0;
         [[nodiscard]] virtual size_t dropped_count() const = 0;
+
+        virtual void flush() = 0;
     };
 
-    template<typename EventT, size_t Capacity = 4096>
+    template<typename EventT, size_t Capacity = DefaultCapacity>
     class TypedEventBuffer : public IEventBuffer {
         static_assert(HasEventTrait<EventT>, "EventT must have EventTrait specialization");
 
     public:
+        explicit TypedEventBuffer(const RuntimeConfig &config) : m_buffer(config) {}
+
         [[nodiscard]] EventTypeId type_id() const override { return EventTrait<EventT>::id; }
         [[nodiscard]] const char *type_name() const override { return EventTrait<EventT>::name; }
-        [[nodiscard]] size_t size() const override { return m_buffer.size(); }
+        // [[nodiscard]] size_t size() const override { return m_buffer.size(); }
         [[nodiscard]] size_t capacity() const override { return Capacity; }
         [[nodiscard]] size_t dropped_count() const override { return m_buffer.dropped_count(); }
+
+        void flush() override { m_buffer.flush(); }
 
         // Access underlying typed buffer
         EventRingBuffer<EventT, Capacity> &buffer() { return m_buffer; }
@@ -50,8 +59,8 @@ namespace Events {
 
         // Get or create a buffer for a specific event type
         // TODO: Don't hardcode 4096 here
-        template<typename EventT, size_t Capacity = 4096>
-        TypedEventBuffer<EventT, Capacity> &get_or_create() {
+        template<typename EventT, size_t Capacity = DefaultCapacity>
+        TypedEventBuffer<EventT, Capacity> &get_or_create(const RuntimeConfig &config) {
             const auto key = EventTrait<EventT>::id;
 
             /*
@@ -70,7 +79,7 @@ namespace Events {
 
             // First time seeing this event type - create buffer
             // TODO: Do I really need to heap allocate it?
-            auto buffer = std::make_unique<TypedEventBuffer<EventT, Capacity>>();
+            auto buffer = std::make_unique<TypedEventBuffer<EventT, Capacity>>(config);
             auto *ptr = buffer.get();
             m_buffers[key] = std::move(buffer);
             return *ptr;
@@ -129,6 +138,14 @@ namespace Events {
         void for_each_thread(Func &&func) const {
             std::lock_guard lock(m_mutex);
             for (const auto &buffers: m_all_buffers) {
+                func(*buffers);
+            }
+        }
+
+        template<typename Func>
+        void for_each_thread(Func &&func) {
+            std::lock_guard lock(m_mutex);
+            for (auto &buffers: m_all_buffers) {
                 func(*buffers);
             }
         }

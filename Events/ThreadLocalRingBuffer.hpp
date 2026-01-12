@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include <cstring>
 
+#include "EventRecorderConfig.hpp"
 #include "EventStorage.hpp"
 #include "EventTrait.hpp"
+#include "FileIO/File.hpp"
 
 namespace Events {
 
@@ -28,9 +29,9 @@ namespace Events {
         static constexpr size_t Size = ElementSize * Capacity;
 
     public:
-        ThreadLocalRingBuffer() : m_current(0), m_buffer{} {}
+        explicit ThreadLocalRingBuffer(const std::string &file_path) : m_current(0), m_file_buffer(file_path) {}
 
-        ~ThreadLocalRingBuffer() {}
+        ~ThreadLocalRingBuffer() = default;
 
         // Non-copyable, TODO: maybe movable
         ThreadLocalRingBuffer(const ThreadLocalRingBuffer &) = delete;
@@ -38,18 +39,55 @@ namespace Events {
         // ThreadLocalRingBuffer(ThreadLocalRingBuffer &&) = delete;
         // ThreadLocalRingBuffer &operator=(ThreadLocalRingBuffer &&) = delete;
 
-        // TODO: why void* return?
-        uint8_t *get_slot() noexcept {
-            const size_t index = m_current & (Capacity - 1);
-            return &m_buffer[index * ElementSize];
-        }
+        // For automatic commit on destruction
+        // This class is copyable and owns a pointer
+        // This is some really ugly code :(
+        class SlotPtrWrapper {
+            friend class ThreadLocalRingBuffer;
+
+        public:
+            SlotPtrWrapper(ThreadLocalRingBuffer *base_buffer, uint8_t *ptr) : m_ptr(ptr), m_base_buffer(base_buffer) {}
+
+            // Can't copy
+            SlotPtrWrapper(SlotPtrWrapper &) = delete;
+
+            // Can move
+            SlotPtrWrapper(SlotPtrWrapper &&other) noexcept : m_ptr(other.m_ptr), m_base_buffer(other.m_base_buffer) {
+                other.m_ptr = nullptr;
+                other.m_base_buffer = nullptr;
+            }
+
+            ~SlotPtrWrapper() {
+                // Moved, no commit
+                if (m_base_buffer) {
+                    m_base_buffer->commit();
+                }
+            }
+
+            uint8_t *get() { return m_ptr; }
+            uint8_t *&get_internal_ptr() { return m_ptr; }
+
+        private:
+            uint8_t *m_ptr;
+            ThreadLocalRingBuffer *m_base_buffer;
+        };
+
+        // Get slot for next element - file buffer manages its own indexing
+        uint8_t *get_slot() noexcept { return m_file_buffer.get_slot(); }
+
+        SlotPtrWrapper get_wrapped_slot() noexcept { return SlotPtrWrapper{this, get_slot()}; }
 
         // TODO: overflow?
-        void commit() noexcept { m_current++; };
+        void commit() noexcept {
+            m_current++;
+            m_file_buffer.commit();
+        }
+
+        void flush() { m_file_buffer.flush(); }
 
         auto current_idx() const noexcept { return m_current; }
 
-        static constexpr auto size() noexcept { return Size; }
+        // static constexpr auto size() noexcept { return Size; }
         static constexpr auto capacity() noexcept { return Capacity; }
 
     private:
@@ -60,12 +98,15 @@ namespace Events {
 
         // TODO: is alignas necessary?
         alignas(CACHE_LINE_SIZE) uint64_t m_current;
-        uint8_t m_buffer[Size];
+
+        // Stream is faster in most cases
+        // FileIO::MmapBuffer<ElementSize, Capacity> m_file_buffer;
+        FileIO::StreamBuffer<ElementSize, Capacity> m_file_buffer;
     };
 
     // Type-safe wrapper for specific event types
     // Provides convenient record/read API with automatic timestamping
-    template<typename EventT, size_t Capacity = 4096>
+    template<typename EventT, size_t Capacity>
     class EventRingBuffer {
         static_assert(HasEventTrait<EventT>, "EventT must have EventTrait specialization");
 
@@ -74,10 +115,30 @@ namespace Events {
 
         using Buffer = ThreadLocalRingBuffer<ElementSize, Capacity>;
 
+        // Same as SlotPtrWrapper but typed...
+        class TypedSlotPtrWrapper {
+            friend class EventRingBuffer;
+
+        public:
+            EventHeader *get_header() {
+                return reinterpret_cast<EventHeader *>(static_cast<uint8_t *>(m_base_wrapper.get()));
+            }
+
+            EventT *get() {
+                return reinterpret_cast<EventT *>(static_cast<uint8_t *>(m_base_wrapper.get()) + sizeof(EventHeader));
+            }
+
+        private:
+            TypedSlotPtrWrapper(Buffer::SlotPtrWrapper &&base_wrapper) : m_base_wrapper(std::move(base_wrapper)) {}
+            Buffer::SlotPtrWrapper m_base_wrapper;
+        };
+
     public:
-        // Record an event with provided timestamp
-        // TODO: should probably return true or false
-        void record(const EventT &event, Timestamp ts) noexcept {
+        explicit EventRingBuffer(const RuntimeConfig &config) :
+            m_buffer(config.get_event_file_path(std::this_thread::get_id(), EventTrait<EventT>::name).string()) {}
+
+        // TODO: switch to span
+        EventT *get_slot(const Timestamp ts) noexcept {
             if (m_buffer.current_idx() >= m_buffer.capacity()) {
                 m_dropped_count++;
             }
@@ -92,14 +153,35 @@ namespace Events {
             // TODO: is this ok?
             // TODO: maybe we could just move
             auto *data = reinterpret_cast<EventT *>(static_cast<uint8_t *>(slot) + sizeof(EventHeader));
-            std::memcpy(data, &event, sizeof(EventT));
+
+            return data;
+        }
+
+        TypedSlotPtrWrapper get_wrapped_slot(const Timestamp ts) noexcept {
+            TypedSlotPtrWrapper wrapped_slot{m_buffer.get_wrapped_slot()};
+
+            // Write header
+            auto *header = wrapped_slot.get_header();
+            header->timestamp = ts;
+
+            return wrapped_slot;
+        }
+
+        // Record an event with provided timestamp
+        // TODO: should probably return true or false
+        void record(const EventT &event, const Timestamp ts) noexcept {
+            auto *slot = get_slot(ts);
+
+            EventTrait<EventT>::SerializeTo(event, slot);
 
             m_buffer.commit();
         }
 
+        void flush() { m_buffer.flush(); }
+
         auto dropped_count() const noexcept { return m_dropped_count; }
 
-        static constexpr auto size() noexcept { return Buffer::size(); }
+        // static constexpr auto size() noexcept { return Buffer::size(); }
         static constexpr auto capacity() noexcept { return Capacity; }
 
     private:

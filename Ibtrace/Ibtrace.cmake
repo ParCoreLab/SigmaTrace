@@ -2,7 +2,8 @@ set(IbverbsTraceSources
         IbverbsHooks.hpp
         IbverbsEventSource.hpp
         IbverbsPreload.cpp
-        IbverbsEvents.hpp)
+        #        IbverbsEvents.hpp
+)
 
 # Main Ibverbs trace libraries
 # Why do we have both static and shared? TODO: explain
@@ -47,7 +48,8 @@ foreach (IbverbsTraceTarget IN ITEMS IbverbsTraceShared IbverbsTraceStatic)
     target_link_libraries(${IbverbsTraceTarget} PRIVATE CUDA::cudart)
     target_link_libraries(${IbverbsTraceTarget} PUBLIC CUDA::nvtx3)
 
-    target_link_libraries(${IbverbsTraceTarget} PRIVATE Events)
+    # TODO: remove
+    target_link_libraries(${IbverbsTraceTarget} PRIVATE EventsLib)
 
     target_link_libraries(${IbverbsTraceTarget} PUBLIC HookLib)
 

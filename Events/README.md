@@ -7,6 +7,7 @@ and automatic timestamping.
 
 ## TODO:
 
+- [ ] Update this readme
 - [ ] Add file backing for buffers. Right now buffers are in-memory and lost on destroy.
 - [ ] Make sure lockless implementation is actually thread-safe. Resolve related in-code TODOs
 - [ ] Try to eliminate dynamic memory allocations

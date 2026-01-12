@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstring>
+
 #include <concepts>
 #include <type_traits>
 
@@ -24,6 +26,12 @@ namespace Events {
     struct Events::EventTrait<EventStruct> {                                                                           \
         static constexpr Events::EventTypeId id = EventId;                                                             \
         static constexpr const char *name = EventName;                                                                 \
+        static auto GetSize(auto &&) { return sizeof(EventStruct); };                                                  \
+        /* TODO: Returning bool for Protobuf compatibility. memcpy return is unused for now */                         \
+        static bool SerializeTo(const EventStruct &s, void *data) {                                                    \
+            std::memcpy(data, &s, sizeof(EventStruct));                                                                \
+            return true;                                                                                               \
+        };                                                                                                             \
         static constexpr size_t size = sizeof(EventStruct);                                                            \
         static constexpr size_t alignment = alignof(EventStruct);                                                      \
         using type = EventStruct;                                                                                      \
@@ -37,10 +45,11 @@ namespace Events {
     // Making sure the event has an ID and is usable as a vaue struct
     // Uses bare_type_t to handle references and cv-qualified types
     template<typename T>
-    concept HasEventTrait = requires {
+    concept HasEventTrait = requires(BareType_t<T> &t) {
         { EventTrait<BareType_t<T>>::id } -> std::convertible_to<EventTypeId>;
         { EventTrait<BareType_t<T>>::name } -> std::convertible_to<const char *>;
-        { EventTrait<BareType_t<T>>::size } -> std::convertible_to<size_t>;
+        { EventTrait<BareType_t<T>>::GetSize(t) } -> std::convertible_to<size_t>;
+        { EventTrait<BareType_t<T>>::SerializeTo(t, std::declval<void *>()) } -> std::same_as<bool>;
     };
 
     // Helpers for future
@@ -50,10 +59,11 @@ namespace Events {
     template<HasEventTrait EventT>
     inline constexpr const char *event_name_v = EventTrait<BareType_t<EventT>>::name;
 
-    template<HasEventTrait EventT>
-    inline constexpr auto event_size_v = EventTrait<BareType_t<EventT>>::size;
+    // template<HasEventTrait EventT>
+    // inline constexpr auto event_size_v = EventTrait<BareType_t<EventT>>::GetSize(std::declval<BareType_t<EventT>
+    // &>());
 
-    template<HasEventTrait EventT>
-    inline constexpr auto event_alignment_v = EventTrait<BareType_t<EventT>>::alignment;
+    // template<HasEventTrait EventT>
+    // inline constexpr auto event_alignment_v = EventTrait<BareType_t<EventT>>::alignment;
 
 } // namespace Events
