@@ -27,6 +27,10 @@ set_target_properties(ProfilerShim PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_
 target_include_directories(ProfilerShim PRIVATE ${CMAKE_SOURCE_DIR}/Ibtrace)
 target_link_libraries(ProfilerShim PUBLIC CUDATrace)
 
+# TODO
+add_subdirectory(Perfetto)
+target_link_libraries(ProfilerShim PRIVATE PerfettoLogger)
+
 # For infiniband/mlx5dv.h
 target_include_directories(ProfilerShim PRIVATE "${RDMA_INCLUDE_DIR}")
 

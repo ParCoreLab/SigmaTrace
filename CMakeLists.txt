@@ -27,6 +27,7 @@ include(RDMA_CORE)
 include(NCCL)
 include(NVSHMEM)
 include(NVBIT)
+include(Perfetto)
 
 # Helper Library
 add_library(cuda_helper INTERFACE)

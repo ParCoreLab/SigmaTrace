@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "PerfettoLogger.hpp"
+
 #include "infiniband/mlx5dv.h"
 #include "infiniband/verbs.h"
 
@@ -93,6 +95,11 @@ struct ProfilerCtx {
     ~ProfilerCtx() { std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl; }
 
     ProfilerCtx() {
+        using Logger = Profiler::Perfetto::PerfettoLogger;
+        Logger::instance();
+
+        Logger::UpdateTest();
+
         m_ibv_profiler = &ibv::Profiler::instance();
         m_cuda_profiler = &cuda_trace::NvbitProfiler::instance();
 
