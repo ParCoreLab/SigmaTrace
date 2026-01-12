@@ -1,13 +1,12 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <optional>
 #include <queue>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "EventRecorderConfig.hpp"
@@ -66,7 +65,7 @@ namespace Events {
     public:
         using EnabledEventList = TypeList<EnabledEvents...>;
 
-        explicit EventReaderBase(const RuntimeConfig &config) : m_config(config) {}
+        explicit EventReaderBase(RuntimeConfig config) : m_config(std::move(config)) {}
 
         // Process all events from files, merged by timestamp
         size_t process() {
