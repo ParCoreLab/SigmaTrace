@@ -13,7 +13,8 @@ if (BUILD_NVSHMEM)
             BINARY_DIR "${CMAKE_BINARY_DIR}/nvshmem-build"
             CMAKE_ARGS
             # Performance killers
-            # Release build also kills compile time
+            # Release build also kills compile time.
+            # Debug is too slow to run, Release takes too long to compile with ...DEVICE_INLINING=ON
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
             # -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
             # -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
@@ -35,10 +36,10 @@ if (BUILD_NVSHMEM)
             -DNVSHMEM_BUILD_TXZ_PACKAGE=OFF           # TODO
             -DNVSHMEM_IBDEVX_SUPPORT=ON
             -DNVSHMEM_IBGDA_SUPPORT=ON
-            -DNVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY=ON    # TODO
+            -DNVSHMEM_IBGDA_SUPPORT_GPUMEM_ONLY=ON   # For compatibility with system NVSHMEM. Enable for optimizations
             -DNVSHMEM_DEVEL=OFF
             # Compile time killer
-            -DNVSHMEM_ENABLE_ALL_DEVICE_INLINING=OFF  # TODO
+            -DNVSHMEM_ENABLE_ALL_DEVICE_INLINING=OFF  # Allows sources to show on ncu
             # -DNVSHMEM_GPU_COLL_USE_LDST=ON          # TODO
             -DNVSHMEM_TRACE=OFF
             -DNVSHMEM_USE_GDRCOPY=ON                  # TODO
