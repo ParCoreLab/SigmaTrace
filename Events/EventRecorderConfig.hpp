@@ -2,11 +2,13 @@
 
 #include <concepts>
 #include <filesystem>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <thread>
 
 #include "EventStorage.hpp"
+#include "Events.hpp"
 
 namespace Events {
     // ================================================================
@@ -53,8 +55,9 @@ namespace Events {
         std::filesystem::path MetadataDirectory = OutputDirectory / "metadata";
         std::filesystem::path EventsDirectory = OutputDirectory / "events";
 
+        // TODO
         // Prefix for event files. Probably not really necessary
-        std::string EventFilePrefix = "event";
+        // std::string EventFilePrefix = "event";
 
         // Suffix for event files. Useful for globbing
         std::string EventFileSuffix = ".event";
@@ -81,12 +84,19 @@ namespace Events {
 
         // Get the full path for an event file
         // TODO: may be inefficient
-        Path get_event_file_path(std::thread::id thread_id, const char *event_type_name) const noexcept {
+        Path get_event_file_path(const EventTypeId event_id, const std::thread::id thread_id,
+                                 const char *event_type_name) const noexcept {
             std::ostringstream oss;
-            oss << EventFilePrefix << "_thread" << thread_id << "_" << event_type_name << EventFileSuffix;
+            oss << /* EventFilePrefix << "_" << */ static_cast<EventId_T>(event_id) << "_thread" << thread_id << "_"
+                << event_type_name << EventFileSuffix;
             const auto path = EventsDirectory / oss.str();
             return path;
         }
+
+        // TODO
+        // EventTypeId get_event_id_from_path(Path path) const noexcept {
+        //
+        // }
 
         Path get_metadata_path(std::thread::id thread_id, const char *event_type_name) const noexcept {
             std::ostringstream oss;

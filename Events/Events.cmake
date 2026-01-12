@@ -8,6 +8,7 @@ target_sources(EventsLib INTERFACE
         EventTrait.hpp
         EventStorage.hpp
         EventRecorder.hpp
+        EventReader.hpp
         ThreadLocalBuffer.hpp
         ThreadLocalRingBuffer.hpp
         FileIO/File.hpp
