@@ -91,7 +91,9 @@ static void __attribute__((destructor)) finalize() { LogDebug("Unloaded"); }
 // TODO: can possibly be in namespace ibv
 // TODO: can be generated in Hooks lib instead of here
 // ================================================================
-extern "C" ibv_context *ibv_open_device(ibv_device *device) {
+// TODO: this should be in a helper module in HookLib or be done automatically
+template <typename Tag>
+static void InitMoveThisSomewhereElse() {
     // TODO: Hack! Some libraries dlopen, some dlsym and others just use the symbols
     // This makes sure the symbol we use is the same as a link-time symbol
     // the upstream library uses (I think).
@@ -99,12 +101,15 @@ extern "C" ibv_context *ibv_open_device(ibv_device *device) {
     // If we don't load it, NCCL breaks
     // go figure
     auto &profiler = ibv::Profiler::instance();
-    auto &real_func = profiler.real_func<ibv::open_device_tag>();
+    auto &real_func = profiler.real_func<Tag>();
     if (!real_func) {
         auto *libibverbs_handle = smart_dlsym::real_dlopen("libibverbs.so", RTLD_NOW);
         profiler.resolve_all(libibverbs_handle, smart_dlsym::real_dlsym);
     }
+}
 
+extern "C" ibv_context *ibv_open_device(ibv_device *device) {
+    InitMoveThisSomewhereElse<ibv::open_device_tag>();
     return ibv::Profiler::invoke_preload<ibv::open_device_tag>(device);
 }
 
@@ -122,6 +127,7 @@ extern "C" ibv_mr *ibv_reg_mr(ibv_pd *pd, void *addr, size_t length, int access)
 extern "C" int ibv_dereg_mr(ibv_mr *mr) { return ibv::Profiler::invoke_preload<ibv::dereg_mr_tag>(mr); }
 
 extern "C" ibv_mr *ibv_reg_mr_iova2(ibv_pd *pd, void *addr, size_t length, uint64_t iova, unsigned int access) {
+    InitMoveThisSomewhereElse<ibv::reg_mr_iova2_tag>();
     return ibv::Profiler::invoke_preload<ibv::reg_mr_iova2_tag>(pd, addr, length, iova, access);
 }
 

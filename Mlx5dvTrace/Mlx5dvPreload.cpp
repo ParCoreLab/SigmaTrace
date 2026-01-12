@@ -36,9 +36,10 @@ extern "C" mlx5dv_devx_obj *mlx5dv_devx_obj_create(ibv_context *context, const v
 }
 
 // TODO: this should be in a helper module in HookLib or be done automatically
+template <typename Tag>
 static void InitMoveThisSomewhereElse() {
     auto &profiler = mlx5dv::Profiler::instance();
-    auto &real_func = profiler.real_func<mlx5dv::init_obj_tag>();
+    auto &real_func = profiler.real_func<Tag>();
     if (!real_func) {
         auto *libmlx5_handle = smart_dlsym::real_dlopen("libmlx5.so", RTLD_NOW);
         profiler.resolve_all(libmlx5_handle, smart_dlsym::real_dlsym);
@@ -46,8 +47,7 @@ static void InitMoveThisSomewhereElse() {
 }
 
 extern "C" mlx5dv_devx_umem *mlx5dv_devx_umem_reg(ibv_context *ctx, void *addr, size_t size, uint32_t access) {
-    InitMoveThisSomewhereElse();
-
+    InitMoveThisSomewhereElse<mlx5dv::devx_umem_reg_tag>();
     return mlx5dv::Profiler::invoke_preload<mlx5dv::devx_umem_reg_tag>(ctx, addr, size, access);
 }
 
@@ -56,7 +56,7 @@ extern "C" int mlx5dv_devx_umem_dereg(mlx5dv_devx_umem *umem) {
 }
 
 extern "C" mlx5dv_devx_uar *mlx5dv_devx_alloc_uar(ibv_context *context, uint32_t flags) {
-    InitMoveThisSomewhereElse();
+    InitMoveThisSomewhereElse<mlx5dv::devx_alloc_uar_tag>();
     return mlx5dv::Profiler::invoke_preload<mlx5dv::devx_alloc_uar_tag>(context, flags);
 }
 
