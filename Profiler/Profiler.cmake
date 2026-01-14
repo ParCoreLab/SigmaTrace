@@ -49,6 +49,8 @@ set_property(TARGET Profiler PROPERTY ENABLE_EXPORTS ON)
 target_link_libraries(Profiler PRIVATE CUDATrace)
 #target_link_libraries(Profiler PRIVATE NvbitMemoryTracker)
 
-add_executable(ProfilerEventReader ProfilerEventReader.cpp)
+add_executable(ProfilerEventReader "TraceFile/ProfilerEventReader.cpp")
 target_link_libraries(ProfilerEventReader PRIVATE EventsLib)
 target_include_directories(ProfilerEventReader PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")
+
+target_link_libraries(ProfilerEventReader PRIVATE PerfettoProto)

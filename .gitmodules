@@ -9,3 +9,7 @@
 	path = Imports/nvshmem
 	url = https://github.com/kylosus/nvshmem.git
 	branch = fix-devicelib-cmake
+[submodule "Imports/perfetto"]
+	path = Imports/perfetto
+	url = https://github.com/google/perfetto.git
+	branch = releases/v50.x

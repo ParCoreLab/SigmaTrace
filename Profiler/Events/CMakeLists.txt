@@ -1,3 +1,3 @@
-EventsGenerateProtobuf(ProfilerProtoSimple Simple.proto)
-EventsGenerateProtobuf(ProfilerProtoMlx5dv Mlx5dv.proto)
-
+# UNUSED
+#EventsGenerateProtobuf(ProfilerProtoSimple Simple.proto)
+#EventsGenerateProtobuf(ProfilerProtoMlx5dv Mlx5dv.proto)

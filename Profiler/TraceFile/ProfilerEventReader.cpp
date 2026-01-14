@@ -1,10 +1,13 @@
 #include <fstream>
 #include <iostream>
+#include <unordered_map>
+
+#include <perfetto/trace/perfetto_trace.pb.h>
 
 #include "EventReader.hpp"
 #include "EventRecorderConfig.hpp"
 
-#include "Events/Mlx5DvEvents.hpp"
+#include "../Events/Mlx5DvEvents.hpp"
 
 // Convenience
 using Events::EventHeader;

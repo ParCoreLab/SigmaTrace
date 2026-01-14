@@ -1,4 +1,4 @@
-add_subdirectory(Protobuf)
+#add_subdirectory(Protobuf)
 #add_subdirectory(Flatbuffers)
 
 add_library(EventsLib INTERFACE)
