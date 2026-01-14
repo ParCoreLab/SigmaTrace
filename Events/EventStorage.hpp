@@ -4,13 +4,17 @@
 #include <concepts>
 #include <cstdint>
 
+#include "Events.hpp"
+
 namespace Events {
     // Timestamp in nanoseconds since recorder epoch
     using Timestamp = uint64_t;
 
     // Common header for all events
     struct alignas(8) EventHeader {
-        Timestamp timestamp;
+        Timestamp timestamp{};
+        // TODO: Might be too big...
+        uint64_t _check{MAGIC_VALUE};
     };
 
     // Storage wrapper that combines header + event data

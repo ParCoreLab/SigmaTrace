@@ -4,6 +4,9 @@
 #include <limits>
 
 namespace Events {
+    // CRITICAL: Do not EVER change this. It's for a very basic checksum to validate each event
+    constexpr uint64_t MAGIC_VALUE = std::numeric_limits<decltype(MAGIC_VALUE)>::max();
+
     using EventId_T = uint16_t;
 
     // CRITICAL: Event IDs are stable and MUST NEVER change once assigned lest you break backwards compatibility

@@ -151,7 +151,9 @@ namespace Events {
 
             // Write header
             auto *header = reinterpret_cast<EventHeader *>(slot);
-            header->timestamp = ts;
+
+            // EventHeader has defaults. We construct with them and copy
+            *header = EventHeader{.timestamp = ts};
 
             // Write event data after header
             // TODO: is this ok?
@@ -166,7 +168,9 @@ namespace Events {
 
             // Write header
             auto *header = wrapped_slot.get_header();
-            header->timestamp = ts;
+
+            // EventHeader has defaults. We construct with them and copy
+            *header = EventHeader{.timestamp = ts};
 
             return wrapped_slot;
         }
