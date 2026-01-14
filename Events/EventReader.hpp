@@ -23,39 +23,15 @@ namespace Events {
         static constexpr size_t size = sizeof...(Events);
     };
 
-    // ============================================================================
-    // Tag for dispatch - carries event type info
-    // ============================================================================
-
-    template<typename EventT>
-    struct EventTag {};
-
-    // ============================================================================
-    // SFINAE check: does Derived have visit(EventTag<E>, EventHeader, E) ?
-    // ============================================================================
-
-    template<typename Derived, typename EventT, typename = void>
-    struct HasVisit : std::false_type {};
-
+    // Derived class implements
+    // visit(EventTrait<EventT>, const EventFileHeader &, EventHeader&& header, EventT&& event) for EventT
     template<typename Derived, typename EventT>
-    struct HasVisit<
-            Derived, EventT,
-            std::void_t<decltype(std::declval<Derived>().visit(
-                    std::declval<EventTag<EventT>>(), std::declval<EventHeader &&>(), std::declval<EventT &&>()))>>
-        : std::true_type {};
-
-    template<typename Derived, typename EventT>
-    inline constexpr bool has_visit_v = HasVisit<Derived, EventT>::value;
+    concept Visitable = requires(Derived d) {
+        d.visit(std::declval<EventTrait<EventT>>(), std::declval<const EventFileHeader &>(),
+                std::declval<EventHeader &&>(), std::declval<EventT &&>());
+    };
 
     // ============================================================================
-    // Event Reader Base - CRTP base class
-    //
-    // Derived class implements:
-    //   auto visit(EventTag<MyEvent>, const EventHeader& header, const MyEvent& event)
-    //
-    // The return value is passed to on_result() if provided, or discarded.
-    // ============================================================================
-
     template<typename Derived, typename EventList>
     class EventReaderBase;
 
@@ -68,6 +44,10 @@ namespace Events {
 
         // Process all events from files, merged by timestamp
         size_t process() {
+            // Deferred check - Derived type is complete at this point
+            static_assert((Visitable<Derived, EnabledEvents> && ...),
+                          "Make sure to define a visitor for all EnabledEvents!");
+
             if (m_paths.empty()) {
                 m_paths = find_event_files();
             }
@@ -115,7 +95,7 @@ namespace Events {
                     return;
                 }
 
-                auto pos = stream.tellg();
+                const auto pos = stream.tellg();
 
                 EventHeader header{};
                 stream.read(reinterpret_cast<char *>(&header), sizeof(header));
@@ -241,7 +221,7 @@ namespace Events {
             }
 
             // There must be a visitor for this event if we're at this point
-            derived().visit(EventTag<EventT>{}, std::move(stored.header), std::move(stored.data));
+            derived().visit(EventTrait<EventT>{}, state.file_header, std::move(stored.header), std::move(stored.data));
 
             return true;
         }
