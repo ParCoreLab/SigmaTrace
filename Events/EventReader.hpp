@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <memory>
 #include <queue>
 #include <type_traits>
 #include <utility>
@@ -92,11 +91,22 @@ namespace Events {
             Timestamp next_timestamp{0};
             bool has_event{false};
 
+            EventFileHeader file_header{};
+
             explicit StreamState(const std::filesystem::path &p) : stream(p, std::ios::binary), path(p) {
-                if (stream.is_open()) {
-                    event_id = detect_event_type(p);
-                    peek_next();
+                if (!stream.is_open()) {
+                    return;
                 }
+
+                // File-wide header
+                stream.read(reinterpret_cast<char *>(&file_header), sizeof(file_header));
+                if (stream.gcount() != sizeof(file_header)) {
+                    // TODO: log
+                    return;
+                }
+                event_id = file_header.event_id;
+
+                peek_next();
             }
 
             void peek_next() {
@@ -114,7 +124,7 @@ namespace Events {
                     next_timestamp = header.timestamp;
                     has_event = true;
 
-                    // Go back. Header and data will be rea
+                    // Go back. Header and data will be read later
                     stream.seekg(pos);
                 }
             }

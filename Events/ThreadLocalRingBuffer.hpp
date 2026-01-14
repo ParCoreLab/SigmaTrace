@@ -29,7 +29,8 @@ namespace Events {
         static constexpr size_t Size = ElementSize * Capacity;
 
     public:
-        explicit ThreadLocalRingBuffer(const std::string &file_path) : m_current(0), m_file_buffer(file_path) {}
+        explicit ThreadLocalRingBuffer(auto &&header, const std::string &file_path) :
+            m_current(0), m_file_buffer(std::forward<decltype(header)>(header), file_path) {}
 
         ~ThreadLocalRingBuffer() = default;
 
@@ -101,7 +102,7 @@ namespace Events {
 
         // Stream is faster in most cases
         // FileIO::MmapBuffer<ElementSize, Capacity> m_file_buffer;
-        FileIO::StreamBuffer<ElementSize, Capacity> m_file_buffer;
+        FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
     };
 
     // Type-safe wrapper for specific event types
@@ -135,9 +136,10 @@ namespace Events {
 
     public:
         explicit EventRingBuffer(const RuntimeConfig &config) :
-            m_buffer(config.get_event_file_path(EventTrait<EventT>::id, std::this_thread::get_id(),
-                                                EventTrait<EventT>::name)
-                             .string()) {}
+            m_event_header{std::move(config.get_event_file_header(EventTrait<EventT>::id))},
+            m_buffer(m_event_header, config.get_event_file_path(EventTrait<EventT>::id, std::this_thread::get_id(),
+                                                                EventTrait<EventT>::name)
+                                             .string()) {}
 
         // TODO: switch to span
         EventT *get_slot(const Timestamp ts) noexcept {
@@ -187,6 +189,8 @@ namespace Events {
         static constexpr auto capacity() noexcept { return Capacity; }
 
     private:
+        EventFileHeader m_event_header;
+
         Buffer m_buffer;
         size_t m_dropped_count{0};
     };

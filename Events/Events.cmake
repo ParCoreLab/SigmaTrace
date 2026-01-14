@@ -13,6 +13,7 @@ target_sources(EventsLib INTERFACE
         ThreadLocalRingBuffer.hpp
         FileIO/File.hpp
         FileIO/FileUring.hpp
+        FileIO/SerializableTrait.hpp
 )
 
 target_include_directories(EventsLib INTERFACE

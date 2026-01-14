@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstdint>
+#include <cstddef>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -9,6 +9,9 @@
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <type_traits>
+
+#include "SerializableTrait.hpp"
 
 // TODO: consider using liburing for async file I/O
 // Bypasses kernel for fast IO apparently
@@ -20,12 +23,13 @@
  * - Performance test
  * - Error handling/tolerance
  */
-
 namespace FileIO {
     // TODO: rename this
-    template<template<size_t ElementSize, size_t Capacity> class Impl, size_t ElementSize, size_t Capacity>
+    // TODO: add file header so we don't have to get the event ID from the filename
+    template<Serializable FileHeader, template<typename, std::size_t, std::size_t> class Impl, std::size_t ElementSize,
+             std::size_t Capacity>
     class Buffer {
-        using ImplType = Impl<ElementSize, Capacity>;
+        using ImplType = Impl<FileHeader, ElementSize, Capacity>;
 
     public:
         explicit Buffer(auto &&...args) : m_impl(std::forward<decltype(args)>(args)...) {}
@@ -38,13 +42,14 @@ namespace FileIO {
         ImplType m_impl;
     };
 
-    template<size_t ElementSize, size_t Capacity, uint8_t NumBuffers = 3>
+    template<Serializable FileHeader, std::size_t ElementSize, std::size_t Capacity, uint8_t NumBuffers = 3>
     class StreamBackedBuffer {
         static constexpr auto BufferSize = ElementSize * Capacity;
 
     public:
-        explicit StreamBackedBuffer(const std::string &file_path) {
+        explicit StreamBackedBuffer(const FileHeader &header, const std::string &file_path) {
             m_stream = std::ofstream(file_path, std::ios::out | std::ios::binary);
+            m_stream.write(reinterpret_cast<const char *>(&header), sizeof(header));
         }
 
         // Non-copyable
@@ -93,10 +98,10 @@ namespace FileIO {
 
         // Index of the buffer currently in use
         // TODO: maybe a different type
-        size_t m_current_buffer_index{0};
+        std::size_t m_current_buffer_index{0};
 
         // Amount of data written to the current buffer
-        size_t m_current_buffer_size{0};
+        std::size_t m_current_buffer_size{0};
 
         std::ofstream m_stream;
         std::mutex m_stream_mutex;
@@ -105,21 +110,26 @@ namespace FileIO {
     };
 
     // TODO: We can dynamically set Capacity based on ElementSize for better aligned access
-    template<size_t ElementSize, size_t CapacityHint>
+    template<Serializable FileHeader, std::size_t ElementSize, std::size_t CapacityHint>
     class MmapBackedBuffer {
-        static constexpr size_t HugePageSize = 2 * 1024 * 1024; // 2MB huge pages
-        static constexpr size_t ChunkBytes =
+        static constexpr std::size_t FileHeaderSize = sizeof(FileHeader);
+        static constexpr std::size_t HugePageSize = 2 * 1024 * 1024; // 2MB huge pages
+        static constexpr std::size_t ChunkBytes =
                 ((ElementSize * CapacityHint + HugePageSize - 1) / HugePageSize) * HugePageSize;
 
     public:
-        explicit MmapBackedBuffer(const std::string &file_path) {
+        explicit MmapBackedBuffer(const FileHeader &header, const std::string &file_path) {
             m_fd = open(file_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
             if (m_fd < 0) {
                 throw std::runtime_error("Failed to open file: " + file_path);
             }
 
+            // Safeguard
+            // TODO: this isn't tested enough
+            static_assert(std::is_trivially_copyable_v<FileHeader>);
+
             // Pre-allocate initial chunk using fallocate (faster than ftruncate, no zeroing)
-            m_mapped_size = ChunkBytes;
+            m_mapped_size = ChunkBytes + FileHeaderSize;
             if (fallocate(m_fd, 0, 0, m_mapped_size) < 0) {
                 if (ftruncate(m_fd, m_mapped_size) < 0) {
                     close(m_fd);
@@ -128,6 +138,7 @@ namespace FileIO {
             }
 
             m_base = static_cast<uint8_t *>(mmap(nullptr, m_mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
+            std::memcpy(m_base, header, FileHeaderSize);
 
             if (m_base == MAP_FAILED) {
                 close(m_fd);
@@ -144,7 +155,7 @@ namespace FileIO {
         MmapBackedBuffer &operator=(const MmapBackedBuffer &) = delete;
 
         ~MmapBackedBuffer() {
-            const size_t used_bytes = m_current_index * ElementSize;
+            const std::size_t used_bytes = m_current_index * ElementSize;
             if (m_base && m_base != MAP_FAILED) {
                 msync(m_base, used_bytes, MS_ASYNC);
                 munmap(m_base, m_mapped_size);
@@ -155,13 +166,15 @@ namespace FileIO {
             }
         }
 
-        [[nodiscard]] uint8_t *get_slot() const noexcept { return m_base + m_current_index * ElementSize; }
+        [[nodiscard]] uint8_t *get_slot() const noexcept {
+            return m_base + FileHeaderSize + m_current_index * ElementSize;
+        }
 
         void commit() {
             ++m_current_index;
 
             // Need space for the NEXT slot: current_index * ElementSize + ElementSize
-            const size_t required_bytes = (m_current_index + 1) * ElementSize;
+            const std::size_t required_bytes = (m_current_index + 1) * ElementSize;
             if (required_bytes <= m_mapped_size) [[likely]] {
                 return;
             }
@@ -169,7 +182,7 @@ namespace FileIO {
             std::cout << "Resizing" << std::endl;
 
             // Grow file first
-            const size_t new_size = m_mapped_size + ChunkBytes;
+            const std::size_t new_size = m_mapped_size + ChunkBytes;
             if (fallocate(m_fd, 0, 0, new_size) < 0) {
                 if (ftruncate(m_fd, new_size) < 0) {
                     throw std::runtime_error("Failed to resize file");
@@ -195,13 +208,13 @@ namespace FileIO {
     private:
         int m_fd{-1};
         uint8_t *m_base{nullptr};
-        size_t m_current_index{0};
-        size_t m_mapped_size{0};
+        std::size_t m_current_index{0};
+        std::size_t m_mapped_size{0};
     };
 
-    template<size_t ElementSize, size_t Capacity>
-    using StreamBuffer = Buffer<StreamBackedBuffer, ElementSize, Capacity>;
+    template<Serializable FileHeader, std::size_t ElementSize, std::size_t Capacity>
+    using StreamBuffer = Buffer<FileHeader, StreamBackedBuffer, ElementSize, Capacity>;
 
-    template<size_t ElementSize, size_t Capacity>
-    using MmapBuffer = Buffer<MmapBackedBuffer, ElementSize, Capacity>;
+    template<typename FileHeader, std::size_t ElementSize, std::size_t Capacity>
+    using MmapBuffer = Buffer<FileHeader, MmapBackedBuffer, ElementSize, Capacity>;
 } // namespace FileIO

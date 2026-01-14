@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unistd.h>
+
 #include <concepts>
 #include <filesystem>
 #include <iostream>
@@ -8,7 +10,19 @@
 #include <thread>
 
 #include "EventStorage.hpp"
+#include "EventTrait.hpp"
 #include "Events.hpp"
+#include "FileIO/SerializableTrait.hpp"
+
+namespace Events {
+    struct alignas(8) EventFileHeader {
+        EventTypeId event_id;
+        int32_t process_id;
+        int32_t thread_id;
+    };
+} // namespace Events
+
+DEFINE_SERIALIZABLE_TRAIT(Events::EventFileHeader);
 
 namespace Events {
     // ================================================================
@@ -84,6 +98,7 @@ namespace Events {
 
         // Get the full path for an event file
         // TODO: may be inefficient
+        // TODO: why are we taking std::thread::id here?
         Path get_event_file_path(const EventTypeId event_id, const std::thread::id thread_id,
                                  const char *event_type_name) const noexcept {
             std::ostringstream oss;
@@ -91,6 +106,23 @@ namespace Events {
                 << event_type_name << EventFileSuffix;
             const auto path = EventsDirectory / oss.str();
             return path;
+        }
+
+        // TODO: this is here for convenience but breaks some conventions
+        // I'm unsure if the config here should be static or thread_local first of all
+        // Secondly, does it even really make sense to get pid and tid here?
+        // Third, why is it part of a
+        [[nodiscard]] EventFileHeader get_event_file_header(const EventTypeId event_id) const noexcept {
+            const auto process_id = getpid();
+            const auto thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
+
+            const EventFileHeader header{
+                    .event_id = event_id,
+                    .process_id = process_id,
+                    .thread_id = static_cast<decltype(EventFileHeader::thread_id)>(thread_id),
+            };
+
+            return header;
         }
 
         // TODO
