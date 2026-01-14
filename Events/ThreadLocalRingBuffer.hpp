@@ -137,9 +137,7 @@ namespace Events {
     public:
         explicit EventRingBuffer(const RuntimeConfig &config) :
             m_event_header{std::move(config.get_event_file_header(EventTrait<EventT>::id))},
-            m_buffer(m_event_header, config.get_event_file_path(EventTrait<EventT>::id, std::this_thread::get_id(),
-                                                                EventTrait<EventT>::name)
-                                             .string()) {}
+            m_buffer(m_event_header, config.get_event_file_path<EventT>(std::this_thread::get_id()).string()) {}
 
         // TODO: switch to span
         EventT *get_slot(const Timestamp ts) noexcept {

@@ -137,23 +137,6 @@ namespace Events {
                 }
             }
 
-            static EventTypeId detect_event_type(const std::filesystem::path &p) {
-                // TODO: this should be in a helper in Events config
-                // Also, really ugly code
-                // Expects id_other-st
-                const std::string filename = p.stem().string();
-                const auto end_pos = filename.find('_');
-                if (end_pos == std::string::npos) {
-                    return EventTypeId::Unknown;
-                }
-
-                // TODO: extra copy
-                const auto &substr = filename.substr(0, end_pos);
-                const auto event_id = std::stoi(substr);
-                const auto match = match_event_id(event_id);
-                return match;
-            }
-
             static EventTypeId match_event_id(const EventId_T id) {
                 auto result = EventTypeId::Unknown;
                 std::ignore = ((id == static_cast<EventId_T>(EventTrait<EnabledEvents>::id)
