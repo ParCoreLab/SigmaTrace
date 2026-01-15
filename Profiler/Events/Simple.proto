@@ -1,9 +1,0 @@
-// UNUSED
-
-edition = "2023";
-
-package Profiler;
-
-message ProfilerEvent {
-  int64 hello = 2;
-};

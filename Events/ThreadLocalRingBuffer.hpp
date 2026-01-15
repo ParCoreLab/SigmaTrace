@@ -65,7 +65,7 @@ namespace Events {
                 }
             }
 
-            uint8_t *get() { return m_ptr; }
+            uint8_t *get() const { return m_ptr; }
             uint8_t *&get_internal_ptr() { return m_ptr; }
 
         private:
@@ -130,14 +130,15 @@ namespace Events {
             }
 
         private:
-            TypedSlotPtrWrapper(Buffer::SlotPtrWrapper &&base_wrapper) : m_base_wrapper(std::move(base_wrapper)) {}
+            explicit TypedSlotPtrWrapper(Buffer::SlotPtrWrapper &&base_wrapper) :
+                m_base_wrapper(std::move(base_wrapper)) {}
             Buffer::SlotPtrWrapper m_base_wrapper;
         };
 
     public:
         explicit EventRingBuffer(const RuntimeConfig &config) :
-            m_event_header{std::move(config.get_event_file_header(EventTrait<EventT>::id))},
-            m_buffer(m_event_header, config.get_event_file_path<EventT>(std::this_thread::get_id()).string()) {}
+            m_event_header{std::move(config.get_event_file_header<EventT>())},
+            m_buffer(m_event_header, config.get_event_file_path<EventT>()) {}
 
         // TODO: switch to span
         EventT *get_slot(const Timestamp ts) noexcept {

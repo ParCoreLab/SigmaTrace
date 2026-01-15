@@ -47,7 +47,11 @@ namespace FileIO {
         static constexpr auto BufferSize = ElementSize * Capacity;
 
     public:
-        explicit StreamBackedBuffer(const FileHeader &header, const std::string &file_path) {
+        explicit StreamBackedBuffer(const FileHeader &header, const std::filesystem::path &file_path) {
+            if (std::filesystem::exists(file_path)) {
+                throw std::runtime_error("Trying to write into an existing file: " + file_path.string());
+            }
+
             m_stream = std::ofstream(file_path, std::ios::out | std::ios::binary);
             m_stream.write(reinterpret_cast<const char *>(&header), sizeof(header));
         }
@@ -118,10 +122,14 @@ namespace FileIO {
                 ((ElementSize * CapacityHint + HugePageSize - 1) / HugePageSize) * HugePageSize;
 
     public:
-        explicit MmapBackedBuffer(const FileHeader &header, const std::string &file_path) {
+        explicit MmapBackedBuffer(const FileHeader &header, const std::filesystem::path &file_path) {
+            if (std::filesystem::exists(file_path)) {
+                throw std::runtime_error("Trying to write into an existing file: " + file_path.string());
+            }
+
             m_fd = open(file_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
             if (m_fd < 0) {
-                throw std::runtime_error("Failed to open file: " + file_path);
+                throw std::runtime_error("Failed to open file: " + file_path.string());
             }
 
             // Safeguard

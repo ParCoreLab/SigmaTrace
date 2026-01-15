@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <unordered_map>
 
 #include <perfetto/trace/perfetto_trace.pb.h>
@@ -300,32 +301,47 @@ public:
 
     const std::filesystem::path &get_output_path() { return m_output_path; }
 
-    // Handle DoorbellRing - tag dispatch via EventTag<T>
-    void visit(EventTrait<ProfilerEvents::DoorbellRing>, const EventFileHeader &file_header, EventHeader &&header,
-               ProfilerEvents::DoorbellRing &&event) {
-        // TODO: Extract node_id and gpu_id
-        constexpr uint32_t node_id = 0;
+    void visit(EventTrait<ProfilerEvents::Mlx5MemoryRegistration> T, const EventFileHeader &file_header,
+               EventHeader &&header, ProfilerEvents::Mlx5MemoryRegistration &&event) {
+        using Meta = decltype(T);
+
+        const auto node_id = m_node_ids[file_header.hostname];
+        // TODO: This is wrong. There's just no GPU sometimes
         constexpr uint32_t gpu_id = 0;
 
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
 
         // Emit instant event for doorbell ring
-        m_builder.instant_event(track_uuid, header.timestamp, "Doorbell Ring");
+        m_builder.instant_event(track_uuid, header.timestamp, Meta::name);
+        m_builder.add_annotation("addr", event.addr);
+
+        std::cout << "[" << header.timestamp << "] Memory Registration: addr=0x";
+        std::cout << std::hex << event.addr << std::dec << std::endl;
+    }
+
+    void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader &file_header, EventHeader &&header,
+               ProfilerEvents::DoorbellRing &&event) {
+        using Meta = decltype(T);
+
+        const auto node_id = m_node_ids[file_header.hostname];
+        const auto gpu_id = event.gpu_id;
+
+        // Ensure GPU track exists
+        const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
+
+        // Emit instant event for doorbell ring
+        m_builder.instant_event(track_uuid, header.timestamp, Meta::name);
         m_builder.add_annotation("addr", event.addr);
 
         std::cout << "[" << header.timestamp << "] DoorbellRing: addr=0x";
         std::cout << std::hex << event.addr << std::dec << std::endl;
     }
 
-    // Handle DoorbellRing - tag dispatch via EventTag<T>
     void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader &file_header, EventHeader &&header,
                ProfilerEvents::CUDAKernelLaunch &&event) {
-        // TODO: Extract node_id and gpu_id
-        constexpr uint32_t node_id = 0;
-        constexpr uint32_t gpu_id = 0;
-
-        std::cout << "Entering kernel " << event.kernel_name << std::endl;
+        const auto node_id = m_node_ids[file_header.hostname];
+        const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
@@ -335,14 +351,10 @@ public:
         // m_builder.add_annotation("block_dim", event.block_dim);
     }
 
-    // Handle DoorbellRing - tag dispatch via EventTag<T>
     void visit(EventTrait<ProfilerEvents::CUDAKernelExit>, const EventFileHeader &file_header, EventHeader &&header,
                ProfilerEvents::CUDAKernelExit &&event) {
-        // TODO: Extract node_id and gpu_id
-        constexpr uint32_t node_id = 0;
-        constexpr uint32_t gpu_id = 0;
-
-        std::cout << "Exiting kernel " << event.kernel_name << std::endl;
+        const auto node_id = m_node_ids[file_header.hostname];
+        const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
@@ -422,6 +434,9 @@ public:
 private:
     std::filesystem::path m_output_path;
     PerfettoTraceBuilder m_builder;
+
+    // TODO: This gives First-come, first-serve IDs
+    std::map<std::string, GpuId_T> m_node_ids;
 
     // Track pending operations for flow/slice matching
     // std::unordered_map<uint64_t, uint64_t> m_pending_flows;  // request_id -> flow_id

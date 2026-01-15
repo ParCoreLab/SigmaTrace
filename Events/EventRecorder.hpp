@@ -39,6 +39,7 @@ namespace Events {
         // Primary API: Record an event (automatic timestamp)
         // Usage: recorder.record(MyEvent{ .field1 = value1, ... });
         // TODO: move maybe
+        // TODO: const T& doesn't make sense for how the function is used
         // TODO: option to return a ptr to allocated event in the buffer
         // to initialize directly instead of doing a memcpy later
         // TODO: this might be suboptimal if upstream user creates a new tread every time

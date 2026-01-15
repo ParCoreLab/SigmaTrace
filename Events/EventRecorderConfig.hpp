@@ -5,7 +5,9 @@
 
 #include <concepts>
 #include <filesystem>
+#include <functional>
 #include <iostream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -18,8 +20,9 @@
 namespace Events {
     struct alignas(8) EventFileHeader {
         EventTypeId event_id;
-        int32_t process_id;
-        int32_t thread_id;
+        char hostname[HOST_NAME_MAX];
+        std::uint64_t process_id;
+        std::uint64_t thread_id;
     };
 } // namespace Events
 
@@ -91,13 +94,75 @@ namespace Events {
 
         using Path = std::filesystem::path;
 
+        // Helpers for storage duration
+        static const std::string &get_hostname() {
+            static std::string hostname = std::invoke([]() {
+                char hostname_arr[1024];
+                const int err = gethostname(hostname_arr, sizeof hostname_arr);
+                if (err) {
+                    throw std::runtime_error("gethostname() returned " + std::to_string(err));
+                }
+
+                return std::string(hostname_arr);
+            });
+
+            return hostname;
+        }
+
+        static std::uint64_t get_process_id() noexcept {
+            const static auto process_id{getpid()};
+            return process_id;
+        }
+
+        static std::uint64_t get_thread_id() noexcept {
+            const thread_local auto thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
+            return thread_id;
+        }
+
+        // In case we somehow hit the same node_id, process_id, and thread_id
+        // thread_local will reset when the first thread dies
+        static auto get_thread_discriminant(const int length = 4) noexcept {
+            thread_local std::string value = std::invoke([length] {
+                static constexpr char charset[] = "0123456789"
+                                                  "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                                  "abcdefghijklmnopqrstuvwxyz";
+                constexpr std::size_t N = sizeof(charset) - 1;
+
+                std::mt19937 rng{std::random_device{}()};
+
+                std::string s;
+                s.resize(length);
+
+                for (char &c: s) {
+                    c = charset[rng() % N];
+                }
+
+                return s;
+            });
+
+            return value;
+        }
+
         // Get the full path for an event file
         // TODO: may be inefficient
         // TODO: why are we taking std::thread::id here?
         template<HasEventTrait EventT>
-        Path get_event_file_path(const auto &&file_id) const noexcept {
+        [[nodiscard]] Path get_event_file_path() const noexcept {
+            // TODO: this can be thread_local
             std::ostringstream oss;
-            oss << file_id << "_" << EventTrait<EventT>::name << EventFileSuffix;
+
+            // Get a unique filename
+            // hostname_pid_tid_rand_event_id.events
+            // clang-format off
+            oss << get_hostname() << "_"
+                << get_process_id() << "_"
+                << get_thread_id() << "_"
+                << get_thread_discriminant() << "_";
+            // clang-format on
+
+            // Add the event ID for good measure
+            oss << static_cast<EventId_T>(EventTrait<EventT>::id) << EventFileSuffix;
+
             const auto path = EventsDirectory / oss.str();
             return path;
         }
@@ -106,15 +171,18 @@ namespace Events {
         // I'm unsure if the config here should be static or thread_local first of all
         // Secondly, does it even really make sense to get pid and tid here?
         // Third, why is it part of a
-        [[nodiscard]] EventFileHeader get_event_file_header(const EventTypeId event_id) const noexcept {
-            const auto process_id = getpid();
-            const auto thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
-
-            const EventFileHeader header{
-                    .event_id = event_id,
-                    .process_id = process_id,
-                    .thread_id = static_cast<decltype(EventFileHeader::thread_id)>(thread_id),
+        template<HasEventTrait EventT>
+        [[nodiscard]] EventFileHeader get_event_file_header() const noexcept {
+            // TODO: this can be thread_local
+            EventFileHeader header{
+                    .event_id = EventTrait<EventT>::id,
+                    // .hostname
+                    .process_id = get_process_id(),
+                    .thread_id = get_thread_id(),
             };
+
+            const auto &hostname = get_hostname();
+            snprintf(header.hostname, sizeof header.hostname, "%s", hostname.c_str());
 
             return header;
         }
