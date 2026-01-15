@@ -15,11 +15,11 @@
 
 constexpr auto NumElements = 8192;
 constexpr auto ThreadsPerBlock = 1024;
-constexpr auto NumBlocks = NumElements / ThreadsPerBlock;
+[[maybe_unused]] constexpr auto NumBlocks = NumElements / ThreadsPerBlock;
 static_assert(NumElements % ThreadsPerBlock == 0, "NumElements must be multiple of ThreadsPerBlock");
 
-constexpr auto NumRepeats = 1000;
-constexpr auto ReferenceTimeNs = 31262269; // nanoseconds; it was revealed to me in a dream
+[[maybe_unused]] constexpr auto NumRepeats = 1000;
+[[maybe_unused]] constexpr auto ReferenceTimeNs = 31262269; // nanoseconds; it was revealed to me in a dream
 
 __global__ void set_and_shift_kernel(float *send_data, float *recv_data, int num_elems, int mype, int npes) {
     int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -47,6 +47,14 @@ __global__ void set_and_shift_kernel(float *send_data, float *recv_data, int num
     nvshmemx_float_put_block(dest, src, min(blockDim.x, num_elems - block_offset), peer);
 }
 
+__global__ void simple_shift(int *destination) {
+    int mype = nvshmem_my_pe();
+    int npes = nvshmem_n_pes();
+    int peer = (mype + 1) % npes;
+
+    nvshmem_int_p(destination, mype, peer);
+}
+
 // NVSHMEM program start point
 void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices) {
     // ================================================================
@@ -62,8 +70,8 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
 
     std::cout << "=== Initialized " << device_id << std::endl;
 
-    int my_pe = nvshmem_my_pe();
-    int n_pes = nvshmem_n_pes();
+    const int my_pe = nvshmem_my_pe();
+    const int n_pes = nvshmem_n_pes();
 
     std::cout << "=== Hello from PE " << my_pe << " of " << n_pes << std::endl;
 
@@ -71,8 +79,18 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
     // ================================================================
 
     // ================================================================
+    // Small debug kernel
+    int *destination = static_cast<int *>(nvshmem_malloc(sizeof(int)));
+
+    simple_shift<<<1, 1, 0>>>(destination);
+    CUDA_CHECK(cudaDeviceSynchronize());
+    nvshmem_barrier_all();
+    // ================================================================
+
+    /*
+    // ================================================================
     // Kernel prep and launch
-    // ================================================================c
+    // ================================================================
     auto *send_data = static_cast<float *>(nvshmem_malloc(sizeof(float) * NumElements));
     auto *recv_data = static_cast<float *>(nvshmem_malloc(sizeof(float) * NumElements));
     assert(send_data != nullptr && recv_data != nullptr);
@@ -107,6 +125,7 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
 
     nvshmem_free(send_data);
     nvshmem_free(recv_data);
+    */
 
     nvshmem_finalize();
 }
