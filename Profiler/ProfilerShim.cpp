@@ -24,6 +24,8 @@
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
 
+using Profiler::Events::GpuId_T;
+
 enum class QueueType {
     Unknown,
     WQ,
@@ -96,9 +98,14 @@ struct ProfilerCtx {
     // ================================================
     // Stats
     std::atomic<int> num_nic_accesses{0};
+
+    std::atomic<int> num_kernel_launches{0};
     // ================================================
 
-    ~ProfilerCtx() { std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl; }
+    ~ProfilerCtx() {
+        std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl;
+        std::cout << "[Profiler] num_kernel_launches: " << std::dec << num_kernel_launches << std::endl;
+    }
 
     ProfilerCtx() {
         m_ibv_profiler = &ibv::Profiler::instance();
@@ -271,93 +278,83 @@ struct ProfilerCtx {
                 });
         */
 
-        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>([this](const char *kernel_name) {
-            std::cout << "[Profiler] Kernel launched -> " << kernel_name << std::endl;
+        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
+                [this](GpuId_T gpu_id, const char *kernel_name) {
+                    // std::cout << "[Profiler] Kernel launched -> " << gpu_id << std::endl;
 
-            // TODO: :(
-            Profiler::Events::CUDAKernelLaunch kernel_launch_data{};
-            snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
+                    // TODO: :(
+                    Profiler::Events::CUDAKernelLaunch kernel_launch_data{.gpu_id = gpu_id};
+                    snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
 
-            m_event_recorder->Record(kernel_launch_data);
-        });
+                    m_event_recorder->Record(kernel_launch_data);
 
-        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>([this](const char *kernel_name) {
-            std::cout << "[Profiler] Kernel finished -> " << kernel_name << std::endl;
+                    num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
+                });
 
-            // TODO: :(
-            Profiler::Events::CUDAKernelExit kernel_exit_data{};
-            snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
+        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
+                [this](GpuId_T gpu_id, const char *kernel_name) {
+                    // std::cout << "[Profiler] Kernel finished -> " << gpu_id << std::endl;
 
-            m_event_recorder->Record(kernel_exit_data);
-        });
+                    // TODO: :(
+                    Profiler::Events::CUDAKernelExit kernel_exit_data{.gpu_id = gpu_id};
+                    snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
 
-        m_cuda_profiler->register_pre<cuda_trace::cuda_trace_tag>([this](uint64_t addr, std::string_view sass_str,
-                                                                         auto &&...) {
-            // ================================================
-            // Umem
-            for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
-                if (alloc_addr == addr) {
-                    // std::cout << "UMEM aaaaa" << std::endl;
-                }
+                    m_event_recorder->Record(kernel_exit_data);
+                });
 
-                if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
-                    const auto [alloc_type, queue_type] = m_umem_id_to_type[umem_id];
+        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
+                [this](int gpu_id, uint64_t addr, std::string_view sass_str) {
+                    // ================================================
+                    // Umem
+                    for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
+                        if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
+                            const auto umem_allocation_entry = m_umem_id_to_type.find(umem_id);
+                            if (umem_allocation_entry == m_umem_id_to_type.end()) {
+                                assert(false && "Empty m_umem_id_to_type");
+                                break;
+                            }
 
-                    // TODO: can be string_view
-                    std::string alloc_type_str{alloc_type_as_string(alloc_type)};
+                            const auto [alloc_type, queue_type] = umem_allocation_entry->second;
 
-                    // TODO: for debugging
-                    if (alloc_type == UmemAllocationType::Unknown) {
-                        alloc_type_str += " (ID " + std::to_string(umem_id) + ")";
+                            if (alloc_type == UmemAllocationType::Doorbell) {
+                                std::cout << "Doorbell" << std::endl;
+                                const Profiler::Events::DoorbellRing event{
+                                        .gpu_id = static_cast<int16_t>(gpu_id),
+                                        .nic_id = 0,
+                                        .addr = addr,
+                                        .wqe_index = 0,
+                                        .qp_num = 0,
+                                };
+                                m_event_recorder->Record(event);
+                            }
+
+                            num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+                            return;
+                        }
                     }
+                    // ================================================
 
-                    const std::string_view queue_type_str{queue_type_as_string(queue_type)};
+                    // ================================================
+                    // Uar
+                    {
+                        const auto uar_allocation_entry = m_mlx5_uar_allocations.find(addr);
+                        if (uar_allocation_entry == m_mlx5_uar_allocations.end()) {
+                            return;
+                        }
 
+                        const auto page_id = uar_allocation_entry->second;
 
-                    // std::cout << queue_type_str << " | UMEM yes | " << sass_str << " @ " << std::hex << addr;
-                    // std::cout << " -> " << alloc_type_str << " + " << std::dec << addr - alloc_addr << std::endl;
+                        // TODO: not checking existence
+                        const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
 
-                    if (alloc_type == UmemAllocationType::Doorbell) {
-                        Profiler::Events::DoorbellRing event{.addr = addr};
-                        m_event_recorder->Record(event);
+                        if (alloc_type == UarAllocationType::BlueField) {
+                            // const Profiler::Events::DoorbellRing event{.addr = addr};
+                            // m_event_recorder->Record(event);
+                        }
+                        num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
                     }
-
-                    num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-                    return;
-                }
-            }
-            // ================================================
-
-            // ================================================
-            // Uar
-            {
-                const auto uar_allocation_entry = m_mlx5_uar_allocations.find(addr);
-                if (uar_allocation_entry == m_mlx5_uar_allocations.end()) {
-                    return;
-                }
-
-                const auto page_id = uar_allocation_entry->second;
-
-                // TODO: not checking existence
-                const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
-
-                // TODO: can be string_view
-                std::string alloc_type_str{alloc_type_as_string(alloc_type)};
-
-                // TODO: for debugging
-                if (alloc_type == UarAllocationType::Unknown) {
-                    alloc_type_str += " (ID " + std::to_string(page_id) + ")";
-                }
-
-                const std::string_view queue_type_str{queue_type_as_string(queue_type)};
-
-                // std::cout << queue_type_str << " | UAR yes | " << sass_str << " @ " << std::hex << addr;
-                // std::cout << " -> " << alloc_type_str << std::endl;
-
-                num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-            }
-            // ================================================
-        });
+                    // ================================================
+                });
     }
 
     static ProfilerCtx *instance() {
@@ -365,9 +362,6 @@ struct ProfilerCtx {
 
         if (!instance) {
             instance = std::make_unique<ProfilerCtx>();
-
-            // TODO:
-            printf("Created ProfilerCtx @ %p\n", instance.get());
         }
 
         return instance.get();

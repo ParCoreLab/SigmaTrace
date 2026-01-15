@@ -1,15 +1,18 @@
 #pragma once
 
+#include "Common.hpp"
 #include "EventTrait.hpp"
 
 namespace Profiler::Events {
     // TODO: check if no pointers (const char *)
-    // RIODSIhasiodusahd
+    // TODO: string table instead of copying 1024 bytes every time
     struct alignas(8) CUDAKernelLaunch {
+        GpuId_T gpu_id{-1};
         char kernel_name[1024];
     };
 
     struct alignas(8) CUDAKernelExit {
+        GpuId_T gpu_id{-1};
         char kernel_name[1024];
     };
 } // namespace Profiler::Events

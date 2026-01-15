@@ -36,7 +36,8 @@ public:
     static constexpr uint32_t SEQ_NEEDS_INCREMENTAL_STATE = 2;
 
     // Generate deterministic UUID from components
-    static uint64_t make_uuid(TrackType type, uint32_t node_id = 0, uint32_t gpu_id = 0, uint32_t op_id = 0) {
+    static uint64_t make_uuid(const TrackType type, const uint64_t node_id = 0, const uint64_t gpu_id = 0,
+                              const uint32_t op_id = 0) {
         // Pack: [type:8][node:16][gpu:16][op:24]
         return (static_cast<uint64_t>(type) << 56) | (static_cast<uint64_t>(node_id) << 40) |
                (static_cast<uint64_t>(gpu_id) << 24) | static_cast<uint64_t>(op_id);
@@ -80,10 +81,11 @@ public:
     }
 
     // Register a GPU track (parent: node)
-    uint64_t register_gpu_track(uint32_t node_id, uint32_t gpu_id, const std::string &name = "") {
+    uint64_t register_gpu_track(const GpuId_T node_id, const GpuId_T gpu_id, const std::string &name = "") {
         const uint64_t uuid = make_uuid(TrackType::GPU, node_id, gpu_id);
-        if (m_registered_tracks.count(uuid))
+        if (m_registered_tracks.contains(uuid)) {
             return uuid;
+        }
 
         // Ensure parent node track exists
         register_node_track(node_id);

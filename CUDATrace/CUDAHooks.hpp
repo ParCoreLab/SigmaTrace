@@ -14,10 +14,11 @@ namespace cuda_trace {}
 
 // DEFINE_CUSTOM_HOOK(cuda_trace, cuda_trace, int);
 
-DEFINE_CUSTOM_HOOK(cuda_trace, cuda_trace, uint64_t, std::string_view);
+// TODO: rename this to cuda_mem_op or something
+DEFINE_CUSTOM_HOOK(cuda_trace, cuda_mem_op, int gpu_id, std::uint64_t addr, std::string_view debug_sass);
 
-DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_launch, const char *);
-DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_exit, const char *);
+DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_launch, std::int32_t gpu_id, const char *);
+DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_exit, std::int32_t gpu_id, const char *);
 
 // DEFINE_PRELOAD_HOOK(cuda_trace, cuda_trace, "cuda_trace", int, int);
 

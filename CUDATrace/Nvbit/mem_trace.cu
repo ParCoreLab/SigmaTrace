@@ -42,6 +42,12 @@
 
 #include <regex>
 
+// Suppresses static analysis errors from nvbit_tool.h
+// __device__ __noinline__ uint64_t func()
+#ifndef __noinline__
+#define __noinline__ __attribute__((noinline))
+#endif
+
 /* every tool needs to include this once */
 #include "nvbit_tool.h"
 
@@ -301,18 +307,33 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
                     /* insert call to the instrumentation function with its
                      * arguments */
                     nvbit_insert_call(instr, "instrument_mem", IPOINT_BEFORE);
+
                     /* predicate value */
                     nvbit_add_call_arg_guard_pred_val(instr);
+
+                    /* GPU id */
+                    // TODO: does it make sense to pass it to the GPU like this?
+                    int32_t gpu_id{};
+                    cudaGetDevice(&gpu_id);
+                    // TODO: better error handling
+                    assert(cudaGetLastError() == cudaSuccess);
+
+                    nvbit_add_call_arg_const_val32(instr, gpu_id);
+
                     /* opcode id */
                     nvbit_add_call_arg_const_val32(instr, opcode_entry->second);
+
                     /* memory reference 64 bit address */
                     nvbit_add_call_arg_mref_addr64(instr, mref_idx);
+
                     /* add "space" for kernel function pointer that will be set
                      * at launch time (64 bit value at offset 0 of the dynamic
                      * arguments)*/
                     nvbit_add_call_arg_launch_val64(instr, 0);
+
                     /* add pointer to channel_dev*/
                     nvbit_add_call_arg_const_val64(instr, (uint64_t) ctx_state->channel_dev);
+
                     mref_idx++;
                 }
             }
@@ -336,8 +357,13 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_l
                                 void *params, bool stream_capture = false, bool build_graph = false) {
     auto &profiler = cuda_trace::NvbitProfiler::instance();
 
+    int32_t gpu_id{};
+    cudaGetDevice(&gpu_id);
+    // TODO: better error handling
+    assert(cudaGetLastError() == cudaSuccess);
+
     const char *kernel_name{nvbit_get_func_name(ctx, func)};
-    profiler.invoke_custom<cuda_trace::cuda_kernel_launch_tag>(kernel_name);
+    profiler.invoke_custom<cuda_trace::cuda_kernel_launch_tag>(gpu_id, kernel_name);
 
     // no need to sync during stream capture or manual graph build, since no
     // kernel is actually launched.
@@ -403,8 +429,13 @@ static void leave_kernel_launch(CTXstate *ctx_state, CUcontext ctx, CUfunction f
     // TODO: Might be better to do it after cudaDeviceSynchronize
     auto &profiler = cuda_trace::NvbitProfiler::instance();
 
+    int32_t gpu_id{};
+    cudaGetDevice(&gpu_id);
+    // TODO: better error handling
+    assert(cudaGetLastError() == cudaSuccess);
+
     const char *kernel_name{nvbit_get_func_name(ctx, func)};
-    profiler.invoke_custom<cuda_trace::cuda_kernel_exit_tag>(kernel_name);
+    profiler.invoke_custom<cuda_trace::cuda_kernel_exit_tag>(gpu_id, kernel_name);
 
     // make sure user kernel finishes to avoid deadlock
     cudaDeviceSynchronize();
@@ -586,7 +617,8 @@ void *recv_thread_fun(void *args) {
                 //     std::cout << HEX(ma->addrs[i]) << " ";
                 // }
 
-                profiler.invoke_custom<cuda_trace::cuda_trace_tag>(ma->addrs[0], id_to_opcode_map[ma->opcode_id]);
+                profiler.invoke_custom<cuda_trace::cuda_mem_op_tag>(ma->gpu_id, ma->addrs[0],
+                                                                    id_to_opcode_map[ma->opcode_id]);
 
                 // cuda_trace::Profiler::invoke_preload<cuda_trace::cuda_trace_tag>(0);
 

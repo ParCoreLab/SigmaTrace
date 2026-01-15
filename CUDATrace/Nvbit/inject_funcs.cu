@@ -30,7 +30,6 @@
  */
 
 #include <stdint.h>
-#include <stdio.h>
 
 #include "utils/utils.h"
 
@@ -40,8 +39,13 @@
 /* contains definition of the mem_access_t structure */
 #include "common.h"
 
-extern "C" __device__ __noinline__ void instrument_mem(int pred, int opcode_id, uint64_t addr, uint64_t grid_launch_id,
-                                                       uint64_t pchannel_dev) {
+#ifndef __noinline__
+#define __noinline__ __attribute__((noinline))
+#endif
+
+// TODO: passing dev_id here is a bit weird
+extern "C" __device__ void instrument_mem(int pred, int gpu_id, int opcode_id, uint64_t addr, uint64_t grid_launch_id,
+                                          uint64_t pchannel_dev) {
     /* if thread is predicated off, return */
     if (!pred) {
         return;
@@ -52,6 +56,7 @@ extern "C" __device__ __noinline__ void instrument_mem(int pred, int opcode_id, 
     const int first_laneid = __ffs(active_mask) - 1;
 
     mem_access_t ma;
+    ma.gpu_id = gpu_id;
 
     /* collect memory address information from other threads */
     for (int i = 0; i < 32; i++) {
