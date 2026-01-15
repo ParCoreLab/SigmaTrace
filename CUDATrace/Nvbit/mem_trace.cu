@@ -447,6 +447,17 @@ static void leave_kernel_launch(CTXstate *ctx_state, CUcontext ctx, CUfunction f
     assert(cudaGetLastError() == cudaSuccess);
 }
 
+static void enter_mem_alloc(const void *addr, const std::size_t size) {
+    auto &profiler = cuda_trace::NvbitProfiler::instance();
+    profiler.invoke_custom<cuda_trace::cuda_mem_alloc_tag>(reinterpret_cast<std::uint64_t>(addr), size);
+}
+
+static void enter_mem_register(const void *addr, const std::size_t size, const unsigned int flags) {
+    auto &profiler = cuda_trace::NvbitProfiler::instance();
+    profiler.invoke_custom<cuda_trace::cuda_mem_register_tag>(reinterpret_cast<std::uint64_t>(addr), size, flags);
+}
+
+
 void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, const char *name, void *params,
                          CUresult *pStatus) {
     pthread_mutex_lock(&cuda_event_mutex);
@@ -462,6 +473,86 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
     CTXstate *ctx_state = ctx_state_map[ctx];
 
     switch (cbid) {
+        // Why are there so many??? Ue CUPTI
+        // Insane
+        case API_CUDA_cuMemAlloc: {
+            const auto *p = static_cast<cuMemAlloc_params *>(params);
+            enter_mem_alloc(p->dptr, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAlloc_v2: {
+            const auto *p = static_cast<cuMemAlloc_v2_params *>(params);
+            enter_mem_alloc(p->dptr, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocHost: {
+            const auto *p = static_cast<cuMemAllocHost_params *>(params);
+            // TODO: maybe dereference p->pp
+            enter_mem_alloc(p->pp, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocHost_v2: {
+            const auto *p = static_cast<cuMemAllocHost_v2_params *>(params);
+            enter_mem_alloc(p->pp, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocManaged: {
+            const auto *p = static_cast<cuMemAllocManaged_params *>(params);
+            enter_mem_alloc(p->dptr, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocAsync: {
+            const auto *p = static_cast<cuMemAllocAsync_params *>(params);
+            enter_mem_alloc(p->dptr, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocAsync_ptsz: {
+            const auto *p = static_cast<cuMemAllocAsync_ptsz_params *>(params);
+            enter_mem_alloc(p->dptr, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocFromPoolAsync: {
+            const auto *p = static_cast<cuMemAllocFromPoolAsync_params *>(params);
+            enter_mem_alloc(p->dptr, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocFromPoolAsync_ptsz: {
+            const auto *p = static_cast<cuMemAllocFromPoolAsync_ptsz_params *>(params);
+            enter_mem_alloc(p->dptr, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemAllocPitch:
+        case API_CUDA_cuMemAllocPitch_v2: {
+            // TODO: Unhandled because pitch size calculation
+            // const auto *p = static_cast<cuMemAllocPitch_params *>(params);
+            // enter_mem_alloc(p->dptr, p->);
+            // break;
+            assert(false && "NVBIT cuMemAllocPitch hooks not registered");
+            break;
+        }
+        case API_CUDA_cuMemHostAlloc: {
+            const auto *p = static_cast<cuMemAllocHost_params *>(params);
+            // TODO: maybe dereference p->pp
+            enter_mem_alloc(p->pp, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemHostAlloc_v2: {
+            const auto *p = static_cast<cuMemAllocHost_v2_params *>(params);
+            // TODO: maybe dereference p->pp
+            enter_mem_alloc(p->pp, p->bytesize);
+            break;
+        }
+        case API_CUDA_cuMemHostRegister: {
+            const auto *p = static_cast<cuMemHostRegister_params *>(params);
+            enter_mem_register(p->p, p->bytesize, p->Flags);
+            break;
+        }
+        case API_CUDA_cuMemHostRegister_v2: {
+            const auto *p = static_cast<cuMemHostRegister_v2_params *>(params);
+            // TODO: maybe dereference p->pp
+            enter_mem_register(p->p, p->bytesize, p->Flags);
+            break;
+        }
         // Identify all the possible CUDA launch events without stream
         // parameters, they will not get involved with cuda graph
         case API_CUDA_cuLaunch:

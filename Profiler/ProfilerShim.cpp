@@ -76,6 +76,13 @@ struct ProfilerCtx {
     std::mutex m_ibv_allocations_mutex;
 
     // ================================================
+    // GPU memory allocaations
+    // addr -> { size, gpu_id }
+    // TODO: Make the value a proper struct so we don't have to do std::get<whatever->second>
+    std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations;
+    // ================================================
+
+    // ================================================
     using AddrType = uint64_t;
 
     // see mlx5_ifc.h
@@ -113,6 +120,24 @@ struct ProfilerCtx {
         m_mlx5dv_profiler = &mlx5dv::Profiler::instance();
 
         m_event_recorder = &Events::EventRecorder<>::instance();
+
+        // TODO: pass this along
+        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>([this](uint64_t addr, std::size_t size) {
+            // std::cout << "GPU Mem allocation hit at " << std::hex << addr << std::dec << std::endl;
+
+            // auto gpu_id = find_gpu_index(addr);
+            // m_gpu_allocations[addr] = {size, gpu_id};
+        });
+
+        // TODO: pass this along
+        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_register_tag>(
+                [this](uint64_t addr, std::size_t size, unsigned int flags) {
+                    // std::cout << "GPU Mem registration hit at " << std::hex << addr << std::dec << std::endl;
+
+                    // auto gpu_id = find_gpu_index(addr);
+                    // m_gpu_allocations[addr] = {size, gpu_id};
+                });
+
 
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>([](auto &&, mlx5dv_obj *obj, uint64_t obj_type) {
             if (obj_type & MLX5DV_OBJ_QP) {
@@ -238,6 +263,15 @@ struct ProfilerCtx {
                 [this](mlx5dv_devx_umem *out_umem, ibv_context *ctx, void *addr, size_t size, uint32_t access) {
                     // std::cout << "[profiler] umem_reg: " << out_umem->umem_id << std::endl;
                     auto umem_addr = reinterpret_cast<uint64_t>(addr);
+
+                    // TODO: extra copy because Record(const T&)
+                    m_event_recorder->Record<Profiler::Events::Mlx5MemoryRegistration>({
+                            .gpu_id = 0,
+                            .nic_id = 0,
+                            .addr = umem_addr,
+                            .size = size,
+                    });
+
                     std::scoped_lock lock(m_ibv_allocations_mutex);
                     m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
                 });

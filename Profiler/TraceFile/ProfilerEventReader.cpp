@@ -17,9 +17,10 @@ using Events::EventHeader;
 using Events::EventTrait;
 
 namespace ProfilerEvents = Profiler::Events;
+using Profiler::Events::GpuId_T;
 
-using EnabledEvents = Events::TypeList<ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
-                                       ProfilerEvents::CUDAKernelExit>;
+using EnabledEvents = Events::TypeList<ProfilerEvents::Mlx5MemoryRegistration, ProfilerEvents::DoorbellRing,
+                                       ProfilerEvents::CUDAKernelLaunch, ProfilerEvents::CUDAKernelExit>;
 
 // ============================================================================
 // PerfettoTraceBuilder - Helper for constructing Perfetto traces

@@ -23,7 +23,9 @@ namespace Events {
         IbvReqNotifyCq = 104,
         IbvCompletion = 105, // Individual work completion
 
+        // mlx5dv specific events
         Mlx5dvDoorbellRing = 200,
+        Mlx5MemoryRegistration = 201,
 
         // CUDA events (200-299) - reserved for future
         CudaKernelLaunch = 300,
