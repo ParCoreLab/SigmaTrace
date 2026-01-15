@@ -7,14 +7,16 @@
 // ================================================================
 namespace mlx5dv {
     Profiler::Profiler() {
-        std::cout << "mlx5dv Profiler Created" << std::endl;
+        // std::cout << "mlx5dv Profiler Created" << std::endl;
 
         // this->register_all_pre([]<typename Tag>(auto &&...) {
         //     std::cout << "mlx5dv hit something!" << std::endl;
         // });
     }
 
-    Profiler::~Profiler() { std::cout << "mlx5dv Profiler Destroyed" << std::endl; }
+    Profiler::~Profiler() {
+        // std::cout << "mlx5dv Profiler Destroyed" << std::endl;
+    }
 } // namespace mlx5dv
 // ================================================================
 
@@ -36,7 +38,7 @@ extern "C" mlx5dv_devx_obj *mlx5dv_devx_obj_create(ibv_context *context, const v
 }
 
 // TODO: this should be in a helper module in HookLib or be done automatically
-template <typename Tag>
+template<typename Tag>
 static void InitMoveThisSomewhereElse() {
     auto &profiler = mlx5dv::Profiler::instance();
     auto &real_func = profiler.real_func<Tag>();

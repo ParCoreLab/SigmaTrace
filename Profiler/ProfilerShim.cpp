@@ -14,10 +14,9 @@
 #include "infiniband/mlx5dv.h"
 #include "infiniband/verbs.h"
 
+// TODO: this is inside NVSHMEM. May be NVSHMEM or RDMA-CORE version dependent
 #include "mlx5/mlx5_ifc.h"
 #include "mlx5/mlx5_prm.h"
-// TODO: this is inside NVSHMEM. May be NVSHMEM or RDMA-CORE version dependent
-// constexpr auto MLX5_CMD_OP_CREATE_QP { 0x500 };
 
 #include "CUDAEventSource.hpp"
 #include "CUDAEvents.hpp"
@@ -32,20 +31,10 @@ enum class QueueType {
     CQ,
 };
 
-static std::string_view queue_type_as_string(QueueType type) {
-    switch (type) {
-        case QueueType::WQ:
-            return "WQ";
-        case QueueType::CQ:
-            return "CQ";
-        default:
-            return "Unknown";
-    }
-}
-
 enum class UmemAllocationType {
     Unknown = 0,
     WQE,
+    // TODO: BlueFlame, not BlueField
     BlueField,
     Doorbell,
 };
@@ -92,9 +81,8 @@ struct ProfilerCtx {
     using UarPageIdType = std::remove_extent_t<decltype(mlx5dv_devx_uar::page_id)>;
     static_assert(sizeof(UarPageIdType) == sizeof(uint32_t));
 
-    // Registered umem IDs to its buffer typsdas
+    // Registered umem and uar IDs to its buffer type
     std::map<UmemIdType, std::tuple<UmemAllocationType, QueueType>> m_umem_id_to_type;
-
     std::map<UarPageIdType, std::tuple<UarAllocationType, QueueType>> m_uar_id_to_type;
 
     // <addr, length, umem ID>
@@ -161,7 +149,7 @@ struct ProfilerCtx {
 
             if (mlx5_cmd_opcode == MLX5_CMD_OP_CREATE_QP) {
                 // ================================================
-                const auto queue_type = QueueType::WQ;
+                constexpr auto queue_type = QueueType::WQ;
 
                 // WQ buffer
                 auto wg_umem_id = DEVX_GET(create_qp_in, cmd_in, wq_umem_id);
@@ -182,46 +170,31 @@ struct ProfilerCtx {
                 // TODO: Doorbell Offset
                 auto wq_doorbell_offset = DEVX_GET64(qpc, qp_context, dbr_addr);
                 // ================================================
-
-                // DEBUG
-                // std::cout << "WQ Buffer ID: " << wg_umem_id << std::endl;
-                // std::cout << "WQ BF Register ID: " << bf_register_uar_id << std::endl;
-                // std::cout << "WQ Doorbell Register ID: " << doorbell_register_umem_id << std::endl;
-                // std::cout << "WQ Doorbell Offset: " << wq_doorbell_offset << std::endl;
-
                 return;
             }
 
             if (mlx5_cmd_opcode == MLX5_CMD_OP_CREATE_CQ) {
                 // ================================================
-                const auto queue_type = QueueType::CQ;
+                constexpr auto queue_type = QueueType::CQ;
 
                 // CQ buffer
-                auto cq_umem_id = DEVX_GET(create_cq_in, cmd_in, cq_umem_id);
+                const auto cq_umem_id = DEVX_GET(create_cq_in, cmd_in, cq_umem_id);
                 m_umem_id_to_type[cq_umem_id] = {UmemAllocationType::WQE, queue_type};
 
                 // Context
-                auto *cq_context = DEVX_ADDR_OF(create_cq_in, cmd_in, cq_context);
+                const auto *cq_context = DEVX_ADDR_OF(create_cq_in, cmd_in, cq_context);
 
-                // BlueField
-                auto bf_register_uar_id = DEVX_GET(cqc, cq_context, uar_page);
+                // BlueFlame
+                const auto bf_register_uar_id = DEVX_GET(cqc, cq_context, uar_page);
                 m_uar_id_to_type[bf_register_uar_id] = {UarAllocationType::BlueField, queue_type};
 
                 // Doorbell
-                auto doorbell_register_umem_id = DEVX_GET(cqc, cq_context, dbr_umem_id);
+                const auto doorbell_register_umem_id = DEVX_GET(cqc, cq_context, dbr_umem_id);
                 m_umem_id_to_type[doorbell_register_umem_id] = {UmemAllocationType::Doorbell, queue_type};
 
                 // TODO: Doorbell Offset
-                auto cq_doorbell_offset = DEVX_GET64(cqc, cq_context, dbr_addr); // DBR offset
+                const auto cq_doorbell_offset = DEVX_GET64(cqc, cq_context, dbr_addr);
                 // ================================================
-
-                // DEBUG
-                // std::cout << "CQ Buffer ID: " << cq_umem_id << std::endl;
-                // std::cout << "CQ BF Register ID: " << bf_register_uar_id << std::endl;
-                // std::cout << "CQ Doorbell Register ID: " << doorbell_register_umem_id << std::endl;
-                // std::cout << "CQ Doorbell Offset: " << cq_doorbell_offset << std::endl;
-
-                return;
             }
         });
 
@@ -261,7 +234,6 @@ struct ProfilerCtx {
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
                 [this](mlx5dv_devx_umem *out_umem, ibv_context *ctx, void *addr, size_t size, uint32_t access) {
-                    // std::cout << "[profiler] umem_reg: " << out_umem->umem_id << std::endl;
                     auto umem_addr = reinterpret_cast<uint64_t>(addr);
 
                     // TODO: extra copy because Record(const T&)
@@ -273,13 +245,12 @@ struct ProfilerCtx {
                     });
 
                     std::scoped_lock lock(m_ibv_allocations_mutex);
+
                     m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
                 });
 
         m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem *umem) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
-
-            // std::cout << "umem_dereg " << std::dec << umem->umem_id << std::endl;
 
             for (auto it = m_mlx5_umem_allocations.begin(); it != m_mlx5_umem_allocations.end(); ++it) {
                 if (std::get<2>(*it) == umem->umem_id) {

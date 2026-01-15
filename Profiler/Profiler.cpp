@@ -3,8 +3,6 @@
 #include "Launcher.hpp"
 
 int main(int argc, char *argv[]) {
-    std::cout << "ok" << std::endl;
-
     // TODO: boost::program_options in the future
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <program> [args]" << std::endl;
