@@ -4,6 +4,9 @@
 #include <type_traits>
 #include <vector>
 
+#include <cuda_runtime.h>
+#include "cuda_helper.hpp"
+
 #include "EventRecorder.hpp"
 #include "EventTrait.hpp"
 #include "Events.hpp"
@@ -58,6 +61,19 @@ static std::string_view alloc_type_as_string(EnumT type) {
         default:
             return "Unknown";
     }
+}
+
+// TODO: for debugging
+static int find_gpu_index(const uint64_t addr) {
+    cudaPointerAttributes attrs{};
+    CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<const void *>(addr)));
+
+    if (attrs.type == cudaMemoryTypeUnregistered) {
+        return -1;
+    }
+
+    assert(attrs.device > 0 && "Returning invalid device ID from get_gpu_index");
+    return attrs.device;
 }
 
 struct ProfilerCtx {

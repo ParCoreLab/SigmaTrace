@@ -22,6 +22,10 @@ target_link_libraries(ProfilerShim PUBLIC
 )
 set_target_properties(ProfilerShim PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
+# Runtime dependencies
+target_link_libraries(ProfilerShim PRIVATE CUDA::cudart)
+target_link_libraries(ProfilerShim PRIVATE cuda_helper)
+
 # Shim dependencies
 target_include_directories(ProfilerShim PRIVATE ${CMAKE_SOURCE_DIR}/Ibtrace)
 target_link_libraries(ProfilerShim PUBLIC CUDATrace)
