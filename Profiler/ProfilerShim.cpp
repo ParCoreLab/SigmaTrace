@@ -108,14 +108,12 @@ struct ProfilerCtx {
         m_event_recorder = &Events::EventRecorder<>::instance();
 
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>([](auto &&, mlx5dv_obj *obj, uint64_t obj_type) {
-            std::cout << "[Profiler] mlx5dv is alive!" << std::endl;
-
             if (obj_type & MLX5DV_OBJ_QP) {
-                std::cout << "QP created" << std::endl;
+                std::cout << "TODO: QP created" << std::endl;
             }
 
             if (obj_type & MLX5DV_OBJ_CQ) {
-                std::cout << "CQ created" << std::endl;
+                std::cout << "TODO: CQ created" << std::endl;
             }
         });
 
@@ -154,10 +152,10 @@ struct ProfilerCtx {
                 // ================================================
 
                 // DEBUG
-                std::cout << "WQ Buffer ID: " << wg_umem_id << std::endl;
-                std::cout << "WQ BF Register ID: " << bf_register_uar_id << std::endl;
-                std::cout << "WQ Doorbell Register ID: " << doorbell_register_umem_id << std::endl;
-                std::cout << "WQ Doorbell Offset: " << wq_doorbell_offset << std::endl;
+                // std::cout << "WQ Buffer ID: " << wg_umem_id << std::endl;
+                // std::cout << "WQ BF Register ID: " << bf_register_uar_id << std::endl;
+                // std::cout << "WQ Doorbell Register ID: " << doorbell_register_umem_id << std::endl;
+                // std::cout << "WQ Doorbell Offset: " << wq_doorbell_offset << std::endl;
 
                 return;
             }
@@ -186,10 +184,10 @@ struct ProfilerCtx {
                 // ================================================
 
                 // DEBUG
-                std::cout << "CQ Buffer ID: " << cq_umem_id << std::endl;
-                std::cout << "CQ BF Register ID: " << bf_register_uar_id << std::endl;
-                std::cout << "CQ Doorbell Register ID: " << doorbell_register_umem_id << std::endl;
-                std::cout << "CQ Doorbell Offset: " << cq_doorbell_offset << std::endl;
+                // std::cout << "CQ Buffer ID: " << cq_umem_id << std::endl;
+                // std::cout << "CQ BF Register ID: " << bf_register_uar_id << std::endl;
+                // std::cout << "CQ Doorbell Register ID: " << doorbell_register_umem_id << std::endl;
+                // std::cout << "CQ Doorbell Offset: " << cq_doorbell_offset << std::endl;
 
                 return;
             }
@@ -212,7 +210,7 @@ struct ProfilerCtx {
                      */
 
                     if (!(flags & MLX5DV_UAR_ALLOC_TYPE_BF)) {
-                        std::cerr << "[Profiler] mlx5dv_devx_alloc_uar with non-BlueField flag" << std::endl;
+                        // std::cerr << "[Profiler] mlx5dv_devx_alloc_uar with non-BlueField flag" << std::endl;
                     }
                 });
 
@@ -299,7 +297,7 @@ struct ProfilerCtx {
             // Umem
             for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
                 if (alloc_addr == addr) {
-                    std::cout << "UMEM aaaaa" << std::endl;
+                    // std::cout << "UMEM aaaaa" << std::endl;
                 }
 
                 if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
@@ -316,8 +314,8 @@ struct ProfilerCtx {
                     const std::string_view queue_type_str{queue_type_as_string(queue_type)};
 
 
-                    std::cout << queue_type_str << " | UMEM yes | " << sass_str << " @ " << std::hex << addr;
-                    std::cout << " -> " << alloc_type_str << " + " << std::dec << addr - alloc_addr << std::endl;
+                    // std::cout << queue_type_str << " | UMEM yes | " << sass_str << " @ " << std::hex << addr;
+                    // std::cout << " -> " << alloc_type_str << " + " << std::dec << addr - alloc_addr << std::endl;
 
                     if (alloc_type == UmemAllocationType::Doorbell) {
                         Profiler::Events::DoorbellRing event{.addr = addr};
@@ -353,8 +351,8 @@ struct ProfilerCtx {
 
                 const std::string_view queue_type_str{queue_type_as_string(queue_type)};
 
-                std::cout << queue_type_str << " | UAR yes | " << sass_str << " @ " << std::hex << addr;
-                std::cout << " -> " << alloc_type_str << std::endl;
+                // std::cout << queue_type_str << " | UAR yes | " << sass_str << " @ " << std::hex << addr;
+                // std::cout << " -> " << alloc_type_str << std::endl;
 
                 num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
             }
