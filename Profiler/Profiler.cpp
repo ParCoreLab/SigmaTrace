@@ -18,6 +18,6 @@ int main(int argc, char *argv[]) {
     // TODO: vector because it may be configurable in the future
     const std::vector<std::string> ld_shims{"libprofiler_shim.so"};
 
-    auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, ld_shims);
+    const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, ld_shims);
     return ret;
 }

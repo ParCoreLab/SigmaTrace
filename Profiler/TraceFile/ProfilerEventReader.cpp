@@ -7,15 +7,18 @@
 #include "EventReader.hpp"
 #include "EventRecorderConfig.hpp"
 
+#include "../Events/CUDAEvents.hpp"
 #include "../Events/Mlx5DvEvents.hpp"
 
 // Convenience
 using Events::EventFileHeader;
 using Events::EventHeader;
 using Events::EventTrait;
-using Profiler::Events::DoorbellRing;
 
-using EnabledEvents = Events::TypeList<DoorbellRing>;
+namespace ProfilerEvents = Profiler::Events;
+
+using EnabledEvents = Events::TypeList<ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
+                                       ProfilerEvents::CUDAKernelExit>;
 
 // ============================================================================
 // PerfettoTraceBuilder - Helper for constructing Perfetto traces
@@ -298,8 +301,8 @@ public:
     const std::filesystem::path &get_output_path() { return m_output_path; }
 
     // Handle DoorbellRing - tag dispatch via EventTag<T>
-    void visit(EventTrait<DoorbellRing>, const EventFileHeader &file_header, EventHeader &&header,
-               DoorbellRing &&event) {
+    void visit(EventTrait<ProfilerEvents::DoorbellRing>, const EventFileHeader &file_header, EventHeader &&header,
+               ProfilerEvents::DoorbellRing &&event) {
         // TODO: Extract node_id and gpu_id
         constexpr uint32_t node_id = 0;
         constexpr uint32_t gpu_id = 0;
@@ -313,6 +316,38 @@ public:
 
         std::cout << "[" << header.timestamp << "] DoorbellRing: addr=0x";
         std::cout << std::hex << event.addr << std::dec << std::endl;
+    }
+
+    // Handle DoorbellRing - tag dispatch via EventTag<T>
+    void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader &file_header, EventHeader &&header,
+               ProfilerEvents::CUDAKernelLaunch &&event) {
+        // TODO: Extract node_id and gpu_id
+        constexpr uint32_t node_id = 0;
+        constexpr uint32_t gpu_id = 0;
+
+        std::cout << "Entering kernel " << event.kernel_name << std::endl;
+
+        // Ensure GPU track exists
+        const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
+
+        m_builder.begin_slice(track_uuid, header.timestamp, event.kernel_name, "cuda");
+        // m_builder.add_annotation("grid_dim", event.grid_dim);
+        // m_builder.add_annotation("block_dim", event.block_dim);
+    }
+
+    // Handle DoorbellRing - tag dispatch via EventTag<T>
+    void visit(EventTrait<ProfilerEvents::CUDAKernelExit>, const EventFileHeader &file_header, EventHeader &&header,
+               ProfilerEvents::CUDAKernelExit &&event) {
+        // TODO: Extract node_id and gpu_id
+        constexpr uint32_t node_id = 0;
+        constexpr uint32_t gpu_id = 0;
+
+        std::cout << "Exiting kernel " << event.kernel_name << std::endl;
+
+        // Ensure GPU track exists
+        const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
+
+        m_builder.end_slice(track_uuid, header.timestamp);
     }
 
     // ========================================================================
@@ -361,8 +396,8 @@ public:
     }
 
     // Kernel completion
-    void visit(EventTag<KernelComplete>, const EventFileHeader &file_header, EventHeader &&header, KernelComplete &&event) {
-        if (auto it = m_pending_kernels.find(event.correlation_id); it != m_pending_kernels.end()) {
+    void visit(EventTag<KernelComplete>, const EventFileHeader &file_header, EventHeader &&header, KernelComplete
+    &&event) { if (auto it = m_pending_kernels.find(event.correlation_id); it != m_pending_kernels.end()) {
             m_builder.end_slice(it->second.track_uuid, header.timestamp);
             m_pending_kernels.erase(it);
         }

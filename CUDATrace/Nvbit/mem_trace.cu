@@ -334,6 +334,11 @@ void init_context_state(CUcontext ctx) {
 
 static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_launch_id, nvbit_api_cuda_t cbid,
                                 void *params, bool stream_capture = false, bool build_graph = false) {
+    auto &profiler = cuda_trace::NvbitProfiler::instance();
+
+    const char *kernel_name{nvbit_get_func_name(ctx, func)};
+    profiler.invoke_custom<cuda_trace::cuda_kernel_launch_tag>(kernel_name);
+
     // no need to sync during stream capture or manual graph build, since no
     // kernel is actually launched.
     // TODO: Probably not necessary
@@ -394,7 +399,13 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_l
 }
 
 // the function is only called for non cuda graph launch cases.
-static void leave_kernel_launch(CTXstate *ctx_state, uint64_t &grid_launch_id) {
+static void leave_kernel_launch(CTXstate *ctx_state, CUcontext ctx, CUfunction func, uint64_t &grid_launch_id) {
+    // TODO: Might be better to do it after cudaDeviceSynchronize
+    auto &profiler = cuda_trace::NvbitProfiler::instance();
+
+    const char *kernel_name{nvbit_get_func_name(ctx, func)};
+    profiler.invoke_custom<cuda_trace::cuda_kernel_exit_tag>(kernel_name);
+
     // make sure user kernel finishes to avoid deadlock
     cudaDeviceSynchronize();
     /* push a flush channel kernel */
@@ -429,7 +440,7 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
             if (!is_exit) {
                 enter_kernel_launch(ctx, func, global_grid_launch_id, cbid, params);
             } else {
-                leave_kernel_launch(ctx_state, global_grid_launch_id);
+                leave_kernel_launch(ctx_state, ctx, func, global_grid_launch_id);
             }
         } break;
         // To support kernel launched by cuda graph (in addition to existing kernel
@@ -500,7 +511,7 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
                     if (verbose >= 1) {
                         printf("kernel %s not captured by cuda graph\n", nvbit_get_func_name(ctx, func));
                     }
-                    leave_kernel_launch(ctx_state, global_grid_launch_id);
+                    leave_kernel_launch(ctx_state, ctx, func, global_grid_launch_id);
                 } else {
                     if (verbose >= 1) {
                         printf("kernel %s captured by cuda graph\n", nvbit_get_func_name(ctx, func));
@@ -556,8 +567,6 @@ void *recv_thread_fun(void *args) {
     char *recv_buffer = (char *) malloc(CHANNEL_SIZE);
 
     auto &profiler = cuda_trace::NvbitProfiler::instance();
-
-    // profiler.invoke_custom<cuda_trace::cuda_trace_tag>(0);
 
     while (ctx_state->recv_thread_done == RecvThreadState::WORKING) {
         /* receive buffer from channel */

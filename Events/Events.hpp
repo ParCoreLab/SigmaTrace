@@ -27,9 +27,10 @@ namespace Events {
 
         // CUDA events (200-299) - reserved for future
         CudaKernelLaunch = 300,
-        CudaMemcpy = 301,
-        CudaMemset = 302,
-        CudaSync = 303,
+        CudaKernelExit = 301,
+        CudaMemcpy = 302,
+        CudaMemset = 303,
+        CudaSync = 304,
 
         // NCCL events (300-399) - reserved for future
         NcclAllReduce = 400,

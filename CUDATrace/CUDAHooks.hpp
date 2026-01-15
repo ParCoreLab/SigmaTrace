@@ -16,6 +16,9 @@ namespace cuda_trace {}
 
 DEFINE_CUSTOM_HOOK(cuda_trace, cuda_trace, uint64_t, std::string_view);
 
+DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_launch, const char *);
+DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_exit, const char *);
+
 // DEFINE_PRELOAD_HOOK(cuda_trace, cuda_trace, "cuda_trace", int, int);
 
 

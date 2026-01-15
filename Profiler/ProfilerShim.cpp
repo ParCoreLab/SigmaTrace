@@ -20,6 +20,7 @@
 // constexpr auto MLX5_CMD_OP_CREATE_QP { 0x500 };
 
 #include "CUDAEventSource.hpp"
+#include "CUDAEvents.hpp"
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
 
@@ -272,10 +273,28 @@ struct ProfilerCtx {
                 });
         */
 
+        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>([this](const char *kernel_name) {
+            std::cout << "[Profiler] Kernel launched -> " << kernel_name << std::endl;
+
+            // TODO: :(
+            Profiler::Events::CUDAKernelLaunch kernel_launch_data{};
+            snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
+
+            m_event_recorder->Record(kernel_launch_data);
+        });
+
+        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>([this](const char *kernel_name) {
+            std::cout << "[Profiler] Kernel finished -> " << kernel_name << std::endl;
+
+            // TODO: :(
+            Profiler::Events::CUDAKernelExit kernel_exit_data{};
+            snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
+
+            m_event_recorder->Record(kernel_exit_data);
+        });
+
         m_cuda_profiler->register_pre<cuda_trace::cuda_trace_tag>([this](uint64_t addr, std::string_view sass_str,
                                                                          auto &&...) {
-            // std::cout << "[Profiler] CUDA memory event received at " << std::hex << addr << std::endl;
-
             // ================================================
             // Umem
             for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
