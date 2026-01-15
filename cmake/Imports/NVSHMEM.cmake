@@ -1,4 +1,4 @@
-option(BUILD_NVSHMEM "Build bundled NVSHMEM" ON)
+option(BUILD_NVSHMEM "Build bundled NVSHMEM" OFF)
 set(NVSHMEM_ROOT "" CACHE PATH "Prefix where system NVSHMEM is installed")
 
 if (BUILD_NVSHMEM)

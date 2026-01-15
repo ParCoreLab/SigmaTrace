@@ -1,4 +1,4 @@
-option(BUILD_RDMA_CORE "Build bundled rdma-core" ON)
+option(BUILD_RDMA_CORE "Build bundled rdma-core" OFF)
 set(RDMA_ROOT "" CACHE PATH "Prefix where system rdma-core is installed")
 
 set(RDMA_INCLUDE_DIR "")

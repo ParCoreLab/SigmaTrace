@@ -1,4 +1,4 @@
-option(BUILD_NCCL "Build bundled NCCL" ON)
+option(BUILD_NCCL "Build bundled NCCL" OFF)
 set(NCCL_ROOT "" CACHE PATH "Prefix where system NCCL is installed")
 
 if (BUILD_NCCL)
