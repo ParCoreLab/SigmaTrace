@@ -29,8 +29,10 @@ class PerfettoTraceBuilder {
 public:
     static constexpr std::string_view FILE_SUFFIX{".pftrace"};
 
-    // Track hierarchy: Root -> Node -> GPU -> Operation tracks
-    enum class TrackType { Root, Node, GPU, Operation };
+    // Track hierarchy: Root -> Node -> [CPU, GPU, NIC] -> Operation tracks
+    enum class TrackType { Root = 0, Node, CPU, GPU, NIC, Operation };
+    // TODO: dumb. Make tracks dynamic
+    static constexpr std::array<std::string_view, 6> TrackTypeStr{"Root", "Node", "CPU", "GPU", "NIC", "Operation"};
 
     // Sequence flags from Perfetto
     static constexpr uint32_t SEQ_INCREMENTAL_STATE_CLEARED = 1;
@@ -64,7 +66,7 @@ public:
         m_registered_tracks[uuid] = true;
     }
 
-    // Register a node track (parent: root)
+    // One node is one network host
     uint64_t register_node_track(uint32_t node_id, const std::string &name = "") {
         const uint64_t uuid = make_uuid(TrackType::Node, node_id);
         if (m_registered_tracks.contains(uuid)) {
@@ -81,9 +83,10 @@ public:
         return uuid;
     }
 
-    // Register a GPU track (parent: node)
-    uint64_t register_gpu_track(const GpuId_T node_id, const GpuId_T gpu_id, const std::string &name = "") {
-        const uint64_t uuid = make_uuid(TrackType::GPU, node_id, gpu_id);
+    // Register a CPU/GPU/NIC track
+    uint64_t register_device_track(const TrackType track_type, const GpuId_T node_id, const GpuId_T device_id,
+                                   const std::string &name = "") {
+        const uint64_t uuid = make_uuid(track_type, node_id, device_id);
         if (m_registered_tracks.contains(uuid)) {
             return uuid;
         }
@@ -96,20 +99,31 @@ public:
         auto *desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
         desc->set_parent_uuid(make_uuid(TrackType::Node, node_id));
-        desc->set_name(name.empty() ? "GPU " + std::to_string(gpu_id) : name);
+
+        std::stringstream ss;
+
+        //  GPU 0: GPU-1234
+        ss << TrackTypeStr[static_cast<size_t>(track_type)] << device_id;
+        if (!name.empty()) {
+            ss << ": " << name;
+        }
+
+        desc->set_name(ss.str());
+
         m_registered_tracks[uuid] = true;
         return uuid;
     }
 
     // Register an operation track for async operations (parent: GPU)
-    uint64_t register_operation_track(uint32_t node_id, uint32_t gpu_id, uint32_t op_id, const std::string &name) {
+    uint64_t register_operation_track(const GpuId_T node_id, const GpuId_T gpu_id, const GpuId_T op_id,
+                                      const std::string &name) {
         const uint64_t uuid = make_uuid(TrackType::Operation, node_id, gpu_id, op_id);
         if (m_registered_tracks.contains(uuid)) {
             return uuid;
         }
 
         // Ensure parent GPU track exists
-        register_gpu_track(node_id, gpu_id);
+        register_device_track(TrackType::GPU, node_id, gpu_id);
 
         auto *packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
@@ -282,6 +296,8 @@ private:
 // ProfilerEventReader - Converts binary events to Perfetto traces
 // ============================================================================
 class ProfilerEventReader : public Events::EventReaderBase<ProfilerEventReader, EnabledEvents> {
+    using TrackType = PerfettoTraceBuilder::TrackType;
+
 public:
     explicit ProfilerEventReader(const Events::RuntimeConfig &config, const std::filesystem::path &output_path) :
         EventReaderBase(config), m_output_path(output_path) {
@@ -310,14 +326,14 @@ public:
 
         const auto node_id = m_node_ids[file_header.hostname];
         // TODO: This is wrong. There's just no GPU sometimes
-        constexpr uint32_t gpu_id = 0;
+        const auto nic_id = event.nic_id;
 
         // Ensure GPU track exists
-        const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, node_id, nic_id);
 
-        // Emit instant event for doorbell ring
         m_builder.instant_event(track_uuid, header.timestamp, Meta::name);
         m_builder.add_annotation("addr", event.addr);
+        m_builder.add_annotation("size", event.size);
 
         std::cout << "[" << header.timestamp << "] Memory Registration: addr=0x";
         std::cout << std::hex << event.addr << std::dec << std::endl;
@@ -331,7 +347,7 @@ public:
         const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
-        const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, node_id, gpu_id);
 
         // Emit instant event for doorbell ring
         m_builder.instant_event(track_uuid, header.timestamp, Meta::name);
@@ -347,7 +363,7 @@ public:
         const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
-        const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, node_id, gpu_id);
 
         m_builder.begin_slice(track_uuid, header.timestamp, event.kernel_name, "cuda");
         // m_builder.add_annotation("grid_dim", event.grid_dim);
@@ -360,7 +376,7 @@ public:
         const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
-        const uint64_t track_uuid = m_builder.register_gpu_track(node_id, gpu_id);
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, node_id, gpu_id);
 
         m_builder.end_slice(track_uuid, header.timestamp);
     }

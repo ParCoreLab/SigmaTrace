@@ -10,6 +10,7 @@
 namespace Profiler::Events {
     struct alignas(8) Mlx5MemoryRegistration {
         GpuId_T gpu_id;
+        // TODO: should be GpuId_T (or something similar)
         int16_t nic_id;
         uint32_t mem_id;
         uint64_t addr;
