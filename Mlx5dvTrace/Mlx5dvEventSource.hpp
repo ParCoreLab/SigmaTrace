@@ -7,9 +7,9 @@
 namespace mlx5dv {
     template<typename Derived>
     class Mlx5dvEventSource
-        : public hook::CompositeHookManager<Derived, int, init_obj_tag, devx_umem_reg_tag, devx_umem_dereg_tag,
+        : public hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, init_obj_tag, devx_umem_reg_tag, devx_umem_dereg_tag,
                                             obj_create_tag, devx_alloc_uar_tag, devx_free_uar_tag> {
-        using Base = hook::CompositeHookManager<Derived, int, init_obj_tag, devx_umem_reg_tag, devx_umem_dereg_tag,
+        using Base = hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, init_obj_tag, devx_umem_reg_tag, devx_umem_dereg_tag,
                                                 obj_create_tag, devx_alloc_uar_tag, devx_free_uar_tag>;
 
     public:

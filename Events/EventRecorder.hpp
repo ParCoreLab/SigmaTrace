@@ -40,16 +40,21 @@ namespace Events {
         // Usage: recorder.record(MyEvent{ .field1 = value1, ... });
         // TODO: move maybe
         // TODO: const T& doesn't make sense for how the function is used
-        // TODO: option to return a ptr to allocated event in the buffer
         // to initialize directly instead of doing a memcpy later
         // TODO: this might be suboptimal if upstream user creates a new tread every time
         template<HasEventTrait EventT>
-        void Record(const EventT &event) {
+        void Record(const EventT &event, Timestamp ts_start, Timestamp ts_end = {}) {
             using BareT = BareType_t<EventT>;
-            const Timestamp ts = m_timestamp_source.now();
             auto &thread_buffers = ThreadBufferRegistry::instance().get_thread_buffers();
             auto &buffer = thread_buffers.get_or_create<BareT>(m_runtime_config);
-            buffer.buffer().record(event, ts);
+            buffer.buffer().record(event, ts_start, ts_end);
+        }
+
+        // Records a one-off with only start timestamp
+        template<HasEventTrait EventT>
+        void Record(EventT &&event) {
+            const Timestamp ts = m_timestamp_source.now();
+            return Record(std::forward<EventT>(event), ts);
         }
 
         // TODO: repetition

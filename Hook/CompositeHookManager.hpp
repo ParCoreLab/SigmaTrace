@@ -2,12 +2,32 @@
 
 #include <type_traits>
 
+#include "Helpers/Timestamp.hpp"
+
 #include "CallbackManager.hpp"
 #include "HookTrait.hpp"
+
 #include "detail/ObjectOpsHookManager.hpp"
 #include "detail/PreloadHookManager.hpp"
 
 namespace hook {
+    // ================================================================
+    namespace TS = Helpers::TS;
+
+    // Concept requires TimestampSource, other fields have defaults
+    template<typename T>
+    concept HookManagerConfig = requires {
+        // Must specify a TimestampSource type
+        typename T::TimestampSourceType;
+        requires TS::TimestampSource<typename T::TimestampSourceType>;
+    };
+
+    struct DefaultHookManagerConfig {
+        using TimestampSourceType = TS::RdtscTimestampSource;
+    };
+    static_assert(HookManagerConfig<DefaultHookManagerConfig>);
+    // ================================================================
+
     // ================================================================
     // Concepts for better error messages
 
@@ -36,12 +56,15 @@ namespace hook {
     //   };
     // ================================================================
     // TODO: Get rid of ObjectType
-    template<typename Derived, typename ObjectType, typename... Tags>
+    template<typename Derived, HookManagerConfig Config, typename ObjectType, typename... Tags>
     class CompositeHookManager : public CallbackManager<Derived, Tags...> {
         static_assert(!ValidHookTag<ObjectType>,
                       "Missing ObjectType. Did you mistakenly define as <Derived, ...Tags>?");
 
         using Base = CallbackManager<Derived, Tags...>;
+
+        using TimestampSource = Config::TimestampSourceType;
+        TimestampSource m_timestamp{};
 
         /*
          *TODO: Right now both implementations get all the tags.
@@ -92,9 +115,10 @@ namespace hook {
         // ================================================================
         template<ValidEventTag Tag, typename... Args>
             requires is_custom_hook_v<Tag>
-        void invoke_custom(Args... args) {
+        void invoke_custom(Args &&...args) noexcept {
             // TODO: pre only
-            this->template invoke_all_pre<Tag>(args...);
+            auto ts_start = m_timestamp.now();
+            this->template invoke_all_pre<Tag>(std::forward<Args>(args)..., ts_start);
         }
 
         // ================================================================
@@ -134,7 +158,10 @@ namespace hook {
         static auto invoke_preload(Args... args) -> HookTrait<Tag>::RetType {
             auto &mgr = instance();
 
-            mgr.template invoke_all_pre<Tag>(args...);
+            // Start timestamp as soon as the function hook is invoked
+            auto ts_start = mgr.m_timestamp.now();
+
+            mgr.template invoke_all_pre<Tag>(args..., ts_start);
 
             auto real = mgr.template real_func<Tag>();
 
@@ -146,7 +173,10 @@ namespace hook {
 
             auto ret = real(args...);
 
-            mgr.template invoke_all_post<Tag>(ret, args...);
+            // End timestamp
+            auto ts_end = mgr.m_timestamp.now();
+
+            mgr.template invoke_all_post<Tag>(ret, std::forward<Args>(args)..., ts_start, ts_end);
 
             return ret;
         }
@@ -214,11 +244,16 @@ namespace hook {
         static auto invoke_object_ops(Args... args) -> typename HookTrait<Tag>::RetType {
             auto &mgr = instance();
 
+            // Start timestamp as soon as the function hook is invoked
+            auto ts_start = mgr.m_timestamp.now();
+
+            // We can't std::forward multiple times
             ObjectType *obj = static_cast<Derived &>(mgr).template get_object_from_args<Tag>(args...);
             Context *ctx = mgr.m_object_ops_impl.find(obj);
 
             if (!ctx) {
                 // Fallback - shouldn't happen in normal operation
+                // TODO: maybe the callbacks should get an std::optional or std::expected
                 if constexpr (std::is_void_v<typename HookTrait<Tag>::RetType>) {
                     return;
                 } else {
@@ -232,8 +267,11 @@ namespace hook {
             auto original = ctx->template original<Tag>();
             auto ret = original(args...);
 
+            // End timestamp
+            auto ts_end = mgr.m_timestamp.now();
+
             // Post-hooks with context
-            mgr.template invoke_post_with_context<Tag>(*ctx, ret, args...);
+            mgr.template invoke_post_with_context<Tag>(*ctx, ret, args..., ts_start, ts_end);
 
             return ret;
         }

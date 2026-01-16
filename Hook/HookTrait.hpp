@@ -106,8 +106,8 @@ namespace hook {
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__);                                                                     \
         using RetType = ret_type;                                                                                      \
-        using PreCallback = std::function<void(__VA_ARGS__)>;                                                          \
-        using PostCallback = std::function<void(ret_type, __VA_ARGS__)>;                                               \
+        using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
+        using PostCallback = std::function<void(ret_type, __VA_ARGS__, Timestamp, Timestamp)>;                         \
         static constexpr hook::HookType type = hook::HookType::Preload;                                                \
         static constexpr const char *name = #hook_name;                                                                \
         static constexpr const char *symbol_name = sym_name;                                                           \
@@ -131,8 +131,8 @@ namespace hook {
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__);                                                                     \
         using RetType = ret_type;                                                                                      \
-        using PreCallback = std::function<void(__VA_ARGS__)>;                                                          \
-        using PostCallback = std::function<void(ret_type, __VA_ARGS__)>;                                               \
+        using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
+        using PostCallback = std::function<void(ret_type, __VA_ARGS__, Timestamp, Timestamp)>;                         \
         static constexpr hook::HookType type = hook::HookType::ObjectOps;                                              \
         static constexpr const char *name = #hook_name;                                                                \
         static constexpr const char *symbol_name = sym_name;                                                           \
@@ -150,8 +150,8 @@ namespace hook {
         using FuncPtr = void (*)(__VA_ARGS__);                                                                         \
         using RetType = void;                                                                                          \
         using Callback = std::function<void(__VA_ARGS__)>;                                                             \
-        using PreCallback = std::function<void(__VA_ARGS__)>;                                                          \
-        using PostCallback = std::function<void(__VA_ARGS__)>;                                                         \
+        using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
+        using PostCallback = std::function<void(__VA_ARGS__, Timestamp, Timestamp)>;                                   \
         static constexpr hook::HookType type = hook::HookType::Custom;                                                 \
         static constexpr const char *name = #hook_name;                                                                \
         static constexpr auto arg_names = VA_ARGS_TO_STRING_TUPLE(__VA_ARGS__);                                        \

@@ -138,7 +138,7 @@ public:
     // ========================================================================
     // Slice Events (for RDMA operations, kernel launches, etc.)
     // ========================================================================
-
+    // TODO: std::string_view
     void begin_slice(uint64_t track_uuid, uint64_t timestamp_ns, const std::string &name,
                      const std::string &category = "rdma") {
         auto *packet = m_trace.add_packet();
@@ -160,6 +160,12 @@ public:
         auto *event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_END);
+    }
+
+    void add_slice(const uint64_t track_uuid, const uint64_t ts_start, const uint64_t ts_end, const std::string &name,
+                   const std::string &category = "rdma") {
+        begin_slice(track_uuid, ts_start, name, category);
+        end_slice(track_uuid, ts_end);
     }
 
     // Convenience: emit instant event (for doorbell rings, completions, etc.)
@@ -331,11 +337,14 @@ public:
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, node_id, nic_id);
 
-        m_builder.instant_event(track_uuid, header.timestamp, Meta::name);
+        m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, "mlx5dv");
         m_builder.add_annotation("addr", event.addr);
         m_builder.add_annotation("size", event.size);
 
-        std::cout << "[" << header.timestamp << "] Memory Registration: addr=0x";
+        m_builder.add_annotation("Process ID", file_header.process_id);
+        m_builder.add_annotation("Thread ID", file_header.thread_id);
+
+        std::cout << "[" << header.timestamp_start << "] Memory Registration: addr=0x";
         std::cout << std::hex << event.addr << std::dec << std::endl;
     }
 
@@ -350,10 +359,10 @@ public:
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, node_id, gpu_id);
 
         // Emit instant event for doorbell ring
-        m_builder.instant_event(track_uuid, header.timestamp, Meta::name);
+        m_builder.instant_event(track_uuid, header.timestamp_start, Meta::name);
         m_builder.add_annotation("addr", event.addr);
 
-        std::cout << "[" << header.timestamp << "] DoorbellRing: addr=0x";
+        std::cout << "[" << header.timestamp_start << "] DoorbellRing: addr=0x";
         std::cout << std::hex << event.addr << std::dec << std::endl;
     }
 
@@ -365,7 +374,7 @@ public:
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, node_id, gpu_id);
 
-        m_builder.begin_slice(track_uuid, header.timestamp, event.kernel_name, "cuda");
+        m_builder.begin_slice(track_uuid, header.timestamp_start, event.kernel_name, "cuda");
         // m_builder.add_annotation("grid_dim", event.grid_dim);
         // m_builder.add_annotation("block_dim", event.block_dim);
     }
@@ -378,7 +387,7 @@ public:
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, node_id, gpu_id);
 
-        m_builder.end_slice(track_uuid, header.timestamp);
+        m_builder.end_slice(track_uuid, header.timestamp_start);
     }
 
     // ========================================================================

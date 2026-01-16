@@ -126,16 +126,17 @@ struct ProfilerCtx {
         m_event_recorder = &Events::EventRecorder<>::instance();
 
         // TODO: pass this along
-        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>([this](uint64_t addr, std::size_t size) {
-            // std::cout << "GPU Mem allocation hit at " << std::hex << addr << std::dec << std::endl;
+        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>(
+                [this](uint64_t addr, std::size_t size, auto &&...) {
+                    // std::cout << "GPU Mem allocation hit at " << std::hex << addr << std::dec << std::endl;
 
-            // auto gpu_id = find_gpu_index(addr);
-            // m_gpu_allocations[addr] = {size, gpu_id};
-        });
+                    // auto gpu_id = find_gpu_index(addr);
+                    // m_gpu_allocations[addr] = {size, gpu_id};
+                });
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_register_tag>(
-                [this](uint64_t addr, std::size_t size, unsigned int flags) {
+                [this](uint64_t addr, std::size_t size, unsigned int flags, auto &&...) {
                     // std::cout << "GPU Mem registration hit at " << std::hex << addr << std::dec << std::endl;
 
                     // auto gpu_id = find_gpu_index(addr);
@@ -143,19 +144,20 @@ struct ProfilerCtx {
                 });
 
 
-        m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>([](auto &&, mlx5dv_obj *obj, uint64_t obj_type) {
-            if (obj_type & MLX5DV_OBJ_QP) {
-                std::cout << "TODO: QP created" << std::endl;
-            }
+        m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>(
+                [](auto &&, mlx5dv_obj *obj, uint64_t obj_type, auto &&...) {
+                    if (obj_type & MLX5DV_OBJ_QP) {
+                        std::cout << "TODO: QP created" << std::endl;
+                    }
 
-            if (obj_type & MLX5DV_OBJ_CQ) {
-                std::cout << "TODO: CQ created" << std::endl;
-            }
-        });
+                    if (obj_type & MLX5DV_OBJ_CQ) {
+                        std::cout << "TODO: CQ created" << std::endl;
+                    }
+                });
 
         m_mlx5dv_profiler->register_post<mlx5dv::obj_create_tag>([this](mlx5dv_devx_obj *out_obj, ibv_context *context,
                                                                         const void *cmd_in, size_t inlen, void *out,
-                                                                        size_t outlen) {
+                                                                        size_t outlen, auto &&...) {
             assert(out_obj && "mlx5dv::obj_create_tag resulted in null");
 
             // TODO
@@ -215,7 +217,7 @@ struct ProfilerCtx {
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
-                [this](mlx5dv_devx_uar *out_uar, ibv_context *context, uint32_t flags) {
+                [this](mlx5dv_devx_uar *out_uar, ibv_context *context, uint32_t flags, auto &&...) {
                     auto uar_reg_addr = reinterpret_cast<uint64_t>(out_uar->reg_addr);
                     // auto uar_base_addr = reinterpret_cast<uint64_t>(out_uar->base_addr);
 
@@ -235,7 +237,7 @@ struct ProfilerCtx {
                     }
                 });
 
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar *devx_uar) {
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar *devx_uar, auto &&...) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
             const auto &uar_alloc = m_mlx5_uar_allocations.find(devx_uar->page_id);
@@ -249,23 +251,26 @@ struct ProfilerCtx {
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
-                [this](mlx5dv_devx_umem *out_umem, ibv_context *ctx, void *addr, size_t size, uint32_t access) {
+                [this]<typename TS>(mlx5dv_devx_umem *out_umem, ibv_context *ctx, void *addr, size_t size,
+                                    uint32_t access, TS ts_start, TS ts_end) {
                     auto umem_addr = reinterpret_cast<uint64_t>(addr);
 
                     // TODO: extra copy because Record(const T&)
-                    m_event_recorder->Record<Profiler::Events::Mlx5MemoryRegistration>({
-                            .gpu_id = 0,
-                            .nic_id = 0,
-                            .addr = umem_addr,
-                            .size = size,
-                    });
+                    m_event_recorder->Record<Profiler::Events::Mlx5MemoryRegistration>(
+                            {
+                                    .gpu_id = 0,
+                                    .nic_id = 0,
+                                    .addr = umem_addr,
+                                    .size = size,
+                            },
+                            ts_start, ts_end);
 
                     std::scoped_lock lock(m_ibv_allocations_mutex);
 
                     m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
                 });
 
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem *umem) {
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem *umem, auto &&...) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
             for (auto it = m_mlx5_umem_allocations.begin(); it != m_mlx5_umem_allocations.end(); ++it) {
@@ -279,11 +284,12 @@ struct ProfilerCtx {
                       << std::endl;
         });
 
-        /* IBV stuff unused for now
-        m_ibv_profiler->register_pre<ibv::open_device_tag>([](auto &&...) {
+
+        m_ibv_profiler->register_post<ibv::open_device_tag>([](auto &&, ibv_device *, auto &&...) {
             std::cout << "[Profiler] ibv_open_device received" << std::endl;
         });
 
+        /* IBV stuff unused for now
         m_ibv_profiler->register_post<ibv::reg_mr_tag>(
                 [this](ibv_mr *out_mr, ibv_pd *pd, void *addr, size_t length, int access) {
                     auto alloc_addr = reinterpret_cast<uint64_t>(addr);
@@ -300,7 +306,7 @@ struct ProfilerCtx {
         */
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
-                [this](GpuId_T gpu_id, const char *kernel_name) {
+                [this](GpuId_T gpu_id, const char *kernel_name, auto &&...) {
                     // std::cout << "[Profiler] Kernel launched -> " << gpu_id << std::endl;
 
                     // TODO: :(
@@ -313,7 +319,7 @@ struct ProfilerCtx {
                 });
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
-                [this](GpuId_T gpu_id, const char *kernel_name) {
+                [this](GpuId_T gpu_id, const char *kernel_name, auto &&...) {
                     // std::cout << "[Profiler] Kernel finished -> " << gpu_id << std::endl;
 
                     // TODO: :(
@@ -324,7 +330,7 @@ struct ProfilerCtx {
                 });
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
-                [this](int gpu_id, uint64_t addr, std::string_view sass_str) {
+                [this](int gpu_id, uint64_t addr, std::string_view sass_str, auto &&...) {
                     // ================================================
                     // Umem
                     for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {

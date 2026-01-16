@@ -141,7 +141,7 @@ namespace Events {
             m_buffer(m_event_header, config.get_event_file_path<EventT>()) {}
 
         // TODO: switch to span
-        EventT *get_slot(const Timestamp ts) noexcept {
+        EventT *get_slot(const Timestamp ts_start, const Timestamp ts_end) noexcept {
             if (m_buffer.current_idx() >= m_buffer.capacity()) {
                 m_dropped_count++;
             }
@@ -152,7 +152,7 @@ namespace Events {
             auto *header = reinterpret_cast<EventHeader *>(slot);
 
             // EventHeader has defaults. We construct with them and copy
-            *header = EventHeader{.timestamp = ts};
+            *header = EventHeader(ts_start, ts_end);
 
             // Write event data after header
             // TODO: is this ok?
@@ -162,22 +162,22 @@ namespace Events {
             return data;
         }
 
-        TypedSlotPtrWrapper get_wrapped_slot(const Timestamp ts) noexcept {
+        TypedSlotPtrWrapper get_wrapped_slot(const Timestamp ts_start, const Timestamp ts_end) noexcept {
             TypedSlotPtrWrapper wrapped_slot{m_buffer.get_wrapped_slot()};
 
             // Write header
             auto *header = wrapped_slot.get_header();
 
             // EventHeader has defaults. We construct with them and copy
-            *header = EventHeader{.timestamp = ts};
+            *header = EventHeader(ts_start, ts_end);
 
             return wrapped_slot;
         }
 
         // Record an event with provided timestamp
         // TODO: should probably return true or false
-        void record(const EventT &event, const Timestamp ts) noexcept {
-            auto *slot = get_slot(ts);
+        void record(const EventT &event, const Timestamp ts_start, const Timestamp ts_end) noexcept {
+            auto *slot = get_slot(ts_start, ts_end);
 
             EventTrait<EventT>::SerializeTo(event, slot);
 

@@ -64,7 +64,7 @@ namespace ibv {
         // ================================================================
         // Set up for installing hooks into ctx
         // ================================================================
-        this->register_post<open_device_tag>([this](ibv_context *ctx, ibv_device *) {
+        this->register_post<open_device_tag>([this](ibv_context *ctx, ibv_device *, auto &&...) {
             if (ctx) {
                 this->install(ctx);
 
@@ -72,7 +72,7 @@ namespace ibv {
             }
         });
 
-        this->register_post<close_device_tag>([this](int, ibv_context *ctx) {
+        this->register_post<close_device_tag>([this](int, ibv_context *ctx, auto &&...) {
             if (ctx) {
                 this->uninstall(ctx);
 
@@ -92,7 +92,7 @@ static void __attribute__((destructor)) finalize() { LogDebug("Unloaded"); }
 // TODO: can be generated in Hooks lib instead of here
 // ================================================================
 // TODO: this should be in a helper module in HookLib or be done automatically
-template <typename Tag>
+template<typename Tag>
 static void InitMoveThisSomewhereElse() {
     // TODO: Hack! Some libraries dlopen, some dlsym and others just use the symbols
     // This makes sure the symbol we use is the same as a link-time symbol
