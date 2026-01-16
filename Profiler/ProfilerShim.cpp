@@ -384,14 +384,9 @@ struct ProfilerCtx {
                 });
     }
 
-    static ProfilerCtx *instance() {
-        static std::unique_ptr<ProfilerCtx> instance;
-
-        if (!instance) {
-            instance = std::make_unique<ProfilerCtx>();
-        }
-
-        return instance.get();
+    static ProfilerCtx &instance() {
+        static ProfilerCtx instance;
+        return instance;
     }
 
     ibv::Profiler *m_ibv_profiler;

@@ -77,10 +77,9 @@ namespace hook {
         using Context = detail::ObjectContext<Tags...>;
 
         // Singleton
-        // TODO: unique_ptr and return a pointer
-        static Derived &instance() {
-            static auto *mgr = new Derived();
-            return static_cast<Derived &>(*mgr);
+        static Derived &instance() noexcept {
+            static Derived mgr;
+            return mgr;
         }
 
         // ================================================================
