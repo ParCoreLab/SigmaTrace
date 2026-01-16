@@ -36,17 +36,17 @@ namespace Events {
     public:
         explicit TypedEventBuffer(const RuntimeConfig &config) : m_buffer(config) {}
 
-        [[nodiscard]] EventTypeId type_id() const override { return EventTrait<EventT>::id; }
-        [[nodiscard]] const char *type_name() const override { return EventTrait<EventT>::name; }
+        [[nodiscard]] EventTypeId type_id() const noexcept override { return EventTrait<EventT>::id; }
+        [[nodiscard]] const char *type_name() const noexcept override { return EventTrait<EventT>::name; }
         // [[nodiscard]] size_t size() const override { return m_buffer.size(); }
-        [[nodiscard]] size_t capacity() const override { return Capacity; }
-        [[nodiscard]] size_t dropped_count() const override { return m_buffer.dropped_count(); }
+        [[nodiscard]] size_t capacity() const noexcept override { return Capacity; }
+        [[nodiscard]] size_t dropped_count() const noexcept override { return m_buffer.dropped_count(); }
 
-        void flush() override { m_buffer.flush(); }
+        void flush() noexcept override { m_buffer.flush(); }
 
         // Access underlying typed buffer
-        EventRingBuffer<EventT, Capacity> &buffer() { return m_buffer; }
-        const EventRingBuffer<EventT, Capacity> &buffer() const { return m_buffer; }
+        EventRingBuffer<EventT, Capacity> &buffer() noexcept { return m_buffer; }
+        const EventRingBuffer<EventT, Capacity> &buffer() const noexcept { return m_buffer; }
 
     private:
         EventRingBuffer<EventT, Capacity> m_buffer;
@@ -85,7 +85,7 @@ namespace Events {
             return *ptr;
         }
 
-        std::thread::id thread_id() const { return m_thread_id; }
+        std::thread::id thread_id() const noexcept { return m_thread_id; }
 
         // Iterate all buffers (for stats collection, flushing)
         template<typename Func>
@@ -104,7 +104,7 @@ namespace Events {
     // Allows iteration over all threads for stats and flushing
     class ThreadBufferRegistry {
     public:
-        static ThreadBufferRegistry &instance() {
+        static ThreadBufferRegistry &instance() noexcept {
             static ThreadBufferRegistry registry;
             return registry;
         }
@@ -118,7 +118,7 @@ namespace Events {
         }
 
         // Get or create thread-local buffers for the calling thread
-        ThreadBuffers &get_thread_buffers() {
+        ThreadBuffers &get_thread_buffers() noexcept {
             thread_local ThreadBuffers *cached = nullptr;
 
             if (!cached) {
@@ -151,7 +151,7 @@ namespace Events {
         }
 
         // Number of threads with registered buffers
-        size_t thread_count() const {
+        size_t thread_count() const noexcept {
             std::lock_guard lock(m_mutex);
             return m_all_buffers.size();
         }

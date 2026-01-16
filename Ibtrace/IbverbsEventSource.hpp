@@ -52,7 +52,7 @@ namespace ibv {
 
         // TODO: the two functions below might need rework
         template<hook::ValidCallbackTag Tag>
-        auto &get_op(ibv_context *ctx) {
+        auto &get_op(ibv_context *ctx) noexcept {
             if constexpr (std::is_same_v<Tag, post_send_tag>) {
                 return ctx->ops.post_send;
             } else if constexpr (std::is_same_v<Tag, post_recv_tag>) {
@@ -67,7 +67,7 @@ namespace ibv {
         }
 
         template<hook::ValidCallbackTag Tag, typename... Args>
-        ibv_context *get_object_from_args(Args... args) {
+        ibv_context *get_object_from_args(Args &&...args) noexcept {
             // Extract ibv_context from the first argument
             // post_send: (ibv_qp*, ...) -> qp->context
             // post_recv: (ibv_qp*, ...) -> qp->context

@@ -97,13 +97,13 @@ namespace hook {
         // Callback signature: void(const char* symbol_name, Args...)
         // ================================================================
         template<typename Callback>
-        void register_all_pre(Callback &&callback) {
+        void register_all_pre(Callback &&callback) noexcept {
             (register_pre_for_tag<Tags>(std::forward<Callback>(callback)), ...);
         }
 
     private:
         template<typename Tag, typename Callback>
-        void register_pre_for_tag(Callback &&callback) {
+        void register_pre_for_tag(Callback &&callback) noexcept {
             this->template register_pre<Tag>([callback](auto &&...args) {
                 callback.template operator()<Tag>(std::forward<decltype(args)>(args)...);
             });
@@ -125,17 +125,17 @@ namespace hook {
         // 1. Preload hook management
         // ================================================================
         // using PreloadBase::real_func;
-        void resolve_all(auto &&...args) { m_preload_impl.resolve_all(std::forward<decltype(args)>(args)...); }
+        void resolve_all(auto &&...args) noexcept { m_preload_impl.resolve_all(std::forward<decltype(args)>(args)...); }
 
         template<ValidCallbackTag Tag>
             requires is_preload_hook_v<Tag>
-        HookTrait<Tag>::FuncPtr &real_func() {
+        [[nodiscard]] HookTrait<Tag>::FuncPtr &real_func() {
             return m_preload_impl.template real_func<Tag>();
         }
 
         // TODO: this function is really odd but we need to somehow
         // resolve to the correct real_func<Tag> with a runtime parameter...
-        void **real_func_by_name(std::string_view name) {
+        [[nodiscard]] void **real_func_by_name(std::string_view name) noexcept {
             void **func_ptr = nullptr;
 
             ([&]() -> bool {
@@ -151,11 +151,15 @@ namespace hook {
             return func_ptr;
         }
 
+        // template<typename Tag, typename... Args>
+        // static constexpr bool invoke_preload_noexcept_v =
+        //         noexcept(std::declval<CompositeHookManager &>().template real_func<Tag>()(std::declval<Args>()...));
+
         // Static wrapper for preload hooks
         // TODO: remove, possibly. We can already call these through the instance
         template<ValidCallbackTag Tag, typename... Args>
             requires is_preload_hook_v<Tag>
-        static auto invoke_preload(Args... args) -> HookTrait<Tag>::RetType {
+        static auto invoke_preload(Args &&...args) noexcept -> HookTrait<Tag>::RetType {
             auto &mgr = instance();
 
             // Start timestamp as soon as the function hook is invoked
@@ -168,9 +172,10 @@ namespace hook {
             // It can die silently otherwise
             if (!real) {
                 std::cerr << "ERROR: Real function for Tag " << HookTrait<Tag>::name << " is empty!" << std::endl;
-                assert(false);
+                std::abort();
             }
 
+            // if constexpr (std::is_void_v<typename HookTrait<Tag>::RetType>) { ... }
             auto ret = real(args...);
 
             // End timestamp
@@ -184,7 +189,7 @@ namespace hook {
         // ================================================================
         // 2. Object-ops hook management
         // ================================================================
-        Context *install(ObjectType *obj) {
+        Context *install(ObjectType *obj) noexcept {
             assert(obj && "HookManager ctx obj install called with null obj");
 
             std::lock_guard lock(m_contexts_mutex);
@@ -206,7 +211,7 @@ namespace hook {
             return ctx;
         }
 
-        void uninstall(ObjectType *obj) {
+        void uninstall(ObjectType *obj) noexcept {
             // TODO: maybe it's fine if it's null
             assert(obj && "HookManager ctx obj uninstalled called with null obj");
 
@@ -239,9 +244,12 @@ namespace hook {
         // }
 
         // Static wrapper for object-ops hooks
+        // Note: this takes Args... instead of Args&&... because FuncPtr args need to match exactly...
+        // See the note in install_if_object_ops
+        // Most of these are small value types or pointers. Should be fine.
         template<ValidCallbackTag Tag, typename... Args>
             requires is_object_ops_hook_v<Tag>
-        static auto invoke_object_ops(Args... args) -> typename HookTrait<Tag>::RetType {
+        static auto invoke_object_ops(Args... args) noexcept -> typename HookTrait<Tag>::RetType {
             auto &mgr = instance();
 
             // Start timestamp as soon as the function hook is invoked
@@ -262,7 +270,7 @@ namespace hook {
             }
 
             // Pre-hooks with context
-            mgr.template invoke_pre_with_context<Tag>(*ctx, args...);
+            mgr.template invoke_pre_with_context<Tag>(*ctx, args..., ts_start);
 
             auto original = ctx->template original<Tag>();
             auto ret = original(args...);
@@ -285,48 +293,54 @@ namespace hook {
 
         // Context-aware invocation for object-ops
         template<ValidCallbackTag Tag, typename... Args>
-        void invoke_pre_with_context(Context &ctx, Args... args) {
-            if constexpr (requires(Derived &d, Tag t, Context &c, Args... a) { d.pre(t, c, a...); }) {
+        void invoke_pre_with_context(Context &ctx, Args &&...args) noexcept {
+            if constexpr (requires(Derived &d, Tag t, Context &c, Args &&...a) {
+                              d.pre(t, c, std::forward<Args>(a)...);
+                          }) {
                 static_cast<Derived &>(*this).pre(Tag{}, ctx, args...);
             }
-            Base::template invoke_pre_callbacks<Tag>(args...);
+            Base::template invoke_pre_callbacks<Tag>(std::forward<Args>(args)...);
         }
 
         template<ValidCallbackTag Tag, typename Ret, typename... Args>
-        void invoke_post_with_context(Context &ctx, Ret ret, Args... args) {
-            if constexpr (requires(Derived &d, Tag t, Context &c, Ret r, Args... a) { d.post(t, c, r, a...); }) {
+        void invoke_post_with_context(Context &ctx, Ret ret, Args &&...args) noexcept {
+            if constexpr (requires(Derived &d, Tag t, Context &c, Ret r, Args &&...a) {
+                              d.post(t, c, r, std::forward<Args>(a)...);
+                          }) {
                 static_cast<Derived &>(*this).post(Tag{}, ctx, ret, args...);
             }
-            Base::template invoke_post_callbacks<Tag>(ret, args...);
+            Base::template invoke_post_callbacks<Tag>(ret, std::forward<Args>(args)...);
         }
 
     private:
         // TODO: this is ugly and should be in ObjectOpsHookManager
         // but since we really need Derived, it's here for now
         template<size_t... Is>
-        void install_object_ops_hooks(ObjectType *obj, Context &ctx, std::index_sequence<Is...>) {
+        void install_object_ops_hooks(ObjectType *obj, Context &ctx, std::index_sequence<Is...>) noexcept {
             (install_if_object_ops<std::tuple_element_t<Is, std::tuple<Tags...>>>(obj, ctx), ...);
         }
 
         template<ValidCallbackTag Tag>
-        void install_if_object_ops(ObjectType *obj, Context &ctx) {
+        void install_if_object_ops(ObjectType *obj, Context &ctx) noexcept {
             if constexpr (is_object_ops_hook_v<Tag>) {
                 static_assert(has_get_op_for<Derived, Tag, ObjectType>,
                               "Derived must provide: `template <...> get_op<Tag>(ObjectType*)` for object-ops hooks");
 
                 auto &op = static_cast<Derived &>(*this).template get_op<Tag>(obj);
                 ctx.template original<Tag>() = op;
+
+                // Note: we assign to a function pointer and call it later. Can't use Args&& because of it
                 op = &Derived::template invoke_object_ops<Tag>;
             }
         }
 
         template<size_t... Is>
-        void uninstall_object_ops_hooks(ObjectType *obj, Context &ctx, std::index_sequence<Is...>) {
+        void uninstall_object_ops_hooks(ObjectType *obj, Context &ctx, std::index_sequence<Is...>) noexcept {
             (uninstall_if_object_ops<std::tuple_element_t<Is, std::tuple<Tags...>>>(obj, ctx), ...);
         }
 
         template<ValidCallbackTag Tag>
-        void uninstall_if_object_ops(ObjectType *obj, Context &ctx) {
+        void uninstall_if_object_ops(ObjectType *obj, Context &ctx) noexcept {
             if constexpr (is_object_ops_hook_v<Tag>) {
                 auto &op = static_cast<Derived &>(*this).template get_op<Tag>(obj);
                 op = ctx.template original<Tag>();

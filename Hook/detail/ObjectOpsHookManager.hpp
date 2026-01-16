@@ -19,19 +19,19 @@ namespace hook::detail {
         // Original function pointers
         // TODO: remove
         template<ValidCallbackTag Tag>
-        HookTrait<Tag>::FuncPtr &original() {
+        HookTrait<Tag>::FuncPtr &original() noexcept {
             return std::get<typename HookTrait<Tag>::FuncPtr>(m_originals);
         }
 
         template<ValidCallbackTag Tag>
-        HookTrait<Tag>::FuncPtr original() const {
+        HookTrait<Tag>::FuncPtr original() const noexcept {
             return std::get<typename HookTrait<Tag>::FuncPtr>(m_originals);
         }
 
         // The raw object pointer (for reverse lookup)
         // TODO: remove
-        [[nodiscard]] void *object_ptr() const { return m_object_ptr; }
-        void set_object_ptr(void *ptr) { m_object_ptr = ptr; }
+        [[nodiscard]] void *object_ptr() const noexcept { return m_object_ptr; }
+        void set_object_ptr(void *ptr) noexcept { m_object_ptr = ptr; }
 
     private:
         std::tuple<typename HookTrait<Tags>::FuncPtr...> m_originals{};
@@ -97,7 +97,7 @@ namespace hook::detail {
 
         // Find context for an object
         template<typename ObjectType>
-        Context *find(ObjectType *obj) {
+        Context *find(ObjectType *obj) noexcept {
             if (!obj) {
                 return nullptr;
             }
@@ -117,7 +117,7 @@ namespace hook::detail {
         // ================================================================
         template<ValidCallbackTag Tag, typename ObjectType, typename... Args>
             requires is_object_ops_hook_v<Tag>
-        auto wrapper(ObjectType *obj, Args... args) -> HookTrait<Tag>::RetType {
+        auto wrapper(ObjectType *obj, Args... args) noexcept -> HookTrait<Tag>::RetType {
             // Get object from arguments (derived class must implement this)
             Context *ctx = find(obj);
 

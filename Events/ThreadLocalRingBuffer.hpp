@@ -65,8 +65,8 @@ namespace Events {
                 }
             }
 
-            uint8_t *get() const { return m_ptr; }
-            uint8_t *&get_internal_ptr() { return m_ptr; }
+            [[nodiscard]] uint8_t *get() const noexcept{ return m_ptr; }
+            uint8_t *&get_internal_ptr() noexcept { return m_ptr; }
 
         private:
             uint8_t *m_ptr;

@@ -34,9 +34,9 @@ namespace FileIO {
     public:
         explicit Buffer(auto &&...args) : m_impl(std::forward<decltype(args)>(args)...) {}
 
-        [[nodiscard]] uint8_t *get_slot() { return m_impl.get_slot(); }
-        void commit() { m_impl.commit(); }
-        void flush() { m_impl.flush(); }
+        [[nodiscard]] uint8_t *get_slot() noexcept { return m_impl.get_slot(); }
+        void commit() noexcept { m_impl.commit(); }
+        void flush() noexcept { m_impl.flush(); }
 
     private:
         ImplType m_impl;
@@ -64,9 +64,9 @@ namespace FileIO {
 
         // Fast access to memory
         // TODO: NOT SAFE AT ALL !!! but maybe that's the compromise
-        [[nodiscard]] uint8_t *get_slot() { return m_buffers[m_current_buffer_index] + m_current_buffer_size; }
+        [[nodiscard]] uint8_t *get_slot() noexcept { return m_buffers[m_current_buffer_index] + m_current_buffer_size; }
 
-        void commit() {
+        void commit() noexcept {
             // Continue on the same buffer as usual
             m_current_buffer_size += ElementSize;
             if (m_current_buffer_size < BufferSize) {
@@ -87,7 +87,7 @@ namespace FileIO {
             m_current_buffer_index = (m_current_buffer_index + 1) % NumBuffers;
         }
 
-        void flush() {
+        void flush() noexcept {
             std::lock_guard lock(m_stream_mutex);
 
             m_stream.write(reinterpret_cast<const char *>(m_buffers[m_current_buffer_index]), m_current_buffer_size);

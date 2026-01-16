@@ -97,6 +97,9 @@ namespace hook {
     //
     // TODO: merge and add HookType as an argument
     // TODO: ret_type before sym_name, so it looks more natural. e.g. ... int "ibv_open_device" ...
+    // TODO: BE CAREFUL OF LARGE ARGS. pass as `struct whatever const&` and/or move at the caller side
+    // TODO: std::function virtual dispatch and capture overhead...
+    // Needs profiling. Also See https://github.com/WG21-SG14/SG14/blob/master/SG14/inplace_function.h
     // ================================================================
 #define DEFINE_PRELOAD_HOOK(ns, hook_name, sym_name, ret_type, ...)                                                    \
     namespace ns {                                                                                                     \
@@ -104,7 +107,7 @@ namespace hook {
     }                                                                                                                  \
     template<>                                                                                                         \
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
-        using FuncPtr = ret_type (*)(__VA_ARGS__);                                                                     \
+        using FuncPtr = ret_type (*)(__VA_ARGS__) noexcept;                                                            \
         using RetType = ret_type;                                                                                      \
         using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
         using PostCallback = std::function<void(ret_type, __VA_ARGS__, Timestamp, Timestamp)>;                         \
@@ -121,7 +124,8 @@ namespace hook {
     //   DEFINE_OBJECT_OPS_HOOK(namespace, func_name, ret_type, arg_types...)
     //
     // Example:
-    //   DEFINE_OBJECT_OPS_HOOK(ibv, post_send, int, ibv_qp*, ibv_send_wr*, ibv_send_wr**)
+    //   DEFINE_OBJECT_OPS_HOOK(ibv, post_send, int, ibv_qp*, ibv_send_wr*, ibv_send_wr**
+    // TODO: FuncPtr with noexcept doesn't work with extern "C" functions (for now)
     // ================================================================
 #define DEFINE_OBJECT_OPS_HOOK(ns, hook_name, sym_name, ret_type, ...)                                                 \
     namespace ns {                                                                                                     \
@@ -129,7 +133,7 @@ namespace hook {
     }                                                                                                                  \
     template<>                                                                                                         \
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
-        using FuncPtr = ret_type (*)(__VA_ARGS__);                                                                     \
+        using FuncPtr = ret_type (*)(__VA_ARGS__) /* noexcept */;                                                      \
         using RetType = ret_type;                                                                                      \
         using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
         using PostCallback = std::function<void(ret_type, __VA_ARGS__, Timestamp, Timestamp)>;                         \
@@ -147,7 +151,7 @@ namespace hook {
     }                                                                                                                  \
     template<>                                                                                                         \
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
-        using FuncPtr = void (*)(__VA_ARGS__);                                                                         \
+        using FuncPtr = void (*)(__VA_ARGS__) noexcept;                                                                \
         using RetType = void;                                                                                          \
         using Callback = std::function<void(__VA_ARGS__)>;                                                             \
         using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
