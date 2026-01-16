@@ -5,7 +5,7 @@
 #include <vector>
 
 #include <cuda_runtime.h>
-#include "cuda_helper.hpp"
+#include "Helpers/CudaHelpers.hpp"
 
 #include "EventRecorder.hpp"
 #include "EventTrait.hpp"

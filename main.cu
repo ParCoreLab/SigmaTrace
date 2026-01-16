@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 #include <nccl.h>
 
-#include "cuda_helper.hpp"
+#include "Helpers/CudaHelpers.hpp"
 
 constexpr size_t DATA_SIZE = 4096;
 
@@ -17,7 +17,7 @@ __global__ void dummy_kernel(void *data, const size_t size) {
         static_cast<float *>(data)[idx] = static_cast<float>(idx);
     }
 
-    Clock_Block();
+    Helpers::Cuda::Clock_Block();
 }
 
 int main(int argc, char *argv[]) {

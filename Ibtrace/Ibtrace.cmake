@@ -44,12 +44,6 @@ foreach (IbverbsTraceTarget IN ITEMS IbverbsTraceShared IbverbsTraceStatic)
     # Should load symbols dynamically
     # TODO: not having it here breaks other things...
     target_link_libraries(${IbverbsTraceTarget} PRIVATE ibverbs)
-    target_link_libraries(${IbverbsTraceTarget} PRIVATE cuda_helper)
-    target_link_libraries(${IbverbsTraceTarget} PRIVATE CUDA::cudart)
-    target_link_libraries(${IbverbsTraceTarget} PUBLIC CUDA::nvtx3)
-
-    # TODO: remove
-    target_link_libraries(${IbverbsTraceTarget} PRIVATE EventsLib)
 
     target_link_libraries(${IbverbsTraceTarget} PUBLIC HookLib)
 

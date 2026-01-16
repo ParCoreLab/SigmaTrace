@@ -75,27 +75,29 @@ const int num_colors = sizeof(colors) / sizeof(uint32_t);
 #define POP_RANGE nvtxRangePop();
 #endif
 
-// From cuda samples
-// This subroutine does no real work but runs for at least the specified number
-// of clock ticks.
-__device__ inline void Clock_Block(const clock_t clock_count = 1000000000) {
-    const auto start_clock = static_cast<unsigned int>(clock());
+namespace Helpers::Cuda {
+    // From cuda samples
+    // This subroutine does no real work but runs for at least the specified number
+    // of clock ticks.
+    __device__ inline void Clock_Block(const clock_t clock_count = 1000000000) {
+        const auto start_clock = static_cast<unsigned int>(clock());
 
-    clock_t clock_offset = 0;
+        clock_t clock_offset = 0;
 
-    while (clock_offset < clock_count) {
-        const auto end_clock = static_cast<unsigned int>(clock());
+        while (clock_offset < clock_count) {
+            const auto end_clock = static_cast<unsigned int>(clock());
 
-        // The code below should work like
-        // this (thanks to modular arithmetics):
-        //
-        // clock_offset = (clock_t) (end_clock > start_clock ?
-        //                           end_clock - start_clock :
-        //                           end_clock + (0xffffffffu - start_clock));
-        //
-        // Indeed, let m = 2^32 then
-        // end - start = end + m - start (mod m).
+            // The code below should work like
+            // this (thanks to modular arithmetics):
+            //
+            // clock_offset = (clock_t) (end_clock > start_clock ?
+            //                           end_clock - start_clock :
+            //                           end_clock + (0xffffffffu - start_clock));
+            //
+            // Indeed, let m = 2^32 then
+            // end - start = end + m - start (mod m).
 
-        clock_offset = static_cast<clock_t>(end_clock - start_clock);
+            clock_offset = static_cast<clock_t>(end_clock - start_clock);
+        }
     }
-}
+} // namespace Helpers::Cuda

@@ -12,6 +12,8 @@
 #include <string>
 #include <thread>
 
+#include "Helpers/Timestamp.hpp"
+
 #include "EventStorage.hpp"
 #include "EventTrait.hpp"
 #include "Events.hpp"
@@ -32,30 +34,31 @@ namespace Events {
     // ================================================================
     // Compile-time config. Can be shared across classes (thanks concepts)
     // ================================================================
+    namespace TS = Helpers::TS;
 
     // Concept requires TimestampSource, other fields have defaults
     template<typename T>
     concept CompileTimeConfig = requires {
         // Must specify a TimestampSource type
         typename T::TimestampSourceType;
-        requires TimestampSource<typename T::TimestampSourceType>;
+        requires TS::TimestampSource<typename T::TimestampSourceType>;
     };
 
     // Fast (RDTSC-based) configuration - can be overridden by user
     struct DefaultCompileTimeConfig {
-        using TimestampSourceType = RdtscTimestampSource;
+        using TimestampSourceType = TS::RdtscTimestampSource;
         static constexpr std::size_t default_buffer_capacity = 128;
     };
 
     // RdtscTimestamp is x86-64 only
     struct PortableCompileTimeConfig {
-        using TimestampSourceType = ChronoTimestampSource;
+        using TimestampSourceType = TS::ChronoTimestampSource;
         static constexpr std::size_t default_buffer_capacity = 128;
     };
 
     // Defaults for easier debugging of the event library itself
     struct DebugCompileTimeConfig {
-        using TimestampSourceType = FakeTimestampSource;
+        using TimestampSourceType = TS::FakeTimestampSource;
         static constexpr std::size_t default_buffer_capacity = 128;
     };
 

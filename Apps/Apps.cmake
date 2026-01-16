@@ -5,7 +5,7 @@ function(add_nvshmem_target target)
 
     set_target_properties(${target} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
-    target_link_libraries(${target} PRIVATE cuda_helper)
+    target_link_libraries(${target} PRIVATE SigmaHelpers)
     target_link_libraries(${target} PRIVATE CUDA::cudart)
     target_link_libraries(${target} PRIVATE nvshmem::nvshmem_host)
     target_link_libraries(${target} PRIVATE nvshmem::nvshmem_device)

@@ -20,4 +20,6 @@ target_include_directories(EventsLib INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+target_link_libraries(EventsLib INTERFACE SigmaHelpers)
+
 #add_subdirectory(Tests)

@@ -4,11 +4,14 @@
 #include <concepts>
 #include <cstdint>
 
+#include "Helpers/Timestamp.hpp"
+
 #include "Events.hpp"
 
 namespace Events {
     // Timestamp in nanoseconds since recorder epoch
-    using Timestamp = uint64_t;
+    using Helpers::TS::Timestamp;
+    static_assert(std::convertible_to<Timestamp, std::uint64_t>);
 
     // Common header for all events
     struct alignas(8) EventHeader {

@@ -11,3 +11,5 @@ target_sources(HookLib INTERFACE
 target_include_directories(HookLib INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+target_link_libraries(HookLib INTERFACE SigmaHelpers)

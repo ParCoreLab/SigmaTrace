@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Helpers/Timestamp.hpp"
+
 #include <functional>
 #include <tuple>
 #include <type_traits>
@@ -22,6 +24,7 @@
 #define VA_ARGS_TO_STRING_TUPLE(...) std::make_tuple(FOR_EACH(STR, __VA_ARGS__))
 
 namespace hook {
+    using Helpers::TS::Timestamp;
 
     // ================================================================
     // Hook type - how is this hook installed?

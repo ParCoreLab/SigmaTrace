@@ -11,7 +11,7 @@
 #include <nvshmem.h>
 #include <nvshmemx.h>
 
-#include "cuda_helper.hpp"
+#include "Helpers/CudaHelpers.hpp"
 
 constexpr auto NumElements = 8192;
 constexpr auto ThreadsPerBlock = 1024;

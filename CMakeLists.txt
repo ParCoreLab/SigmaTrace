@@ -30,13 +30,12 @@ include(NVSHMEM)
 include(NVBIT)
 include(Perfetto)
 
-# Helper Library
-add_library(cuda_helper INTERFACE)
-target_include_directories(cuda_helper INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/common")
+# Modules
+add_subdirectory(Modules)
 
 # "Main" Test Executable
 add_executable(Thing main.cu)
-target_link_libraries(Thing PRIVATE cuda_helper)
+target_link_libraries(Thing PRIVATE SigmaHelpers)
 #target_link_libraries(Thing PRIVATE CUDA::cudart)
 
 # Link Dependencies defined in modules
@@ -53,7 +52,7 @@ target_compile_options(ThingNVSHMEM PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
         -g
         >)
 
-target_link_libraries(ThingNVSHMEM PRIVATE cuda_helper)
+target_link_libraries(ThingNVSHMEM PRIVATE SigmaHelpers)
 target_link_libraries(ThingNVSHMEM PRIVATE CUDA::cudart)
 target_link_libraries(ThingNVSHMEM PRIVATE CUDA::nvml)
 target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_host)
