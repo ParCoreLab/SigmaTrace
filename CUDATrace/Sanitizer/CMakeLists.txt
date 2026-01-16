@@ -29,7 +29,8 @@ target_link_libraries(SanitizerMemoryTracker PRIVATE CUDA::cudart)
 
 add_library(SanitizerMemoryTrackerFatbin OBJECT MemoryTrackerPatches.cu)
 set_property(TARGET SanitizerMemoryTrackerFatbin PROPERTY CUDA_FATBIN_COMPILATION ON)
-target_compile_options(SanitizerMemoryTrackerFatbin PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--compile-as-tools-patch>)
+# If there's a bug in the build it's this
+target_compile_options(SanitizerMemoryTrackerFatbin PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fatbin --compile-as-tools-patch>)
 target_link_libraries(SanitizerMemoryTrackerFatbin PRIVATE SANITIZER)
 
 add_custom_target(SanitizerMemoryTrackerFatbinCopy ALL
