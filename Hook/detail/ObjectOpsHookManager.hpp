@@ -122,7 +122,7 @@ namespace hook::detail {
         // ================================================================
         template<ValidCallbackTag Tag, typename ObjectType, typename... Args>
             requires is_object_ops_hook_v<Tag>
-        auto wrapper(ObjectType* obj, Args... args) noexcept -> HookTrait<Tag>::RetType {
+        [[maybe_unused]] auto wrapper(ObjectType* obj, Args...) noexcept -> HookTrait<Tag>::RetType {
             // Get object from arguments (derived class must implement this)
             Context* ctx = find(obj);
 
@@ -135,6 +135,8 @@ namespace hook::detail {
                     return typename HookTrait<Tag>::RetType{};
                 }
             }
+
+            return nullptr;
 
             // TODO
             // // Pre-hooks (with context)

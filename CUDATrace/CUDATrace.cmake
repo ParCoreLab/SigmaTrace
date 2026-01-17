@@ -1,4 +1,4 @@
-add_library(CUDATrace INTERFACE
+Sigma_add_library(CUDATrace INTERFACE
         CUDAHooks.hpp
         CUDAEventSource.hpp
 )

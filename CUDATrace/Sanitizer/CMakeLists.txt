@@ -11,6 +11,7 @@ set_target_properties(SANITIZER PROPERTIES
 )
 set(SANITIZER_INCLUDE_DIR "${SANITIZER_ROOT}/include")
 
+# Not using Sigma_add_library for the flags below
 add_library(SanitizerMemoryTracker SHARED
         MemoryTracker.cpp
 )

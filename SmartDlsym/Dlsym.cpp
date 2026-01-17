@@ -2,13 +2,11 @@
 #include <dlfcn.h>
 
 #include <functional>
-#include <iostream>
 #include <string>
 
-#include "Dlsym.hpp"
+#include "SymbolResolver.h"
 
-// Helper dl_iterate_phdr walker
-extern void* find_symbol_in_lib(const char* lib_pattern, const char* symbol_name);
+#include "Dlsym.hpp"
 
 namespace smart_dlsym {
     void* (*real_dlopen)(const char*, int) = nullptr;

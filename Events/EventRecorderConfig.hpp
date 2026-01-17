@@ -112,9 +112,10 @@ namespace Events {
             return hostname;
         }
 
+        // TODO: uint32_t should suffice and even that is too large
         static std::uint64_t get_process_id() noexcept {
             const static auto process_id{getpid()};
-            return process_id;
+            return static_cast<uint64_t>(process_id);
         }
 
         static std::uint64_t get_thread_id() noexcept {
@@ -124,7 +125,7 @@ namespace Events {
 
         // In case we somehow hit the same node_id, process_id, and thread_id
         // thread_local will reset when the first thread dies
-        static auto get_thread_discriminant(const int length = 4) noexcept {
+        static auto get_thread_discriminant(const unsigned length = 4) noexcept {
             thread_local std::string value = std::invoke([length] {
                 static constexpr char charset[] = "0123456789"
                                                   "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -179,7 +180,7 @@ namespace Events {
             // TODO: this can be thread_local
             EventFileHeader header{
                     .event_id = EventTrait<EventT>::id,
-                    // .hostname
+                    .hostname = {},
                     .process_id = get_process_id(),
                     .thread_id = get_thread_id(),
             };

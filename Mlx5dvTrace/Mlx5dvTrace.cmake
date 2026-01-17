@@ -3,8 +3,8 @@ set(Mlx5dvTraceSources
         Mlx5dvEventSource.hpp
         Mlx5dvPreload.cpp)
 
-add_library(Mlx5dvTraceSourcesShared SHARED ${Mlx5dvTraceSources})
-add_library(Mlx5dvTraceSourcesStatic STATIC ${Mlx5dvTraceSources})
+Sigma_add_library(Mlx5dvTraceSourcesShared SHARED ${Mlx5dvTraceSources})
+Sigma_add_library(Mlx5dvTraceSourcesStatic STATIC ${Mlx5dvTraceSources})
 
 # Import dlsym/dlvsym
 target_link_libraries(Mlx5dvTraceSourcesShared PUBLIC

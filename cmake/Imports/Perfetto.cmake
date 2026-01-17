@@ -13,7 +13,7 @@ set(PERFETTO_TRACE_PROTO "${PERFETTO_PROTOS_DIR}/perfetto/trace/perfetto_trace.p
 # Create the library target
 add_library(PerfettoProto STATIC)
 
-target_include_directories(PerfettoProto PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(PerfettoProto SYSTEM PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(PerfettoProto PUBLIC protobuf::libprotobuf)
 
 # Generate C++ sources from proto files
@@ -25,6 +25,7 @@ protobuf_generate(
 
 # Suppress warnings in generated code
 target_compile_options(PerfettoProto PRIVATE
+        -Wno-deprecated-declarations
         -Wno-unused-parameter
         -Wno-array-bounds
 )

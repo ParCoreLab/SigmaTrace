@@ -4,9 +4,11 @@
  * to load them any other way without avoiding recursion.
  */
 
+#include <cstring>
 #include <dlfcn.h>
 #include <link.h>
-#include <string.h>
+
+#include "SymbolResolver.h"
 
 // Use dl_iterate_phdr to find symbols in libc without relying on internal glibc symbols
 struct SymbolLookupCtx {

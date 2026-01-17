@@ -100,7 +100,9 @@ namespace FileIO {
         void flush() noexcept {
             std::lock_guard lock(m_stream_mutex);
 
-            m_stream.write(reinterpret_cast<const char*>(m_buffers[m_current_buffer_index]), m_current_buffer_size);
+            m_stream.write(reinterpret_cast<const char*>(m_buffers[m_current_buffer_index]),
+                           static_cast<std::streamsize>(m_current_buffer_size));
+
             m_stream.flush();
 
             // Reset size to continue using current buffer

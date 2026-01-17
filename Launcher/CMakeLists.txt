@@ -1,6 +1,6 @@
 #add_executable(Launcher Launcher.cpp)
 
-add_library(Launcher STATIC Launcher.cpp Launcher.hpp)
+Sigma_add_library(Launcher STATIC Launcher.cpp Launcher.hpp)
 #target_link_libraries(Launcher PRIVATE ProfilerTrace ibverbs)
 target_link_libraries(Launcher PRIVATE CUDA::cudart)
 

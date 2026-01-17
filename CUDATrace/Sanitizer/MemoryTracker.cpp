@@ -67,7 +67,7 @@ struct CallbackTracker {
     }
 };
 
-void ModuleLoaded(Sanitizer_ResourceModuleData* pModuleData) {
+void ModuleLoaded(const Sanitizer_ResourceModuleData* pModuleData) {
     // Instrument user code!
     if (SANITIZER_SUCCESS != sanitizerAddPatchesFromFile("lib/MemoryTrackerPatches.fatbin", 0)) {
         std::cerr << "Failed to load fatbin. Please check that it is in the current directory and contains the correct "
@@ -84,40 +84,39 @@ void ModuleLoaded(Sanitizer_ResourceModuleData* pModuleData) {
     sanitizerPatchModule(pModuleData->module);
 }
 
-static size_t GetMemAccessSize() {
-    constexpr size_t MemAccessDefaultSize = 1024;
+static unsigned long GetMemAccessSize() {
+    constexpr unsigned long MemAccessDefaultSize = 1024;
 
     const char* pValue = std::getenv("MEM_ACCESS_SIZE");
     if (!pValue) {
         return MemAccessDefaultSize;
     }
 
-    return std::stoi(pValue);
+    return std::stoull(pValue);
 }
 
 void LaunchBegin(CallbackTracker* pCallbackTracker, CUcontext context, CUfunction function, std::string functionName,
                  Sanitizer_StreamHandle stream) {
-    const size_t MemAccessSize = GetMemAccessSize();
+    const auto MemAccessSize = GetMemAccessSize();
 
     // alloc MemoryAccess array
     MemoryAccess* accesses = nullptr;
-    sanitizerAlloc(context, (void**) &accesses, sizeof(MemoryAccess) * MemAccessSize);
+    sanitizerAlloc(context, reinterpret_cast<void**>(&accesses), sizeof(MemoryAccess) * MemAccessSize);
     sanitizerMemset(accesses, 0, sizeof(MemoryAccess) * MemAccessSize, stream);
 
     MemoryAccessTracker hTracker;
     hTracker.currentEntry = 0;
-    hTracker.maxEntry = MemAccessSize;
+    hTracker.maxEntry = static_cast<uint32_t>(MemAccessSize);
     hTracker.accesses = accesses;
 
     MemoryAccessTracker* dTracker = nullptr;
-    sanitizerAlloc(context, (void**) &dTracker, sizeof(*dTracker));
+    sanitizerAlloc(context, reinterpret_cast<void**>(&dTracker), sizeof(*dTracker));
     sanitizerMemcpyHostToDeviceAsync(dTracker, &hTracker, sizeof(*dTracker), stream);
 
     sanitizerSetCallbackData(function, dTracker);
 
-    LaunchData launchData = {functionName, dTracker};
     std::vector<LaunchData>& deviceTrackers = pCallbackTracker->memoryTrackers[context][stream];
-    deviceTrackers.push_back(launchData);
+    deviceTrackers.emplace_back(functionName, dTracker);
 }
 
 static std::string GetMemoryRWString(uint32_t flags) {
@@ -146,7 +145,7 @@ static std::string GetMemoryTypeString(MemoryAccessType type) {
 }
 
 void StreamSynchronized(CallbackTracker* pCallbackTracker, CUcontext context, Sanitizer_StreamHandle stream) {
-    MemoryAccessTracker hTracker = {0};
+    MemoryAccessTracker hTracker{};
 
     std::vector<LaunchData>& deviceTrackers = pCallbackTracker->memoryTrackers[context][stream];
 
@@ -189,13 +188,13 @@ void ContextSynchronized(CallbackTracker* pCallbackTracker, CUcontext context) {
 
 void MemoryTrackerCallback(void* userdata, Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid,
                            const void* cbdata) {
-    auto* callbackTracker = (CallbackTracker*) userdata;
+    auto* callbackTracker = static_cast<CallbackTracker*>(userdata);
 
     switch (domain) {
         case SANITIZER_CB_DOMAIN_RESOURCE:
             switch (cbid) {
                 case SANITIZER_CBID_RESOURCE_MODULE_LOADED: {
-                    auto* pModuleData = (Sanitizer_ResourceModuleData*) cbdata;
+                    auto* pModuleData = static_cast<const Sanitizer_ResourceModuleData*>(cbdata);
                     ModuleLoaded(pModuleData);
                     break;
                 }
@@ -206,7 +205,7 @@ void MemoryTrackerCallback(void* userdata, Sanitizer_CallbackDomain domain, Sani
         case SANITIZER_CB_DOMAIN_LAUNCH:
             switch (cbid) {
                 case SANITIZER_CBID_LAUNCH_BEGIN: {
-                    auto* pLaunchData = (Sanitizer_LaunchData*) cbdata;
+                    auto* pLaunchData = static_cast<const Sanitizer_LaunchData*>(cbdata);
                     LaunchBegin(callbackTracker, pLaunchData->context, pLaunchData->function, pLaunchData->functionName,
                                 pLaunchData->hStream);
                     break;

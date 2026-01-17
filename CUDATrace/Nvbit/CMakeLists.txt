@@ -13,8 +13,8 @@ set_source_files_properties(inject_funcs.cu PROPERTIES
         COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:CUDA>:-maxrregcount=24;-Xptxas=-astoolspatch;--keep-device-functions>"
 )
 
-add_library(NvbitMemoryTrackerShared SHARED ${NvbitMemoryTrackerSources})
-add_library(NvbitMemoryTrackerStatic STATIC ${NvbitMemoryTrackerSources})
+Sigma_add_library(NvbitMemoryTrackerShared SHARED ${NvbitMemoryTrackerSources})
+Sigma_add_library(NvbitMemoryTrackerStatic STATIC ${NvbitMemoryTrackerSources})
 
 foreach (NvbitMemoryTrackerTarget IN ITEMS NvbitMemoryTrackerShared NvbitMemoryTrackerStatic)
     set_property(TARGET ${NvbitMemoryTrackerTarget} PROPERTY ENABLE_EXPORTS ON)

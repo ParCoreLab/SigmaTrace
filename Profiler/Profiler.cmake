@@ -1,10 +1,11 @@
-add_library(ProfilerShim SHARED
-        mlx5/mlx5_ifc.h
-        mlx5/mlx5_prm.h
+#Sigma_source_disable_warnings(mlx5/mlx5_ifc.h mlx5/mlx5_prm.h)
+#Sigma_source_disable_errors(mlx5/mlx5_ifc.h mlx5/mlx5_prm.h)
+
+Sigma_add_library(ProfilerShim SHARED
         ProfilerShim.cpp
 )
 
-#set_property(TARGET ProfilerShim PROPERTY ENABLE_EXPORTS ON)
+target_include_directories(ProfilerShim SYSTEM PRIVATE "mlx5/include")
 
 set_target_properties(ProfilerShim PROPERTIES
         POSITION_INDEPENDENT_CODE ON
@@ -42,7 +43,7 @@ target_include_directories(ProfilerShim PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Eve
 # For infiniband/mlx5dv.h
 target_include_directories(ProfilerShim PRIVATE "${RDMA_INCLUDE_DIR}")
 
-add_executable(Profiler Profiler.cpp)
+Sigma_add_executable(Profiler Profiler.cpp)
 target_link_libraries(Profiler PRIVATE Launcher)
 
 target_include_directories(Profiler PRIVATE ${CMAKE_SOURCE_DIR}/Ibtrace)
@@ -53,7 +54,7 @@ set_property(TARGET Profiler PROPERTY ENABLE_EXPORTS ON)
 target_link_libraries(Profiler PRIVATE CUDATrace)
 #target_link_libraries(Profiler PRIVATE NvbitMemoryTracker)
 
-add_executable(ProfilerEventReader "TraceFile/ProfilerEventReader.cpp")
+Sigma_add_executable(ProfilerEventReader "TraceFile/ProfilerEventReader.cpp")
 target_link_libraries(ProfilerEventReader PRIVATE EventsLib)
 target_include_directories(ProfilerEventReader PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")
 

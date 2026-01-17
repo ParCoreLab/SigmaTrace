@@ -1,7 +1,7 @@
 #add_subdirectory(Protobuf)
 #add_subdirectory(Flatbuffers)
 
-add_library(EventsLib INTERFACE)
+Sigma_add_library(EventsLib INTERFACE)
 
 target_sources(EventsLib INTERFACE
         Events.hpp

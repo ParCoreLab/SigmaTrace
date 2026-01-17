@@ -7,8 +7,8 @@ set(IbverbsTraceSources
 
 # Main Ibverbs trace libraries
 # Why do we have both static and shared? TODO: explain
-add_library(IbverbsTraceShared SHARED ${IbverbsTraceSources})
-add_library(IbverbsTraceStatic STATIC ${IbverbsTraceSources})
+Sigma_add_library(IbverbsTraceShared SHARED ${IbverbsTraceSources})
+Sigma_add_library(IbverbsTraceStatic STATIC ${IbverbsTraceSources})
 
 # Import dlsym/dlvsym
 target_link_libraries(IbverbsTraceShared PUBLIC

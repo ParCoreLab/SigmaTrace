@@ -15,7 +15,6 @@ extern char** environ;
 namespace Launcher {
     int fork_launch(const std::string& program_bin, const std::vector<const char*>& program_args,
                     const std::vector<const char*>& program_env) {
-
         pid_t pid = fork();
         if (pid == -1) {
             std::cerr << "Failed to fork()" << std::endl;

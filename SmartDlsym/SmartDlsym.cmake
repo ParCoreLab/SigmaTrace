@@ -1,4 +1,5 @@
-add_library(SmartDlsym STATIC
+Sigma_add_library(SmartDlsym STATIC
+        SymbolResolver.h
         SymbolResolver.cpp
         Dlsym.hpp
         Dlsym.cpp

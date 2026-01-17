@@ -1,14 +1,7 @@
 cmake_minimum_required(VERSION 4.0)
 
-# Global CXX and CUDA defaults
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 20)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-
-if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES "native")
-endif ()
+# CXX standard, CUDA version, compiler flags
+include(cmake/CompilerConfig.cmake)
 
 project(Thing LANGUAGES C CXX CUDA)
 
@@ -34,7 +27,7 @@ include(Perfetto)
 add_subdirectory(Modules)
 
 # "Main" Test Executable
-add_executable(Thing main.cu)
+Sigma_add_executable(Thing main.cu)
 target_link_libraries(Thing PRIVATE SigmaHelpers)
 #target_link_libraries(Thing PRIVATE CUDA::cudart)
 
@@ -42,7 +35,7 @@ target_link_libraries(Thing PRIVATE SigmaHelpers)
 target_link_libraries(Thing PRIVATE ibverbs)
 target_link_libraries(Thing PRIVATE nccl)
 
-add_executable(ThingNVSHMEM main_nvshmem.cu)
+Sigma_add_executable(ThingNVSHMEM main_nvshmem.cu)
 set_cuda_rpath(ThingNVSHMEM)
 
 set_target_properties(ThingNVSHMEM PROPERTIES CUDA_SEPARABLE_COMPILATION ON)

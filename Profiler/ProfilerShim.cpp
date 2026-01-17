@@ -7,6 +7,8 @@
 #include <cuda_runtime.h>
 #include "Helpers/CudaHelpers.hpp"
 
+#include "Helpers/Utilities.hpp"
+
 #include "EventRecorder.hpp"
 #include "EventTrait.hpp"
 #include "Events.hpp"
@@ -18,8 +20,8 @@
 #include "infiniband/verbs.h"
 
 // TODO: this is inside NVSHMEM. May be NVSHMEM or RDMA-CORE version dependent
-#include "mlx5/mlx5_ifc.h"
-#include "mlx5/mlx5_prm.h"
+#include <mlx5/mlx5_ifc.h>
+#include <mlx5/mlx5_prm.h>
 
 #include "CUDAEventSource.hpp"
 #include "CUDAEvents.hpp"
@@ -64,7 +66,7 @@ static std::string_view alloc_type_as_string(EnumT type) {
 }
 
 // TODO: for debugging
-static int find_gpu_index(const uint64_t addr) {
+[[maybe_unused]] static int find_gpu_index(const uint64_t addr) {
     cudaPointerAttributes attrs{};
     CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<const void*>(addr)));
 
@@ -128,24 +130,24 @@ struct ProfilerCtx {
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>(
                 [this](uint64_t addr, std::size_t size, auto&&...) {
-            // std::cout << "GPU Mem allocation hit at " << std::hex << addr << std::dec << std::endl;
-
-            // auto gpu_id = find_gpu_index(addr);
-            // m_gpu_allocations[addr] = {size, gpu_id};
+            sigma_ignore_unused(this);
+            sigma_ignore_unused(addr);
+            sigma_ignore_unused(size);
         });
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_register_tag>(
-                [this](uint64_t addr, std::size_t size, unsigned int flags, auto&&...) {
-            // std::cout << "GPU Mem registration hit at " << std::hex << addr << std::dec << std::endl;
-
-            // auto gpu_id = find_gpu_index(addr);
-            // m_gpu_allocations[addr] = {size, gpu_id};
+                [this](uint64_t addr, std::size_t size, [[maybe_unused]] unsigned int flags, auto&&...) {
+            sigma_ignore_unused(this);
+            sigma_ignore_unused(addr);
+            sigma_ignore_unused(size);
         });
 
 
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>(
                 [](auto&&, mlx5dv_obj* obj, uint64_t obj_type, auto&&...) {
+            sigma_ignore_unused(obj);
+
             if (obj_type & MLX5DV_OBJ_QP) {
                 std::cout << "TODO: QP created" << std::endl;
             }
@@ -158,6 +160,12 @@ struct ProfilerCtx {
         m_mlx5dv_profiler->register_post<mlx5dv::obj_create_tag>([this](mlx5dv_devx_obj* out_obj, ibv_context* context,
                                                                         const void* cmd_in, size_t inlen, void* out,
                                                                         size_t outlen, auto&&...) {
+            sigma_ignore_unused(out_obj);
+            sigma_ignore_unused(context);
+            sigma_ignore_unused(inlen);
+            sigma_ignore_unused(out);
+            sigma_ignore_unused(outlen);
+
             assert(out_obj && "mlx5dv::obj_create_tag resulted in null");
 
             // TODO
@@ -174,7 +182,7 @@ struct ProfilerCtx {
                 m_umem_id_to_type[wg_umem_id] = {UmemAllocationType::WQE, queue_type};
 
                 // TODO: what is this
-                auto* qp_context = DEVX_ADDR_OF(create_qp_in, cmd_in, qpc);
+                auto* qp_context = DEVX_ADDR_OF(create_qp_in, const_cast<void*>(cmd_in), qpc);
 
                 // BlueField register. TODO: what is BlueField?
                 // TODO: We get this from mlx5dv_devx_alloc_uar too
@@ -187,6 +195,7 @@ struct ProfilerCtx {
 
                 // TODO: Doorbell Offset
                 auto wq_doorbell_offset = DEVX_GET64(qpc, qp_context, dbr_addr);
+                sigma_ignore_unused(wq_doorbell_offset);
                 // ================================================
                 return;
             }
@@ -200,7 +209,7 @@ struct ProfilerCtx {
                 m_umem_id_to_type[cq_umem_id] = {UmemAllocationType::WQE, queue_type};
 
                 // Context
-                const auto* cq_context = DEVX_ADDR_OF(create_cq_in, cmd_in, cq_context);
+                const auto* cq_context = DEVX_ADDR_OF(create_cq_in, const_cast<void*>(cmd_in), cq_context);
 
                 // BlueFlame
                 const auto bf_register_uar_id = DEVX_GET(cqc, cq_context, uar_page);
@@ -212,12 +221,13 @@ struct ProfilerCtx {
 
                 // TODO: Doorbell Offset
                 const auto cq_doorbell_offset = DEVX_GET64(cqc, cq_context, dbr_addr);
+                sigma_ignore_unused(cq_doorbell_offset);
                 // ================================================
             }
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
-                [this](mlx5dv_devx_uar* out_uar, ibv_context* context, uint32_t flags, auto&&...) {
+                [this](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto&&...) {
             auto uar_reg_addr = reinterpret_cast<uint64_t>(out_uar->reg_addr);
             // auto uar_base_addr = reinterpret_cast<uint64_t>(out_uar->base_addr);
 
@@ -251,8 +261,8 @@ struct ProfilerCtx {
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
-                [this]<typename TS>(mlx5dv_devx_umem* out_umem, ibv_context* ctx, void* addr, size_t size,
-                                    uint32_t access, TS ts_start, TS ts_end) {
+                [this]<typename TS>(mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr,
+                                    size_t size, [[maybe_unused]] uint32_t access, TS ts_start, TS ts_end) {
             auto umem_addr = reinterpret_cast<uint64_t>(addr);
 
             // TODO: extra copy because Record(const T&)
@@ -260,6 +270,8 @@ struct ProfilerCtx {
                     {
                             .gpu_id = 0,
                             .nic_id = 0,
+                            // TODO
+                            .mem_id = 0,
                             .addr = umem_addr,
                             .size = size,
                     },
@@ -307,10 +319,8 @@ struct ProfilerCtx {
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
                 [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
-            // std::cout << "[Profiler] Kernel launched -> " << gpu_id << std::endl;
-
             // TODO: :(
-            Profiler::Events::CUDAKernelLaunch kernel_launch_data{.gpu_id = gpu_id};
+            Profiler::Events::CUDAKernelLaunch kernel_launch_data{gpu_id};
             snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
 
             m_event_recorder->Record(kernel_launch_data);
@@ -320,17 +330,15 @@ struct ProfilerCtx {
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
                 [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
-            // std::cout << "[Profiler] Kernel finished -> " << gpu_id << std::endl;
-
             // TODO: :(
-            Profiler::Events::CUDAKernelExit kernel_exit_data{.gpu_id = gpu_id};
+            Profiler::Events::CUDAKernelExit kernel_exit_data{gpu_id};
             snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
 
             m_event_recorder->Record(kernel_exit_data);
         });
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
-                [this](int gpu_id, uint64_t addr, std::string_view sass_str, auto&&...) {
+                [this](int gpu_id, uint64_t addr, [[maybe_unused]] std::string_view sass_str, auto&&...) {
             // ================================================
             // Umem
             for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {

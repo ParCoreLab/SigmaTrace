@@ -1,4 +1,4 @@
-add_library(HookLib INTERFACE)
+Sigma_add_library(HookLib INTERFACE)
 
 target_sources(HookLib INTERFACE
         CallbackManager.hpp
