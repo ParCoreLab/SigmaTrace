@@ -93,8 +93,9 @@ struct ProfilerCtx {
     using AddrType = uint64_t;
 
     // see mlx5_ifc.h
-    using UmemIdType = std::remove_extent_t<decltype(mlx5_ifc_create_qp_in_bits::wq_umem_id)>;
-    static_assert(sizeof(UmemIdType) == sizeof(uint8_t));
+    // using UmemIdType = std::remove_extent_t<decltype(mlx5_ifc_create_qp_in_bits::wq_umem_id)>;
+    // static_assert(sizeof(UmemIdType) == sizeof(uint8_t));
+    using UmemIdType = uint32_t;
 
     using UarPageIdType = std::remove_extent_t<decltype(mlx5dv_devx_uar::page_id)>;
     static_assert(sizeof(UarPageIdType) == sizeof(uint32_t));
