@@ -52,7 +52,7 @@ namespace ibv {
 
         // TODO: the two functions below might need rework
         template<hook::ValidCallbackTag Tag>
-        auto &get_op(ibv_context *ctx) noexcept {
+        auto& get_op(ibv_context* ctx) noexcept {
             if constexpr (std::is_same_v<Tag, post_send_tag>) {
                 return ctx->ops.post_send;
             } else if constexpr (std::is_same_v<Tag, post_recv_tag>) {
@@ -67,7 +67,7 @@ namespace ibv {
         }
 
         template<hook::ValidCallbackTag Tag, typename... Args>
-        ibv_context *get_object_from_args(Args &&...args) noexcept {
+        ibv_context* get_object_from_args(Args&&... args) noexcept {
             // Extract ibv_context from the first argument
             // post_send: (ibv_qp*, ...) -> qp->context
             // post_recv: (ibv_qp*, ...) -> qp->context
@@ -79,13 +79,13 @@ namespace ibv {
 
             if constexpr (std::is_same_v<Tag, post_send_tag> || std::is_same_v<Tag, post_recv_tag>) {
                 // First arg is ibv_qp*
-                return reinterpret_cast<ibv_qp *>(first_arg)->context;
+                return reinterpret_cast<ibv_qp*>(first_arg)->context;
             } else if constexpr (std::is_same_v<Tag, poll_cq_tag> || std::is_same_v<Tag, req_notify_cq_tag>) {
                 // First arg is ibv_cq*
-                return reinterpret_cast<ibv_cq *>(first_arg)->context;
+                return reinterpret_cast<ibv_cq*>(first_arg)->context;
             } else if constexpr (std::is_same_v<Tag, post_srq_recv_tag>) {
                 // First arg is ibv_srq*
-                return reinterpret_cast<ibv_srq *>(first_arg)->context;
+                return reinterpret_cast<ibv_srq*>(first_arg)->context;
             } else {
                 return nullptr;
             }

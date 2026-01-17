@@ -81,7 +81,7 @@ struct CTXstate {
     int id;
 
     /* Channel used to communicate from GPU to CPU receiving thread */
-    ChannelDev *channel_dev;
+    ChannelDev* channel_dev;
     ChannelHost channel_host;
 
     // After initialization, set it to WORKING to make recv thread get data,
@@ -96,7 +96,7 @@ pthread_mutex_t mutex;
 pthread_mutex_t cuda_event_mutex;
 
 /* map to store context state */
-std::unordered_map<CUcontext, CTXstate *> ctx_state_map;
+std::unordered_map<CUcontext, CTXstate*> ctx_state_map;
 
 /* skip flag used to avoid re-entry on the nvbit_callback when issuing
  * flush_channel kernel call */
@@ -119,7 +119,7 @@ const std::unordered_set<std::string_view> IgnoredFunctions{
         "nvshmemi_init_array_kernel" // Load/Store heavy, no useful info
 };
 
-void *recv_thread_fun(void *args);
+void* recv_thread_fun(void* args);
 
 void nvbit_at_init() {
     setenv("CUDA_MANAGED_FORCE_DEVICE_ALLOC", "1", 1);
@@ -147,7 +147,7 @@ void nvbit_at_init() {
 std::unordered_set<CUfunction> already_instrumented;
 
 // TODO: inefficients
-std::string_view parse_function_name(const std::string &function_name) {
+std::string_view parse_function_name(const std::string& function_name) {
     // [unsigned long*] kernel_name[<int*, int&>][(int*, int&)]
     // Group 0:  entire string
     // Group 1?: type
@@ -165,7 +165,7 @@ std::string_view parse_function_name(const std::string &function_name) {
     // Unmatched optional groups should still count
     assert(pieces_match.size() > 3 && "Regex is malformed and has fewer than 3 matches");
 
-    const auto &match = pieces_match[2];
+    const auto& match = pieces_match[2];
     if (!match.matched) {
         return function_name;
     }
@@ -183,7 +183,7 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
 
     auto ctx_entry = ctx_state_map.find(ctx);
     assert(ctx_entry != ctx_state_map.end());
-    CTXstate *ctx_state = ctx_entry->second;
+    CTXstate* ctx_state = ctx_entry->second;
 
     // TODO: is this actually the kernel?
     // const auto kernel_name = nvbit_get_func_name(ctx, func);
@@ -214,7 +214,7 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
         // std::cout << "Entering: " << function_signature << std::endl;
 
         /* get vector of instructions of function "f" */
-        const std::vector<Instr *> &instrs = nvbit_get_instrs(ctx, f);
+        const std::vector<Instr*>& instrs = nvbit_get_instrs(ctx, f);
 
         const std::string_view func_name{nvbit_get_func_name(ctx, f)};
 
@@ -288,7 +288,7 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
 
             // Ensure opcode is in the maps
             // TODO: ineffient
-            const auto &[opcode_entry, inserted] =
+            const auto& [opcode_entry, inserted] =
                     opcode_to_id_map.try_emplace(instr->getOpcode(), opcode_to_id_map.size());
             // opcode_to_id_map.try_emplace(std::string(sass), opcode_to_id_map.size());
             if (inserted) {
@@ -301,7 +301,7 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
             /* iterate on the operands */
             for (int i = 0; i < instr->getNumOperands(); i++) {
                 /* get the operand "i" */
-                const InstrType::operand_t *op = instr->getOperand(i);
+                const InstrType::operand_t* op = instr->getOperand(i);
 
                 if (op->type == InstrType::OperandType::MREF) {
                     /* insert call to the instrumentation function with its
@@ -342,10 +342,12 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
 }
 
 /* flush channel */
-__global__ void flush_channel(ChannelDev *ch_dev) { ch_dev->flush(); }
+__global__ void flush_channel(ChannelDev* ch_dev) {
+    ch_dev->flush();
+}
 
 void init_context_state(CUcontext ctx) {
-    CTXstate *ctx_state = ctx_state_map[ctx];
+    CTXstate* ctx_state = ctx_state_map[ctx];
     ctx_state->recv_thread_done = RecvThreadState::WORKING;
     cudaMallocManaged(&ctx_state->channel_dev, sizeof(ChannelDev));
     ctx_state->channel_host.init((int) ctx_state_map.size() - 1, CHANNEL_SIZE, ctx_state->channel_dev, recv_thread_fun,
@@ -353,16 +355,16 @@ void init_context_state(CUcontext ctx) {
     nvbit_set_tool_pthread(ctx_state->channel_host.get_thread());
 }
 
-static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_launch_id, nvbit_api_cuda_t cbid,
-                                void *params, bool stream_capture = false, bool build_graph = false) {
-    auto &profiler = cuda_trace::NvbitProfiler::instance();
+static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t& grid_launch_id, nvbit_api_cuda_t cbid,
+                                void* params, bool stream_capture = false, bool build_graph = false) {
+    auto& profiler = cuda_trace::NvbitProfiler::instance();
 
     int32_t gpu_id{};
     cudaGetDevice(&gpu_id);
     // TODO: better error handling
     assert(cudaGetLastError() == cudaSuccess);
 
-    const char *kernel_name{nvbit_get_func_name(ctx, func)};
+    const char* kernel_name{nvbit_get_func_name(ctx, func)};
     profiler.invoke_custom<cuda_trace::cuda_kernel_launch_tag>(gpu_id, kernel_name);
 
     // no need to sync during stream capture or manual graph build, since no
@@ -425,16 +427,16 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t &grid_l
 }
 
 // the function is only called for non cuda graph launch cases.
-static void leave_kernel_launch(CTXstate *ctx_state, CUcontext ctx, CUfunction func, uint64_t &grid_launch_id) {
+static void leave_kernel_launch(CTXstate* ctx_state, CUcontext ctx, CUfunction func, uint64_t& grid_launch_id) {
     // TODO: Might be better to do it after cudaDeviceSynchronize
-    auto &profiler = cuda_trace::NvbitProfiler::instance();
+    auto& profiler = cuda_trace::NvbitProfiler::instance();
 
     int32_t gpu_id{};
     cudaGetDevice(&gpu_id);
     // TODO: better error handling
     assert(cudaGetLastError() == cudaSuccess);
 
-    const char *kernel_name{nvbit_get_func_name(ctx, func)};
+    const char* kernel_name{nvbit_get_func_name(ctx, func)};
     profiler.invoke_custom<cuda_trace::cuda_kernel_exit_tag>(gpu_id, kernel_name);
 
     // make sure user kernel finishes to avoid deadlock
@@ -447,19 +449,19 @@ static void leave_kernel_launch(CTXstate *ctx_state, CUcontext ctx, CUfunction f
     assert(cudaGetLastError() == cudaSuccess);
 }
 
-static void enter_mem_alloc(const void *addr, const std::size_t size) {
-    auto &profiler = cuda_trace::NvbitProfiler::instance();
+static void enter_mem_alloc(const void* addr, const std::size_t size) {
+    auto& profiler = cuda_trace::NvbitProfiler::instance();
     profiler.invoke_custom<cuda_trace::cuda_mem_alloc_tag>(reinterpret_cast<std::uint64_t>(addr), size);
 }
 
-static void enter_mem_register(const void *addr, const std::size_t size, const unsigned int flags) {
-    auto &profiler = cuda_trace::NvbitProfiler::instance();
+static void enter_mem_register(const void* addr, const std::size_t size, const unsigned int flags) {
+    auto& profiler = cuda_trace::NvbitProfiler::instance();
     profiler.invoke_custom<cuda_trace::cuda_mem_register_tag>(reinterpret_cast<std::uint64_t>(addr), size, flags);
 }
 
 
-void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, const char *name, void *params,
-                         CUresult *pStatus) {
+void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, const char* name, void* params,
+                         CUresult* pStatus) {
     pthread_mutex_lock(&cuda_event_mutex);
 
     /* we prevent re-entry on this callback when issuing CUDA functions inside
@@ -470,54 +472,54 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
     }
     skip_callback_flag = true;
 
-    CTXstate *ctx_state = ctx_state_map[ctx];
+    CTXstate* ctx_state = ctx_state_map[ctx];
 
     switch (cbid) {
         // Why are there so many??? Ue CUPTI
         // Insane
         case API_CUDA_cuMemAlloc: {
-            const auto *p = static_cast<cuMemAlloc_params *>(params);
+            const auto* p = static_cast<cuMemAlloc_params*>(params);
             enter_mem_alloc(p->dptr, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAlloc_v2: {
-            const auto *p = static_cast<cuMemAlloc_v2_params *>(params);
+            const auto* p = static_cast<cuMemAlloc_v2_params*>(params);
             enter_mem_alloc(p->dptr, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAllocHost: {
-            const auto *p = static_cast<cuMemAllocHost_params *>(params);
+            const auto* p = static_cast<cuMemAllocHost_params*>(params);
             // TODO: maybe dereference p->pp
             enter_mem_alloc(p->pp, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAllocHost_v2: {
-            const auto *p = static_cast<cuMemAllocHost_v2_params *>(params);
+            const auto* p = static_cast<cuMemAllocHost_v2_params*>(params);
             enter_mem_alloc(p->pp, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAllocManaged: {
-            const auto *p = static_cast<cuMemAllocManaged_params *>(params);
+            const auto* p = static_cast<cuMemAllocManaged_params*>(params);
             enter_mem_alloc(p->dptr, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAllocAsync: {
-            const auto *p = static_cast<cuMemAllocAsync_params *>(params);
+            const auto* p = static_cast<cuMemAllocAsync_params*>(params);
             enter_mem_alloc(p->dptr, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAllocAsync_ptsz: {
-            const auto *p = static_cast<cuMemAllocAsync_ptsz_params *>(params);
+            const auto* p = static_cast<cuMemAllocAsync_ptsz_params*>(params);
             enter_mem_alloc(p->dptr, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAllocFromPoolAsync: {
-            const auto *p = static_cast<cuMemAllocFromPoolAsync_params *>(params);
+            const auto* p = static_cast<cuMemAllocFromPoolAsync_params*>(params);
             enter_mem_alloc(p->dptr, p->bytesize);
             break;
         }
         case API_CUDA_cuMemAllocFromPoolAsync_ptsz: {
-            const auto *p = static_cast<cuMemAllocFromPoolAsync_ptsz_params *>(params);
+            const auto* p = static_cast<cuMemAllocFromPoolAsync_ptsz_params*>(params);
             enter_mem_alloc(p->dptr, p->bytesize);
             break;
         }
@@ -531,24 +533,24 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
             break;
         }
         case API_CUDA_cuMemHostAlloc: {
-            const auto *p = static_cast<cuMemAllocHost_params *>(params);
+            const auto* p = static_cast<cuMemAllocHost_params*>(params);
             // TODO: maybe dereference p->pp
             enter_mem_alloc(p->pp, p->bytesize);
             break;
         }
         case API_CUDA_cuMemHostAlloc_v2: {
-            const auto *p = static_cast<cuMemAllocHost_v2_params *>(params);
+            const auto* p = static_cast<cuMemAllocHost_v2_params*>(params);
             // TODO: maybe dereference p->pp
             enter_mem_alloc(p->pp, p->bytesize);
             break;
         }
         case API_CUDA_cuMemHostRegister: {
-            const auto *p = static_cast<cuMemHostRegister_params *>(params);
+            const auto* p = static_cast<cuMemHostRegister_params*>(params);
             enter_mem_register(p->p, p->bytesize, p->Flags);
             break;
         }
         case API_CUDA_cuMemHostRegister_v2: {
-            const auto *p = static_cast<cuMemHostRegister_v2_params *>(params);
+            const auto* p = static_cast<cuMemHostRegister_v2_params*>(params);
             // TODO: maybe dereference p->pp
             enter_mem_register(p->p, p->bytesize, p->Flags);
             break;
@@ -557,7 +559,7 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
         // parameters, they will not get involved with cuda graph
         case API_CUDA_cuLaunch:
         case API_CUDA_cuLaunchGrid: {
-            cuLaunch_params *p = (cuLaunch_params *) params;
+            cuLaunch_params* p = (cuLaunch_params*) params;
             CUfunction func = p->f;
             if (!is_exit) {
                 enter_kernel_launch(ctx, func, global_grid_launch_id, cbid, params);
@@ -608,16 +610,16 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
             CUstream hStream;
 
             if (cbid == API_CUDA_cuLaunchKernelEx_ptsz || cbid == API_CUDA_cuLaunchKernelEx) {
-                cuLaunchKernelEx_params *p = (cuLaunchKernelEx_params *) params;
+                cuLaunchKernelEx_params* p = (cuLaunchKernelEx_params*) params;
                 func = p->f;
                 hStream = p->config->hStream;
             } else if (cbid == API_CUDA_cuLaunchKernel_ptsz || cbid == API_CUDA_cuLaunchKernel ||
                        cbid == API_CUDA_cuLaunchCooperativeKernel_ptsz || cbid == API_CUDA_cuLaunchCooperativeKernel) {
-                cuLaunchKernel_params *p = (cuLaunchKernel_params *) params;
+                cuLaunchKernel_params* p = (cuLaunchKernel_params*) params;
                 func = p->f;
                 hStream = p->hStream;
             } else {
-                cuLaunchGridAsync_params *p = (cuLaunchGridAsync_params *) params;
+                cuLaunchGridAsync_params* p = (cuLaunchGridAsync_params*) params;
                 func = p->f;
                 hStream = p->hStream;
             }
@@ -642,13 +644,13 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
             }
         } break;
         case API_CUDA_cuGraphAddKernelNode: {
-            cuGraphAddKernelNode_params *p = (cuGraphAddKernelNode_params *) params;
+            cuGraphAddKernelNode_params* p = (cuGraphAddKernelNode_params*) params;
             CUfunction func = p->nodeParams->func;
 
             if (!is_exit) {
                 // cuGraphAddKernelNode_params->nodeParams is the same as
                 // cuLaunchKernel_params up to sharedMemBytes
-                enter_kernel_launch(ctx, func, global_grid_launch_id, cbid, (void *) p->nodeParams, false, true);
+                enter_kernel_launch(ctx, func, global_grid_launch_id, cbid, (void*) p->nodeParams, false, true);
             }
         } break;
         case API_CUDA_cuGraphLaunch: {
@@ -656,7 +658,7 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
             // Wait until the graph is completed using
             // cudaStreamSynchronize()
             if (is_exit) {
-                cuGraphLaunch_params *p = (cuGraphLaunch_params *) params;
+                cuGraphLaunch_params* p = (cuGraphLaunch_params*) params;
 
                 CUDA_SAFECALL(cudaStreamSynchronize(p->hStream));
                 assert(cudaGetLastError() == cudaSuccess);
@@ -676,19 +678,19 @@ void nvbit_at_cuda_event(CUcontext ctx, int is_exit, nvbit_api_cuda_t cbid, cons
     pthread_mutex_unlock(&cuda_event_mutex);
 }
 
-void *recv_thread_fun(void *args) {
+void* recv_thread_fun(void* args) {
     CUcontext ctx = (CUcontext) args;
 
     pthread_mutex_lock(&mutex);
     /* get context state from map */
     assert(ctx_state_map.find(ctx) != ctx_state_map.end());
-    CTXstate *ctx_state = ctx_state_map[ctx];
+    CTXstate* ctx_state = ctx_state_map[ctx];
 
-    ChannelHost *ch_host = &ctx_state->channel_host;
+    ChannelHost* ch_host = &ctx_state->channel_host;
     pthread_mutex_unlock(&mutex);
-    char *recv_buffer = (char *) malloc(CHANNEL_SIZE);
+    char* recv_buffer = (char*) malloc(CHANNEL_SIZE);
 
-    auto &profiler = cuda_trace::NvbitProfiler::instance();
+    auto& profiler = cuda_trace::NvbitProfiler::instance();
 
     while (ctx_state->recv_thread_done == RecvThreadState::WORKING) {
         /* receive buffer from channel */
@@ -696,7 +698,7 @@ void *recv_thread_fun(void *args) {
         if (num_recv_bytes > 0) {
             uint32_t num_processed_bytes = 0;
             while (num_processed_bytes < num_recv_bytes) {
-                mem_access_t *ma = (mem_access_t *) &recv_buffer[num_processed_bytes];
+                mem_access_t* ma = (mem_access_t*) &recv_buffer[num_processed_bytes];
 
                 // std::stringstream ss;
                 // ss << "CTX " << HEX(ctx) << " - grid_launch_id " << ma->grid_launch_id << " - CTA " << ma->cta_id_x
@@ -729,7 +731,7 @@ void nvbit_at_ctx_init(CUcontext ctx) {
         printf("MEMTRACE: STARTING CONTEXT %p\n", ctx);
     }
     assert(ctx_state_map.find(ctx) == ctx_state_map.end());
-    CTXstate *ctx_state = new CTXstate;
+    CTXstate* ctx_state = new CTXstate;
     ctx_state_map[ctx] = ctx_state;
     pthread_mutex_unlock(&mutex);
 }
@@ -749,7 +751,7 @@ void nvbit_at_ctx_term(CUcontext ctx) {
     }
     /* get context state from map */
     assert(ctx_state_map.find(ctx) != ctx_state_map.end());
-    CTXstate *ctx_state = ctx_state_map[ctx];
+    CTXstate* ctx_state = ctx_state_map[ctx];
 
     /* Notify receiver thread and wait for receiver thread to
      * notify back */
@@ -766,7 +768,7 @@ void nvbit_at_ctx_term(CUcontext ctx) {
 
 void nvbit_at_graph_node_launch(CUcontext ctx, CUfunction func, CUstream stream, uint64_t launch_handle) {
     func_config_t config = {0};
-    const char *func_name = nvbit_get_func_name(ctx, func);
+    const char* func_name = nvbit_get_func_name(ctx, func);
     uint64_t pc = nvbit_get_func_addr(ctx, func);
 
     pthread_mutex_lock(&mutex);

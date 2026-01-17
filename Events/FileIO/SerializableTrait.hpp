@@ -20,8 +20,10 @@ namespace FileIO {
     template<>                                                                                                         \
     struct FileIO::SerializableTrait<Struct> {                                                                         \
         /* TODO: Returning bool for Protobuf compatibility. memcpy return is unused for now */                         \
-        static auto GetSize(auto &&) { return sizeof(Struct); };                                                       \
-        static bool SerializeTo(const Struct &s, void *data) {                                                         \
+        static auto GetSize(auto&&) {                                                                                  \
+            return sizeof(Struct);                                                                                     \
+        };                                                                                                             \
+        static bool SerializeTo(const Struct& s, void* data) {                                                         \
             std::memcpy(data, &s, sizeof(Struct));                                                                     \
             return true;                                                                                               \
         };                                                                                                             \
@@ -34,7 +36,7 @@ namespace FileIO {
     using BareType_t = std::remove_cvref_t<T>;
 
     template<typename T>
-    concept Serializable = requires(BareType_t<T> &t) {
+    concept Serializable = requires(BareType_t<T>& t) {
         { SerializableTrait<BareType_t<T>>::GetSize(t) } -> std::convertible_to<std::size_t>;
         // TODO: made stream writing easier
         // { SerializableTrait<BareType_t<T>>::SerializeTo(t, std::declval<void *>()) } -> std::same_as<bool>;

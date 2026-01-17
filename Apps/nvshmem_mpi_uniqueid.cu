@@ -13,7 +13,7 @@
 
 #include "Helpers/CudaHelpers.hpp"
 
-__global__ void simple_shift(int *destination) {
+__global__ void simple_shift(int* destination) {
     int mype = nvshmem_my_pe();
     int npes = nvshmem_n_pes();
     int peer = (mype + 1) % npes;
@@ -21,7 +21,7 @@ __global__ void simple_shift(int *destination) {
     nvshmem_int_p(destination, mype, peer);
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     // setenv("NVSHMEM_DEBUG", "TRACE", 1);
 
     int mype_node, msg;
@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
 
     CUDA_CHECK(cudaSetDevice(mype_node));
     CUDA_CHECK(cudaStreamCreate(&stream));
-    int *destination = (int *) nvshmem_malloc(sizeof(int));
+    int* destination = (int*) nvshmem_malloc(sizeof(int));
 
     simple_shift<<<1, 1, 0, stream>>>(destination);
     nvshmemx_barrier_all_on_stream(stream);

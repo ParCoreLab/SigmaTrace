@@ -50,5 +50,5 @@ struct MemoryAccess {
 struct MemoryAccessTracker {
     uint32_t currentEntry;
     uint32_t maxEntry;
-    MemoryAccess *accesses;
+    MemoryAccess* accesses;
 };

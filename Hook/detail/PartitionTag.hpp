@@ -6,7 +6,7 @@
 
 // ================================================================
 // Helper to partition tags by hook type
-// TODO: uusedunused for now
+// TODO:  for now
 // ================================================================
 namespace hook::detail {
     template<typename... Tags>

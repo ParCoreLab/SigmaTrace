@@ -37,7 +37,7 @@
 
 struct LaunchData {
     std::string functionName;
-    MemoryAccessTracker *pTracker;
+    MemoryAccessTracker* pTracker;
 };
 
 using LaunchVector = std::vector<LaunchData>;
@@ -45,13 +45,13 @@ using StreamMap = std::map<Sanitizer_StreamHandle, LaunchVector>;
 using ContextMap = std::map<CUcontext, StreamMap>;
 
 struct CallbackTracker {
-    std::ostream *out = nullptr;
+    std::ostream* out = nullptr;
     std::shared_ptr<std::ofstream> outFile = nullptr;
 
     ContextMap memoryTrackers;
 
     CallbackTracker() {
-        const char *pOutName = std::getenv("OUT_FILE_NAME");
+        const char* pOutName = std::getenv("OUT_FILE_NAME");
         if (pOutName) {
             outFile = std::make_shared<std::ofstream>(pOutName);
             out = outFile.get();
@@ -61,13 +61,13 @@ struct CallbackTracker {
     }
 
     // very basic singleton
-    static CallbackTracker &GetInstance() {
+    static CallbackTracker& GetInstance() {
         static CallbackTracker instance;
         return instance;
     }
 };
 
-void ModuleLoaded(Sanitizer_ResourceModuleData *pModuleData) {
+void ModuleLoaded(Sanitizer_ResourceModuleData* pModuleData) {
     // Instrument user code!
     if (SANITIZER_SUCCESS != sanitizerAddPatchesFromFile("lib/MemoryTrackerPatches.fatbin", 0)) {
         std::cerr << "Failed to load fatbin. Please check that it is in the current directory and contains the correct "
@@ -87,7 +87,7 @@ void ModuleLoaded(Sanitizer_ResourceModuleData *pModuleData) {
 static size_t GetMemAccessSize() {
     constexpr size_t MemAccessDefaultSize = 1024;
 
-    const char *pValue = std::getenv("MEM_ACCESS_SIZE");
+    const char* pValue = std::getenv("MEM_ACCESS_SIZE");
     if (!pValue) {
         return MemAccessDefaultSize;
     }
@@ -95,13 +95,13 @@ static size_t GetMemAccessSize() {
     return std::stoi(pValue);
 }
 
-void LaunchBegin(CallbackTracker *pCallbackTracker, CUcontext context, CUfunction function, std::string functionName,
+void LaunchBegin(CallbackTracker* pCallbackTracker, CUcontext context, CUfunction function, std::string functionName,
                  Sanitizer_StreamHandle stream) {
     const size_t MemAccessSize = GetMemAccessSize();
 
     // alloc MemoryAccess array
-    MemoryAccess *accesses = nullptr;
-    sanitizerAlloc(context, (void **) &accesses, sizeof(MemoryAccess) * MemAccessSize);
+    MemoryAccess* accesses = nullptr;
+    sanitizerAlloc(context, (void**) &accesses, sizeof(MemoryAccess) * MemAccessSize);
     sanitizerMemset(accesses, 0, sizeof(MemoryAccess) * MemAccessSize, stream);
 
     MemoryAccessTracker hTracker;
@@ -109,14 +109,14 @@ void LaunchBegin(CallbackTracker *pCallbackTracker, CUcontext context, CUfunctio
     hTracker.maxEntry = MemAccessSize;
     hTracker.accesses = accesses;
 
-    MemoryAccessTracker *dTracker = nullptr;
-    sanitizerAlloc(context, (void **) &dTracker, sizeof(*dTracker));
+    MemoryAccessTracker* dTracker = nullptr;
+    sanitizerAlloc(context, (void**) &dTracker, sizeof(*dTracker));
     sanitizerMemcpyHostToDeviceAsync(dTracker, &hTracker, sizeof(*dTracker), stream);
 
     sanitizerSetCallbackData(function, dTracker);
 
     LaunchData launchData = {functionName, dTracker};
-    std::vector<LaunchData> &deviceTrackers = pCallbackTracker->memoryTrackers[context][stream];
+    std::vector<LaunchData>& deviceTrackers = pCallbackTracker->memoryTrackers[context][stream];
     deviceTrackers.push_back(launchData);
 }
 
@@ -145,12 +145,12 @@ static std::string GetMemoryTypeString(MemoryAccessType type) {
     }
 }
 
-void StreamSynchronized(CallbackTracker *pCallbackTracker, CUcontext context, Sanitizer_StreamHandle stream) {
+void StreamSynchronized(CallbackTracker* pCallbackTracker, CUcontext context, Sanitizer_StreamHandle stream) {
     MemoryAccessTracker hTracker = {0};
 
-    std::vector<LaunchData> &deviceTrackers = pCallbackTracker->memoryTrackers[context][stream];
+    std::vector<LaunchData>& deviceTrackers = pCallbackTracker->memoryTrackers[context][stream];
 
-    for (auto &tracker: deviceTrackers) {
+    for (auto& tracker: deviceTrackers) {
         *pCallbackTracker->out << "Kernel Launch: " << tracker.functionName << std::endl;
 
         sanitizerMemcpyDeviceToHost(&hTracker, tracker.pTracker, sizeof(*tracker.pTracker), stream);
@@ -163,7 +163,7 @@ void StreamSynchronized(CallbackTracker *pCallbackTracker, CUcontext context, Sa
         sanitizerMemcpyDeviceToHost(accesses.data(), hTracker.accesses, sizeof(MemoryAccess) * numEntries, stream);
 
         for (uint32_t i = 0; i < numEntries; ++i) {
-            MemoryAccess &access = accesses[i];
+            MemoryAccess& access = accesses[i];
 
             *pCallbackTracker->out << "  [" << i << "] " << GetMemoryRWString(access.flags) << " access of "
                                    << GetMemoryTypeString(access.type) << " memory by thread (" << access.threadId.x
@@ -179,23 +179,23 @@ void StreamSynchronized(CallbackTracker *pCallbackTracker, CUcontext context, Sa
     deviceTrackers.clear();
 }
 
-void ContextSynchronized(CallbackTracker *pCallbackTracker, CUcontext context) {
-    auto &contextTracker = pCallbackTracker->memoryTrackers[context];
+void ContextSynchronized(CallbackTracker* pCallbackTracker, CUcontext context) {
+    auto& contextTracker = pCallbackTracker->memoryTrackers[context];
 
-    for (auto &streamTracker: contextTracker) {
+    for (auto& streamTracker: contextTracker) {
         StreamSynchronized(pCallbackTracker, context, streamTracker.first);
     }
 }
 
-void MemoryTrackerCallback(void *userdata, Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid,
-                           const void *cbdata) {
-    auto *callbackTracker = (CallbackTracker *) userdata;
+void MemoryTrackerCallback(void* userdata, Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid,
+                           const void* cbdata) {
+    auto* callbackTracker = (CallbackTracker*) userdata;
 
     switch (domain) {
         case SANITIZER_CB_DOMAIN_RESOURCE:
             switch (cbid) {
                 case SANITIZER_CBID_RESOURCE_MODULE_LOADED: {
-                    auto *pModuleData = (Sanitizer_ResourceModuleData *) cbdata;
+                    auto* pModuleData = (Sanitizer_ResourceModuleData*) cbdata;
                     ModuleLoaded(pModuleData);
                     break;
                 }
@@ -206,7 +206,7 @@ void MemoryTrackerCallback(void *userdata, Sanitizer_CallbackDomain domain, Sani
         case SANITIZER_CB_DOMAIN_LAUNCH:
             switch (cbid) {
                 case SANITIZER_CBID_LAUNCH_BEGIN: {
-                    auto *pLaunchData = (Sanitizer_LaunchData *) cbdata;
+                    auto* pLaunchData = (Sanitizer_LaunchData*) cbdata;
                     LaunchBegin(callbackTracker, pLaunchData->context, pLaunchData->function, pLaunchData->functionName,
                                 pLaunchData->hStream);
                     break;
@@ -238,7 +238,7 @@ void MemoryTrackerCallback(void *userdata, Sanitizer_CallbackDomain domain, Sani
 
 int InitializeInjection() {
     Sanitizer_SubscriberHandle handle;
-    CallbackTracker &tracker = CallbackTracker::GetInstance();
+    CallbackTracker& tracker = CallbackTracker::GetInstance();
 
     std::cout << ":)" << std::endl;
 

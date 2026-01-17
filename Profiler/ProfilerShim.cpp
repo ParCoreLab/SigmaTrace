@@ -66,7 +66,7 @@ static std::string_view alloc_type_as_string(EnumT type) {
 // TODO: for debugging
 static int find_gpu_index(const uint64_t addr) {
     cudaPointerAttributes attrs{};
-    CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<const void *>(addr)));
+    CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<const void*>(addr)));
 
     if (attrs.type == cudaMemoryTypeUnregistered) {
         return -1;
@@ -127,37 +127,37 @@ struct ProfilerCtx {
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>(
-                [this](uint64_t addr, std::size_t size, auto &&...) {
-                    // std::cout << "GPU Mem allocation hit at " << std::hex << addr << std::dec << std::endl;
+                [this](uint64_t addr, std::size_t size, auto&&...) {
+            // std::cout << "GPU Mem allocation hit at " << std::hex << addr << std::dec << std::endl;
 
-                    // auto gpu_id = find_gpu_index(addr);
-                    // m_gpu_allocations[addr] = {size, gpu_id};
-                });
+            // auto gpu_id = find_gpu_index(addr);
+            // m_gpu_allocations[addr] = {size, gpu_id};
+        });
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_register_tag>(
-                [this](uint64_t addr, std::size_t size, unsigned int flags, auto &&...) {
-                    // std::cout << "GPU Mem registration hit at " << std::hex << addr << std::dec << std::endl;
+                [this](uint64_t addr, std::size_t size, unsigned int flags, auto&&...) {
+            // std::cout << "GPU Mem registration hit at " << std::hex << addr << std::dec << std::endl;
 
-                    // auto gpu_id = find_gpu_index(addr);
-                    // m_gpu_allocations[addr] = {size, gpu_id};
-                });
+            // auto gpu_id = find_gpu_index(addr);
+            // m_gpu_allocations[addr] = {size, gpu_id};
+        });
 
 
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>(
-                [](auto &&, mlx5dv_obj *obj, uint64_t obj_type, auto &&...) {
-                    if (obj_type & MLX5DV_OBJ_QP) {
-                        std::cout << "TODO: QP created" << std::endl;
-                    }
+                [](auto&&, mlx5dv_obj* obj, uint64_t obj_type, auto&&...) {
+            if (obj_type & MLX5DV_OBJ_QP) {
+                std::cout << "TODO: QP created" << std::endl;
+            }
 
-                    if (obj_type & MLX5DV_OBJ_CQ) {
-                        std::cout << "TODO: CQ created" << std::endl;
-                    }
-                });
+            if (obj_type & MLX5DV_OBJ_CQ) {
+                std::cout << "TODO: CQ created" << std::endl;
+            }
+        });
 
-        m_mlx5dv_profiler->register_post<mlx5dv::obj_create_tag>([this](mlx5dv_devx_obj *out_obj, ibv_context *context,
-                                                                        const void *cmd_in, size_t inlen, void *out,
-                                                                        size_t outlen, auto &&...) {
+        m_mlx5dv_profiler->register_post<mlx5dv::obj_create_tag>([this](mlx5dv_devx_obj* out_obj, ibv_context* context,
+                                                                        const void* cmd_in, size_t inlen, void* out,
+                                                                        size_t outlen, auto&&...) {
             assert(out_obj && "mlx5dv::obj_create_tag resulted in null");
 
             // TODO
@@ -174,7 +174,7 @@ struct ProfilerCtx {
                 m_umem_id_to_type[wg_umem_id] = {UmemAllocationType::WQE, queue_type};
 
                 // TODO: what is this
-                auto *qp_context = DEVX_ADDR_OF(create_qp_in, cmd_in, qpc);
+                auto* qp_context = DEVX_ADDR_OF(create_qp_in, cmd_in, qpc);
 
                 // BlueField register. TODO: what is BlueField?
                 // TODO: We get this from mlx5dv_devx_alloc_uar too
@@ -200,7 +200,7 @@ struct ProfilerCtx {
                 m_umem_id_to_type[cq_umem_id] = {UmemAllocationType::WQE, queue_type};
 
                 // Context
-                const auto *cq_context = DEVX_ADDR_OF(create_cq_in, cmd_in, cq_context);
+                const auto* cq_context = DEVX_ADDR_OF(create_cq_in, cmd_in, cq_context);
 
                 // BlueFlame
                 const auto bf_register_uar_id = DEVX_GET(cqc, cq_context, uar_page);
@@ -217,30 +217,30 @@ struct ProfilerCtx {
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
-                [this](mlx5dv_devx_uar *out_uar, ibv_context *context, uint32_t flags, auto &&...) {
-                    auto uar_reg_addr = reinterpret_cast<uint64_t>(out_uar->reg_addr);
-                    // auto uar_base_addr = reinterpret_cast<uint64_t>(out_uar->base_addr);
+                [this](mlx5dv_devx_uar* out_uar, ibv_context* context, uint32_t flags, auto&&...) {
+            auto uar_reg_addr = reinterpret_cast<uint64_t>(out_uar->reg_addr);
+            // auto uar_base_addr = reinterpret_cast<uint64_t>(out_uar->base_addr);
 
-                    // TODO: not checking existence
-                    m_mlx5_uar_allocations[uar_reg_addr] = out_uar->page_id;
+            // TODO: not checking existence
+            m_mlx5_uar_allocations[uar_reg_addr] = out_uar->page_id;
 
-                    /*
-                     * flags -> https://man7.org/linux/man-pages/man3/mlx5dv_devx_alloc_uar.3.html
-                     *       Allocation flags for the UAR.
-                     *       MLX5DV_UAR_ALLOC_TYPE_BF: Allocate UAR with Blueflame properties.
-                     *       MLX5DV_UAR_ALLOC_TYPE_NC: Allocate UAR with non-cache properties.
-                     *       MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED: Allocate a dedicated UAR with non-cache properties.
-                     */
+            /*
+             * flags -> https://man7.org/linux/man-pages/man3/mlx5dv_devx_alloc_uar.3.html
+             *       Allocation flags for the UAR.
+             *       MLX5DV_UAR_ALLOC_TYPE_BF: Allocate UAR with Blueflame properties.
+             *       MLX5DV_UAR_ALLOC_TYPE_NC: Allocate UAR with non-cache properties.
+             *       MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED: Allocate a dedicated UAR with non-cache properties.
+             */
 
-                    if (!(flags & MLX5DV_UAR_ALLOC_TYPE_BF)) {
-                        // std::cerr << "[Profiler] mlx5dv_devx_alloc_uar with non-BlueField flag" << std::endl;
-                    }
-                });
+            if (!(flags & MLX5DV_UAR_ALLOC_TYPE_BF)) {
+                // std::cerr << "[Profiler] mlx5dv_devx_alloc_uar with non-BlueField flag" << std::endl;
+            }
+        });
 
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar *devx_uar, auto &&...) {
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto&&...) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
-            const auto &uar_alloc = m_mlx5_uar_allocations.find(devx_uar->page_id);
+            const auto& uar_alloc = m_mlx5_uar_allocations.find(devx_uar->page_id);
             if (uar_alloc == m_mlx5_uar_allocations.end()) {
                 // std::cerr << "[Profiler] mlx5dv_devx_free_uar called with nonexistent page_id (" << devx_uar->page_id
                 // << ")" << std::endl;
@@ -251,26 +251,26 @@ struct ProfilerCtx {
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
-                [this]<typename TS>(mlx5dv_devx_umem *out_umem, ibv_context *ctx, void *addr, size_t size,
+                [this]<typename TS>(mlx5dv_devx_umem* out_umem, ibv_context* ctx, void* addr, size_t size,
                                     uint32_t access, TS ts_start, TS ts_end) {
-                    auto umem_addr = reinterpret_cast<uint64_t>(addr);
+            auto umem_addr = reinterpret_cast<uint64_t>(addr);
 
-                    // TODO: extra copy because Record(const T&)
-                    m_event_recorder->Record<Profiler::Events::Mlx5MemoryRegistration>(
-                            {
-                                    .gpu_id = 0,
-                                    .nic_id = 0,
-                                    .addr = umem_addr,
-                                    .size = size,
-                            },
-                            ts_start, ts_end);
+            // TODO: extra copy because Record(const T&)
+            m_event_recorder->Record<Profiler::Events::Mlx5MemoryRegistration>(
+                    {
+                            .gpu_id = 0,
+                            .nic_id = 0,
+                            .addr = umem_addr,
+                            .size = size,
+                    },
+                    ts_start, ts_end);
 
-                    std::scoped_lock lock(m_ibv_allocations_mutex);
+            std::scoped_lock lock(m_ibv_allocations_mutex);
 
-                    m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
-                });
+            m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
+        });
 
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem *umem, auto &&...) {
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem* umem, auto&&...) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
             for (auto it = m_mlx5_umem_allocations.begin(); it != m_mlx5_umem_allocations.end(); ++it) {
@@ -285,7 +285,7 @@ struct ProfilerCtx {
         });
 
 
-        m_ibv_profiler->register_post<ibv::open_device_tag>([](auto &&, ibv_device *, auto &&...) {
+        m_ibv_profiler->register_post<ibv::open_device_tag>([](auto&&, ibv_device*, auto&&...) {
             std::cout << "[Profiler] ibv_open_device received" << std::endl;
         });
 
@@ -306,94 +306,96 @@ struct ProfilerCtx {
         */
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
-                [this](GpuId_T gpu_id, const char *kernel_name, auto &&...) {
-                    // std::cout << "[Profiler] Kernel launched -> " << gpu_id << std::endl;
+                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
+            // std::cout << "[Profiler] Kernel launched -> " << gpu_id << std::endl;
 
-                    // TODO: :(
-                    Profiler::Events::CUDAKernelLaunch kernel_launch_data{.gpu_id = gpu_id};
-                    snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
+            // TODO: :(
+            Profiler::Events::CUDAKernelLaunch kernel_launch_data{.gpu_id = gpu_id};
+            snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
 
-                    m_event_recorder->Record(kernel_launch_data);
+            m_event_recorder->Record(kernel_launch_data);
 
-                    num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
-                });
+            num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
+        });
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
-                [this](GpuId_T gpu_id, const char *kernel_name, auto &&...) {
-                    // std::cout << "[Profiler] Kernel finished -> " << gpu_id << std::endl;
+                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
+            // std::cout << "[Profiler] Kernel finished -> " << gpu_id << std::endl;
 
-                    // TODO: :(
-                    Profiler::Events::CUDAKernelExit kernel_exit_data{.gpu_id = gpu_id};
-                    snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
+            // TODO: :(
+            Profiler::Events::CUDAKernelExit kernel_exit_data{.gpu_id = gpu_id};
+            snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
 
-                    m_event_recorder->Record(kernel_exit_data);
-                });
+            m_event_recorder->Record(kernel_exit_data);
+        });
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
-                [this](int gpu_id, uint64_t addr, std::string_view sass_str, auto &&...) {
-                    // ================================================
-                    // Umem
-                    for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
-                        if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
-                            const auto umem_allocation_entry = m_umem_id_to_type.find(umem_id);
-                            if (umem_allocation_entry == m_umem_id_to_type.end()) {
-                                assert(false && "Empty m_umem_id_to_type");
-                                break;
-                            }
-
-                            const auto [alloc_type, queue_type] = umem_allocation_entry->second;
-
-                            if (alloc_type == UmemAllocationType::Doorbell) {
-                                std::cout << "Doorbell" << std::endl;
-                                const Profiler::Events::DoorbellRing event{
-                                        .gpu_id = static_cast<int16_t>(gpu_id),
-                                        .nic_id = 0,
-                                        .addr = addr,
-                                        .wqe_index = 0,
-                                        .qp_num = 0,
-                                };
-                                m_event_recorder->Record(event);
-                            }
-
-                            num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-                            return;
-                        }
+                [this](int gpu_id, uint64_t addr, std::string_view sass_str, auto&&...) {
+            // ================================================
+            // Umem
+            for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
+                if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
+                    const auto umem_allocation_entry = m_umem_id_to_type.find(umem_id);
+                    if (umem_allocation_entry == m_umem_id_to_type.end()) {
+                        assert(false && "Empty m_umem_id_to_type");
+                        break;
                     }
-                    // ================================================
 
-                    // ================================================
-                    // Uar
-                    {
-                        const auto uar_allocation_entry = m_mlx5_uar_allocations.find(addr);
-                        if (uar_allocation_entry == m_mlx5_uar_allocations.end()) {
-                            return;
-                        }
+                    const auto [alloc_type, queue_type] = umem_allocation_entry->second;
 
-                        const auto page_id = uar_allocation_entry->second;
-
-                        // TODO: not checking existence
-                        const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
-
-                        if (alloc_type == UarAllocationType::BlueField) {
-                            // const Profiler::Events::DoorbellRing event{.addr = addr};
-                            // m_event_recorder->Record(event);
-                        }
-                        num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+                    if (alloc_type == UmemAllocationType::Doorbell) {
+                        std::cout << "Doorbell" << std::endl;
+                        const Profiler::Events::DoorbellRing event{
+                                .gpu_id = static_cast<int16_t>(gpu_id),
+                                .nic_id = 0,
+                                .addr = addr,
+                                .wqe_index = 0,
+                                .qp_num = 0,
+                        };
+                        m_event_recorder->Record(event);
                     }
-                    // ================================================
-                });
+
+                    num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+                    return;
+                }
+            }
+            // ================================================
+
+            // ================================================
+            // Uar
+            {
+                const auto uar_allocation_entry = m_mlx5_uar_allocations.find(addr);
+                if (uar_allocation_entry == m_mlx5_uar_allocations.end()) {
+                    return;
+                }
+
+                const auto page_id = uar_allocation_entry->second;
+
+                // TODO: not checking existence
+                const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
+
+                if (alloc_type == UarAllocationType::BlueField) {
+                    // const Profiler::Events::DoorbellRing event{.addr = addr};
+                    // m_event_recorder->Record(event);
+                }
+                num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+            }
+            // ================================================
+        });
     }
 
-    static ProfilerCtx &instance() {
+    static ProfilerCtx& instance() {
         static ProfilerCtx instance;
         return instance;
     }
 
-    ibv::Profiler *m_ibv_profiler;
-    cuda_trace::NvbitProfiler *m_cuda_profiler;
-    mlx5dv::Profiler *m_mlx5dv_profiler;
+    ibv::Profiler* m_ibv_profiler;
+    cuda_trace::NvbitProfiler* m_cuda_profiler;
+    mlx5dv::Profiler* m_mlx5dv_profiler;
 
-    Events::EventRecorder<> *m_event_recorder;
+    Events::EventRecorder<>* m_event_recorder;
 };
 
-static void __attribute__((constructor)) init() { ProfilerCtx::instance(); }
+static void __attribute__((constructor)) init() {
+    ProfilerCtx::instance();
+}

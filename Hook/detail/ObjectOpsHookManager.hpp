@@ -19,7 +19,7 @@ namespace hook::detail {
         // Original function pointers
         // TODO: remove
         template<ValidCallbackTag Tag>
-        HookTrait<Tag>::FuncPtr &original() noexcept {
+        HookTrait<Tag>::FuncPtr& original() noexcept {
             return std::get<typename HookTrait<Tag>::FuncPtr>(m_originals);
         }
 
@@ -30,13 +30,18 @@ namespace hook::detail {
 
         // The raw object pointer (for reverse lookup)
         // TODO: remove
-        [[nodiscard]] void *object_ptr() const noexcept { return m_object_ptr; }
-        void set_object_ptr(void *ptr) noexcept { m_object_ptr = ptr; }
+        [[nodiscard]] void* object_ptr() const noexcept {
+            return m_object_ptr;
+        }
+
+        void set_object_ptr(void* ptr) noexcept {
+            m_object_ptr = ptr;
+        }
 
     private:
         std::tuple<typename HookTrait<Tags>::FuncPtr...> m_originals{};
         // std::tuple<Stats<Tags>...> m_stats{};
-        void *m_object_ptr{nullptr};
+        void* m_object_ptr{nullptr};
     };
 
     // ================================================================
@@ -72,7 +77,7 @@ namespace hook::detail {
         // }
 
         template<typename ObjectType>
-        Context *get_context(ObjectType *obj) {
+        Context* get_context(ObjectType* obj) {
             assert(obj);
 
             auto key = reinterpret_cast<uintptr_t>(obj);
@@ -84,7 +89,7 @@ namespace hook::detail {
             auto ctx = std::make_unique<Context>();
             ctx->set_object_ptr(obj);
 
-            auto *ctx_ptr = ctx.get();
+            auto* ctx_ptr = ctx.get();
             m_contexts[key] = std::move(ctx);
             return ctx_ptr;
         }
@@ -97,7 +102,7 @@ namespace hook::detail {
 
         // Find context for an object
         template<typename ObjectType>
-        Context *find(ObjectType *obj) noexcept {
+        Context* find(ObjectType* obj) noexcept {
             if (!obj) {
                 return nullptr;
             }
@@ -117,9 +122,9 @@ namespace hook::detail {
         // ================================================================
         template<ValidCallbackTag Tag, typename ObjectType, typename... Args>
             requires is_object_ops_hook_v<Tag>
-        auto wrapper(ObjectType *obj, Args... args) noexcept -> HookTrait<Tag>::RetType {
+        auto wrapper(ObjectType* obj, Args... args) noexcept -> HookTrait<Tag>::RetType {
             // Get object from arguments (derived class must implement this)
-            Context *ctx = find(obj);
+            Context* ctx = find(obj);
 
             if (!ctx) {
                 std::cerr << "[hook] Warning: wrapper called for untracked object\n";

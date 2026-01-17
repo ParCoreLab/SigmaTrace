@@ -38,22 +38,22 @@ namespace hook {
         using PostCallbackList = std::vector<typename HookTrait<Tag>::PostCallback>;
 
         template<typename Tag>
-        PreCallbackList<Tag> &pre_callbacks() {
+        PreCallbackList<Tag>& pre_callbacks() {
             return std::get<TaggedPreCallbacks<Tag>>(m_pre_callbacks).list;
         }
 
         template<typename Tag>
-        const PreCallbackList<Tag> &pre_callbacks() const {
+        const PreCallbackList<Tag>& pre_callbacks() const {
             return std::get<TaggedPreCallbacks<Tag>>(m_pre_callbacks).list;
         }
 
         template<typename Tag>
-        PostCallbackList<Tag> &post_callbacks() {
+        PostCallbackList<Tag>& post_callbacks() {
             return std::get<TaggedPostCallbacks<Tag>>(m_post_callbacks).list;
         }
 
         template<typename Tag>
-        const PostCallbackList<Tag> &post_callbacks() const {
+        const PostCallbackList<Tag>& post_callbacks() const {
             return std::get<TaggedPostCallbacks<Tag>>(m_post_callbacks).list;
         }
 
@@ -63,7 +63,9 @@ namespace hook {
             std::get<TaggedPostCallbacks<Tag>>(m_post_callbacks).list.clear();
         }
 
-        void clear_all() noexcept { (clear<Tags>(), ...); }
+        void clear_all() noexcept {
+            (clear<Tags>(), ...);
+        }
 
     private:
         std::tuple<TaggedPreCallbacks<Tags>...> m_pre_callbacks;
@@ -124,27 +126,27 @@ namespace hook {
         // ================================================================
         template<typename Tag, typename... Args>
         static constexpr bool has_derived_pre_v =
-                requires(Derived &d, Tag t, Args &&...args) { d.pre(t, std::forward<Args>(args)...); };
+                requires(Derived& d, Tag t, Args&&... args) { d.pre(t, std::forward<Args>(args)...); };
 
         template<typename Tag, typename Ret, typename... Args>
         static constexpr bool has_derived_post_v =
-                requires(Derived &d, Tag t, Ret r, Args &&...args) { d.post(t, r, std::forward<Args>(args)...); };
+                requires(Derived& d, Tag t, Ret r, Args&&... args) { d.post(t, r, std::forward<Args>(args)...); };
 
         // ================================================================
         // Invoke registered callbacks
         // ================================================================
         template<ValidCallbackTag Tag, typename... Args>
-        void invoke_pre_callbacks(Args &&...args) noexcept {
+        void invoke_pre_callbacks(Args&&... args) noexcept {
             // Note: no lock here
             // We assume no callbacks will be registered after the first is called
-            for (auto &cb: m_callbacks.template pre_callbacks<Tag>()) {
+            for (auto& cb: m_callbacks.template pre_callbacks<Tag>()) {
                 cb(args...);
             }
         }
 
         template<ValidCallbackTag Tag, typename Ret, typename... Args>
-        void invoke_post_callbacks(Ret ret, Args &&...args) noexcept {
-            for (auto &cb: m_callbacks.template post_callbacks<Tag>()) {
+        void invoke_post_callbacks(Ret ret, Args&&... args) noexcept {
+            for (auto& cb: m_callbacks.template post_callbacks<Tag>()) {
                 cb(ret, args...);
             }
         }
@@ -153,16 +155,16 @@ namespace hook {
         // Call derived class hooks if they exist
         // ================================================================
         template<ValidCallbackTag Tag, typename... Args>
-        void call_derived_pre(Args &&...args) noexcept {
-            if constexpr (has_derived_pre_v<Tag, Args &&...>) {
-                static_cast<Derived &>(*this).pre(Tag{}, std::forward<Args>(args)...);
+        void call_derived_pre(Args&&... args) noexcept {
+            if constexpr (has_derived_pre_v<Tag, Args&&...>) {
+                static_cast<Derived&>(*this).pre(Tag{}, std::forward<Args>(args)...);
             }
         }
 
         template<ValidCallbackTag Tag, typename Ret, typename... Args>
-        void call_derived_post(Ret ret, Args &&...args) noexcept {
-            if constexpr (has_derived_post_v<Tag, Ret, Args &&...>) {
-                static_cast<Derived &>(*this).post(Tag{}, ret, std::forward<Args>(args)...);
+        void call_derived_post(Ret ret, Args&&... args) noexcept {
+            if constexpr (has_derived_post_v<Tag, Ret, Args&&...>) {
+                static_cast<Derived&>(*this).post(Tag{}, ret, std::forward<Args>(args)...);
             }
         }
 
@@ -172,13 +174,13 @@ namespace hook {
         // TODO: consider using threads here
         // ================================================================
         template<ValidCallbackTag Tag, typename... Args>
-        void invoke_all_pre(Args &&...args) noexcept {
+        void invoke_all_pre(Args&&... args) noexcept {
             call_derived_pre<Tag>(args...);
             invoke_pre_callbacks<Tag>(std::forward<Args>(args)...);
         }
 
         template<ValidCallbackTag Tag, typename Ret, typename... Args>
-        void invoke_all_post(Ret ret, Args &&...args) noexcept {
+        void invoke_all_post(Ret ret, Args&&... args) noexcept {
             call_derived_post<Tag>(ret, args...);
             invoke_post_callbacks<Tag>(ret, std::forward<Args>(args)...);
         }

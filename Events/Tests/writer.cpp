@@ -53,7 +53,7 @@ int main() {
     // NOTE: the runtime config is already the default, just leaving an example here
     using EventRecorder = Events::EventRecorder<Events::DebugCompileTimeConfig>;
     Events::RuntimeConfig config{.EventFileSuffix = ".event"};
-    auto &instance = EventRecorder::instance(std::move(config));
+    auto& instance = EventRecorder::instance(std::move(config));
 
     // Warmup
     for (auto i = 0; i < 100; i++) {
@@ -62,7 +62,7 @@ int main() {
         auto slot = instance.GetSlot<decltype(event)>();
 
         // This is to make if constexpr work... Without a templated lambda it won't discard the branch at compile time
-        [](auto *ptr) {
+        [](auto* ptr) {
             if constexpr (std::is_base_of_v<google::protobuf::Message, std::remove_pointer_t<decltype(ptr)>>) {
                 ptr->set_hello(HelloValue);
             } else if constexpr (requires { &std::remove_pointer_t<decltype(ptr)>::mutate_hello; }) {

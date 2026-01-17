@@ -10,7 +10,7 @@
     do {                                                                                                               \
         CUresult err = cmd;                                                                                            \
         if (err != CUDA_SUCCESS) {                                                                                     \
-            const char *str;                                                                                           \
+            const char* str;                                                                                           \
             cuGetErrorString(err, &str);                                                                               \
             std::printf("CU error %s:%d '%s'\n", __FILE__, __LINE__, str);                                             \
             std::exit(EXIT_FAILURE);                                                                                   \
@@ -47,6 +47,7 @@
         }                                                                                                              \
     } while (0)
 
+// TODO: some systems can't link to ncclMemAlloc for some reason
 #if NCCL_VERSION_CODE >= NCCL_VERSION(2, 19, 0)
 #define NCCL_MALLOC(addr, size) NCCL_CHECK(ncclMemAlloc((addr), (size)))
 #else

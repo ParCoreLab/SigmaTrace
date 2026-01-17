@@ -21,7 +21,7 @@ static_assert(NumElements % ThreadsPerBlock == 0, "NumElements must be multiple 
 [[maybe_unused]] constexpr auto NumRepeats = 1000;
 [[maybe_unused]] constexpr auto ReferenceTimeNs = 31262269; // nanoseconds; it was revealed to me in a dream
 
-__global__ void set_and_shift_kernel(float *send_data, float *recv_data, int num_elems, int mype, int npes) {
+__global__ void set_and_shift_kernel(float* send_data, float* recv_data, int num_elems, int mype, int npes) {
     int thread_idx = blockIdx.x * blockDim.x + threadIdx.x;
     /* set the corresponding element of send_data */
     if (thread_idx < num_elems) {
@@ -42,12 +42,12 @@ __global__ void set_and_shift_kernel(float *send_data, float *recv_data, int num
     int block_offset = blockIdx.x * blockDim.x;
 
     // All threads in a block call the API with the same arguments
-    auto *dest = recv_data + block_offset;
-    const auto *src = send_data + block_offset;
+    auto* dest = recv_data + block_offset;
+    const auto* src = send_data + block_offset;
     nvshmemx_float_put_block(dest, src, min(blockDim.x, num_elems - block_offset), peer);
 }
 
-__global__ void simple_shift(int *destination) {
+__global__ void simple_shift(int* destination) {
     int mype = nvshmem_my_pe();
     int npes = nvshmem_n_pes();
     int peer = (mype + 1) % npes;
@@ -80,7 +80,7 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
 
     // ================================================================
     // Small debug kernel
-    int *destination = static_cast<int *>(nvshmem_malloc(sizeof(int)));
+    int* destination = static_cast<int*>(nvshmem_malloc(sizeof(int)));
 
     simple_shift<<<1, 1, 0>>>(destination);
     CUDA_CHECK(cudaDeviceSynchronize());
@@ -130,7 +130,7 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
     nvshmem_finalize();
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     // ================================================================
     // Env for forcing ibv
     // ================================================================

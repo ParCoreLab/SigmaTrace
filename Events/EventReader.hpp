@@ -27,7 +27,7 @@ namespace Events {
     // visit(EventTrait<EventT>, const EventFileHeader &, EventHeader&& header, EventT&& event) for EventT
     template<typename Derived, typename EventT>
     concept Visitable = requires(Derived d) {
-        d.visit(std::declval<EventTrait<EventT>>(), std::declval<const EventFileHeader &>(),
+        d.visit(std::declval<EventTrait<EventT>>(), std::declval<const EventFileHeader&>(),
                 std::declval<EventHeader &&>(), std::declval<EventT &&>());
     };
 
@@ -60,7 +60,9 @@ namespace Events {
         }
 
     protected:
-        Derived &derived() { return static_cast<Derived &>(*this); }
+        Derived& derived() {
+            return static_cast<Derived&>(*this);
+        }
 
     private:
         // Single stream state
@@ -73,13 +75,13 @@ namespace Events {
 
             EventFileHeader file_header{};
 
-            explicit StreamState(const std::filesystem::path &p) : stream(p, std::ios::binary), path(p) {
+            explicit StreamState(const std::filesystem::path& p) : stream(p, std::ios::binary), path(p) {
                 if (!stream.is_open()) {
                     return;
                 }
 
                 // File-wide header
-                stream.read(reinterpret_cast<char *>(&file_header), sizeof(file_header));
+                stream.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
                 if (stream.gcount() != sizeof(file_header)) {
                     // TODO: log
                     return;
@@ -98,7 +100,7 @@ namespace Events {
                 const auto pos = stream.tellg();
 
                 EventHeader header(0, 0);
-                stream.read(reinterpret_cast<char *>(&header), sizeof(header));
+                stream.read(reinterpret_cast<char*>(&header), sizeof(header));
                 if (header._check != MAGIC_VALUE) {
                     std::cerr << "Magic value check fail in " << path << " (" << header._check << ")" << std::endl;
                     std::cerr << "File is corrupted or recorded with an older version. Closing stream... " << std::endl;
@@ -132,7 +134,9 @@ namespace Events {
             Timestamp timestamp;
             size_t stream_idx;
 
-            bool operator<(const HeapEntry &o) const { return timestamp > o.timestamp; }
+            bool operator<(const HeapEntry& o) const {
+                return timestamp > o.timestamp;
+            }
         };
 
         [[nodiscard]] std::vector<std::filesystem::path> find_event_files() const {
@@ -142,7 +146,7 @@ namespace Events {
                 return paths;
             }
 
-            for (const auto &entry: std::filesystem::directory_iterator(m_config.EventsDirectory)) {
+            for (const auto& entry: std::filesystem::directory_iterator(m_config.EventsDirectory)) {
                 if (!entry.is_regular_file()) {
                     continue;
                 }
@@ -162,7 +166,7 @@ namespace Events {
             std::vector<StreamState> streams;
             streams.reserve(m_paths.size());
 
-            for (const auto &path: m_paths) {
+            for (const auto& path: m_paths) {
                 streams.emplace_back(path);
             }
 
@@ -180,7 +184,7 @@ namespace Events {
                 auto [ts, idx] = heap.top();
                 heap.pop();
 
-                auto &state = streams[idx];
+                auto& state = streams[idx];
 
                 // Dispatch and read event
                 if (dispatch_read(state)) {
@@ -202,19 +206,19 @@ namespace Events {
             return count;
         }
 
-        bool dispatch_read(StreamState &state) {
+        bool dispatch_read(StreamState& state) {
             // Try each enabled event type
             return (try_dispatch<EnabledEvents>(state) || ...);
         }
 
         template<typename EventT>
-        bool try_dispatch(StreamState &state) {
+        bool try_dispatch(StreamState& state) {
             if (EventTrait<EventT>::id != state.event_id) {
                 return false;
             }
 
             StoredEvent<EventT> stored;
-            state.stream.read(reinterpret_cast<char *>(&stored), sizeof(stored));
+            state.stream.read(reinterpret_cast<char*>(&stored), sizeof(stored));
 
             if (state.stream.gcount() < static_cast<std::streamsize>(sizeof(stored))) {
                 return false;

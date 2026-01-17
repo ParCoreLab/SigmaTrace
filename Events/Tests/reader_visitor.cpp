@@ -39,8 +39,8 @@ public:
     using Base::Base;
 
     // Handle SimpleEvent - tag dispatch via EventTag<T>
-    void visit(Events::EventTag<Example::SimpleEvent>, const Events::EventHeader &header,
-               const Example::SimpleEvent &event) {
+    void visit(Events::EventTag<Example::SimpleEvent>, const Events::EventHeader& header,
+               const Example::SimpleEvent& event) {
         std::cout << "[" << header.timestamp << "] SimpleEvent: value=" << event.value << "\n";
         ++m_count;
         m_sum += event.value;

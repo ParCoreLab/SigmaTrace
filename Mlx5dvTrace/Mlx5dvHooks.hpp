@@ -7,7 +7,7 @@
 
 #include "HookTrait.hpp"
 
-DEFINE_PRELOAD_HOOK(mlx5dv, init_obj, "mlx5dv_init_obj", int, mlx5dv_obj *, uint64_t);
+DEFINE_PRELOAD_HOOK(mlx5dv, init_obj, "mlx5dv_init_obj", int, mlx5dv_obj*, uint64_t);
 
 /*
  * https://manpages.debian.org/unstable/libibverbs-dev/mlx5dv_devx_obj_create.3.en.html

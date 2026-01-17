@@ -46,7 +46,9 @@ namespace Helpers::TS {
     // Returns 0 for debugging or ignoring the timestamp
     class FakeTimestampSource {
     public:
-        [[nodiscard]] Timestamp now() const noexcept { return 0; }
+        [[nodiscard]] Timestamp now() const noexcept {
+            return 0;
+        }
     };
 
     // Verify implementations satisfy the concept

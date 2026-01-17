@@ -30,7 +30,14 @@ public:
     static constexpr std::string_view FILE_SUFFIX{".pftrace"};
 
     // Track hierarchy: Root -> Node -> [CPU, GPU, NIC] -> Operation tracks
-    enum class TrackType { Root = 0, Node, CPU, GPU, NIC, Operation };
+    enum class TrackType {
+        Root = 0,
+        Node,
+        CPU,
+        GPU,
+        NIC,
+        Operation
+    };
     // TODO: dumb. Make tracks dynamic
     static constexpr std::array<std::string_view, 6> TrackTypeStr{"Root", "Node", "CPU", "GPU", "NIC", "Operation"};
 
@@ -47,35 +54,35 @@ public:
     }
 
     // Register the root track (call once at start)
-    void register_root_track(const std::string &name) {
+    void register_root_track(const std::string& name) {
         const uint64_t uuid = make_uuid(TrackType::Root);
         if (m_registered_tracks.contains(uuid)) {
             return;
         }
 
-        auto *packet = m_trace.add_packet();
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         // First packet clears incremental state
         if (!m_emitted_first_packet) {
             packet->set_sequence_flags(SEQ_INCREMENTAL_STATE_CLEARED);
             m_emitted_first_packet = true;
         }
-        auto *desc = packet->mutable_track_descriptor();
+        auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
         desc->set_name(name);
         m_registered_tracks[uuid] = true;
     }
 
     // One node is one network host
-    uint64_t register_node_track(uint32_t node_id, const std::string &name = "") {
+    uint64_t register_node_track(uint32_t node_id, const std::string& name = "") {
         const uint64_t uuid = make_uuid(TrackType::Node, node_id);
         if (m_registered_tracks.contains(uuid)) {
             return uuid;
         }
 
-        auto *packet = m_trace.add_packet();
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
-        auto *desc = packet->mutable_track_descriptor();
+        auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
         desc->set_parent_uuid(make_uuid(TrackType::Root));
         desc->set_name(name.empty() ? "Node " + std::to_string(node_id) : name);
@@ -85,7 +92,7 @@ public:
 
     // Register a CPU/GPU/NIC track
     uint64_t register_device_track(const TrackType track_type, const GpuId_T node_id, const GpuId_T device_id,
-                                   const std::string &name = "") {
+                                   const std::string& name = "") {
         const uint64_t uuid = make_uuid(track_type, node_id, device_id);
         if (m_registered_tracks.contains(uuid)) {
             return uuid;
@@ -94,9 +101,9 @@ public:
         // Ensure parent node track exists
         register_node_track(node_id);
 
-        auto *packet = m_trace.add_packet();
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
-        auto *desc = packet->mutable_track_descriptor();
+        auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
         desc->set_parent_uuid(make_uuid(TrackType::Node, node_id));
 
@@ -116,7 +123,7 @@ public:
 
     // Register an operation track for async operations (parent: GPU)
     uint64_t register_operation_track(const GpuId_T node_id, const GpuId_T gpu_id, const GpuId_T op_id,
-                                      const std::string &name) {
+                                      const std::string& name) {
         const uint64_t uuid = make_uuid(TrackType::Operation, node_id, gpu_id, op_id);
         if (m_registered_tracks.contains(uuid)) {
             return uuid;
@@ -125,9 +132,9 @@ public:
         // Ensure parent GPU track exists
         register_device_track(TrackType::GPU, node_id, gpu_id);
 
-        auto *packet = m_trace.add_packet();
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
-        auto *desc = packet->mutable_track_descriptor();
+        auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
         desc->set_parent_uuid(make_uuid(TrackType::GPU, node_id, gpu_id));
         desc->set_name(name);
@@ -139,13 +146,13 @@ public:
     // Slice Events (for RDMA operations, kernel launches, etc.)
     // ========================================================================
     // TODO: std::string_view
-    void begin_slice(uint64_t track_uuid, uint64_t timestamp_ns, const std::string &name,
-                     const std::string &category = "rdma") {
-        auto *packet = m_trace.add_packet();
+    void begin_slice(uint64_t track_uuid, uint64_t timestamp_ns, const std::string& name,
+                     const std::string& category = "rdma") {
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
 
-        auto *event = packet->mutable_track_event();
+        auto* event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_BEGIN);
         event->set_name(name);
@@ -153,29 +160,29 @@ public:
     }
 
     void end_slice(uint64_t track_uuid, uint64_t timestamp_ns) {
-        auto *packet = m_trace.add_packet();
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
 
-        auto *event = packet->mutable_track_event();
+        auto* event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_END);
     }
 
-    void add_slice(const uint64_t track_uuid, const uint64_t ts_start, const uint64_t ts_end, const std::string &name,
-                   const std::string &category = "rdma") {
+    void add_slice(const uint64_t track_uuid, const uint64_t ts_start, const uint64_t ts_end, const std::string& name,
+                   const std::string& category = "rdma") {
         begin_slice(track_uuid, ts_start, name, category);
         end_slice(track_uuid, ts_end);
     }
 
     // Convenience: emit instant event (for doorbell rings, completions, etc.)
-    void instant_event(uint64_t track_uuid, uint64_t timestamp_ns, const std::string &name,
-                       const std::string &category = "rdma") {
-        auto *packet = m_trace.add_packet();
+    void instant_event(uint64_t track_uuid, uint64_t timestamp_ns, const std::string& name,
+                       const std::string& category = "rdma") {
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
 
-        auto *event = packet->mutable_track_event();
+        auto* event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
         event->set_name(name);
@@ -187,16 +194,18 @@ public:
     // ========================================================================
 
     // Generate a unique flow ID for tracking data movement
-    uint64_t new_flow_id() { return m_next_flow_id++; }
+    uint64_t new_flow_id() {
+        return m_next_flow_id++;
+    }
 
     // Begin a flow at the source (e.g., nvshmem_put initiator)
-    void begin_flow(uint64_t track_uuid, uint64_t timestamp_ns, uint64_t flow_id, const std::string &name,
-                    const std::string &category = "data_flow") {
-        auto *packet = m_trace.add_packet();
+    void begin_flow(uint64_t track_uuid, uint64_t timestamp_ns, uint64_t flow_id, const std::string& name,
+                    const std::string& category = "data_flow") {
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
 
-        auto *event = packet->mutable_track_event();
+        auto* event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
         event->set_name(name);
@@ -205,13 +214,13 @@ public:
     }
 
     // Continue/pass through a flow (intermediate steps)
-    void through_flow(uint64_t track_uuid, uint64_t timestamp_ns, uint64_t flow_id, const std::string &name,
-                      const std::string &category = "data_flow") {
-        auto *packet = m_trace.add_packet();
+    void through_flow(uint64_t track_uuid, uint64_t timestamp_ns, uint64_t flow_id, const std::string& name,
+                      const std::string& category = "data_flow") {
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
 
-        auto *event = packet->mutable_track_event();
+        auto* event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
         event->set_name(name);
@@ -220,13 +229,13 @@ public:
     }
 
     // End a flow at the destination (e.g., receive completion)
-    void end_flow(uint64_t track_uuid, uint64_t timestamp_ns, uint64_t flow_id, const std::string &name,
-                  const std::string &category = "data_flow") {
-        auto *packet = m_trace.add_packet();
+    void end_flow(uint64_t track_uuid, uint64_t timestamp_ns, uint64_t flow_id, const std::string& name,
+                  const std::string& category = "data_flow") {
+        auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
 
-        auto *event = packet->mutable_track_event();
+        auto* event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
         event->set_name(name);
@@ -239,38 +248,38 @@ public:
     // ========================================================================
 
     // Add debug annotation to the most recent packet's track event
-    void add_annotation(const std::string &key, uint64_t value) {
+    void add_annotation(const std::string& key, uint64_t value) {
         if (m_trace.packet_size() == 0)
             return;
-        auto *event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
-        auto *ann = event->add_debug_annotations();
+        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
+        auto* ann = event->add_debug_annotations();
         ann->set_name(key);
         ann->set_uint_value(value);
     }
 
-    void add_annotation(const std::string &key, int64_t value) {
+    void add_annotation(const std::string& key, int64_t value) {
         if (m_trace.packet_size() == 0)
             return;
-        auto *event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
-        auto *ann = event->add_debug_annotations();
+        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
+        auto* ann = event->add_debug_annotations();
         ann->set_name(key);
         ann->set_int_value(value);
     }
 
-    void add_annotation(const std::string &key, const std::string &value) {
+    void add_annotation(const std::string& key, const std::string& value) {
         if (m_trace.packet_size() == 0)
             return;
-        auto *event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
-        auto *ann = event->add_debug_annotations();
+        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
+        auto* ann = event->add_debug_annotations();
         ann->set_name(key);
         ann->set_string_value(value);
     }
 
-    void add_annotation(const std::string &key, double value) {
+    void add_annotation(const std::string& key, double value) {
         if (m_trace.packet_size() == 0)
             return;
-        auto *event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
-        auto *ann = event->add_debug_annotations();
+        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
+        auto* ann = event->add_debug_annotations();
         ann->set_name(key);
         ann->set_double_value(value);
     }
@@ -279,16 +288,20 @@ public:
     // Serialization
     // ========================================================================
 
-    [[nodiscard]] const perfetto::protos::Trace &trace() const { return m_trace; }
+    [[nodiscard]] const perfetto::protos::Trace& trace() const {
+        return m_trace;
+    }
 
-    bool write_to_file(const std::filesystem::path &path) const {
+    bool write_to_file(const std::filesystem::path& path) const {
         std::ofstream out(path, std::ios::binary);
         if (!out.is_open())
             return false;
         return m_trace.SerializeToOstream(&out);
     }
 
-    [[nodiscard]] size_t packet_count() const { return m_trace.packet_size(); }
+    [[nodiscard]] size_t packet_count() const {
+        return m_trace.packet_size();
+    }
 
 private:
     perfetto::protos::Trace m_trace;
@@ -305,7 +318,7 @@ class ProfilerEventReader : public Events::EventReaderBase<ProfilerEventReader, 
     using TrackType = PerfettoTraceBuilder::TrackType;
 
 public:
-    explicit ProfilerEventReader(const Events::RuntimeConfig &config, const std::filesystem::path &output_path) :
+    explicit ProfilerEventReader(const Events::RuntimeConfig& config, const std::filesystem::path& output_path) :
         EventReaderBase(config), m_output_path(output_path) {
         m_output_path.replace_extension(PerfettoTraceBuilder::FILE_SUFFIX);
 
@@ -324,10 +337,12 @@ public:
         }
     }
 
-    const std::filesystem::path &get_output_path() { return m_output_path; }
+    const std::filesystem::path& get_output_path() {
+        return m_output_path;
+    }
 
-    void visit(EventTrait<ProfilerEvents::Mlx5MemoryRegistration> T, const EventFileHeader &file_header,
-               EventHeader &&header, ProfilerEvents::Mlx5MemoryRegistration &&event) {
+    void visit(EventTrait<ProfilerEvents::Mlx5MemoryRegistration> T, const EventFileHeader& file_header,
+               EventHeader&& header, ProfilerEvents::Mlx5MemoryRegistration&& event) {
         using Meta = decltype(T);
 
         const auto node_id = m_node_ids[file_header.hostname];
@@ -348,8 +363,8 @@ public:
         std::cout << std::hex << event.addr << std::dec << std::endl;
     }
 
-    void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader &file_header, EventHeader &&header,
-               ProfilerEvents::DoorbellRing &&event) {
+    void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::DoorbellRing&& event) {
         using Meta = decltype(T);
 
         const auto node_id = m_node_ids[file_header.hostname];
@@ -366,8 +381,8 @@ public:
         std::cout << std::hex << event.addr << std::dec << std::endl;
     }
 
-    void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader &file_header, EventHeader &&header,
-               ProfilerEvents::CUDAKernelLaunch &&event) {
+    void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::CUDAKernelLaunch&& event) {
         const auto node_id = m_node_ids[file_header.hostname];
         const auto gpu_id = event.gpu_id;
 
@@ -379,8 +394,8 @@ public:
         // m_builder.add_annotation("block_dim", event.block_dim);
     }
 
-    void visit(EventTrait<ProfilerEvents::CUDAKernelExit>, const EventFileHeader &file_header, EventHeader &&header,
-               ProfilerEvents::CUDAKernelExit &&event) {
+    void visit(EventTrait<ProfilerEvents::CUDAKernelExit>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::CUDAKernelExit&& event) {
         const auto node_id = m_node_ids[file_header.hostname];
         const auto gpu_id = event.gpu_id;
 
@@ -471,7 +486,7 @@ private:
     // std::unordered_map<uint64_t, PendingKernel> m_pending_kernels;
 };
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: " << argv[0] << " <events dir> <output file>" << std::endl;
         std::exit(1);

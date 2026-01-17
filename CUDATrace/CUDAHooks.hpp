@@ -20,8 +20,8 @@ DEFINE_CUSTOM_HOOK(cuda_trace, cuda_mem_op, int gpu_id, std::uint64_t addr, std:
 DEFINE_CUSTOM_HOOK(cuda_trace, cuda_mem_alloc, std::uint64_t, std::size_t);
 DEFINE_CUSTOM_HOOK(cuda_trace, cuda_mem_register, std::uint64_t, std::size_t, unsigned int);
 
-DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_launch, std::int32_t gpu_id, const char *);
-DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_exit, std::int32_t gpu_id, const char *);
+DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_launch, std::int32_t gpu_id, const char*);
+DEFINE_CUSTOM_HOOK(cuda_trace, cuda_kernel_exit, std::int32_t gpu_id, const char*);
 
 // DEFINE_PRELOAD_HOOK(cuda_trace, cuda_trace, "cuda_trace", int, int);
 

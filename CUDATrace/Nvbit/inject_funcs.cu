@@ -73,7 +73,7 @@ extern "C" __device__ void instrument_mem(int pred, int gpu_id, int opcode_id, u
 
     /* first active lane pushes information on the channel */
     if (first_laneid == laneid) {
-        ChannelDev *channel_dev = (ChannelDev *) pchannel_dev;
+        ChannelDev* channel_dev = (ChannelDev*) pchannel_dev;
         channel_dev->push(&ma, sizeof(mem_access_t));
     }
 }

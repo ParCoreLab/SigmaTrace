@@ -32,11 +32,17 @@ namespace FileIO {
         using ImplType = Impl<FileHeader, ElementSize, Capacity>;
 
     public:
-        explicit Buffer(auto &&...args) : m_impl(std::forward<decltype(args)>(args)...) {}
+        explicit Buffer(auto&&... args) : m_impl(std::forward<decltype(args)>(args)...) {}
 
-        [[nodiscard]] uint8_t *get_slot() noexcept { return m_impl.get_slot(); }
-        void commit() noexcept { m_impl.commit(); }
-        void flush() noexcept { m_impl.flush(); }
+        [[nodiscard]] uint8_t* get_slot() noexcept {
+            return m_impl.get_slot();
+        }
+        void commit() noexcept {
+            m_impl.commit();
+        }
+        void flush() noexcept {
+            m_impl.flush();
+        }
 
     private:
         ImplType m_impl;
@@ -47,24 +53,28 @@ namespace FileIO {
         static constexpr auto BufferSize = ElementSize * Capacity;
 
     public:
-        explicit StreamBackedBuffer(const FileHeader &header, const std::filesystem::path &file_path) {
+        explicit StreamBackedBuffer(const FileHeader& header, const std::filesystem::path& file_path) {
             if (std::filesystem::exists(file_path)) {
                 throw std::runtime_error("Trying to write into an existing file: " + file_path.string());
             }
 
             m_stream = std::ofstream(file_path, std::ios::out | std::ios::binary);
-            m_stream.write(reinterpret_cast<const char *>(&header), sizeof(header));
+            m_stream.write(reinterpret_cast<const char*>(&header), sizeof(header));
         }
 
         // Non-copyable
-        StreamBackedBuffer(const StreamBackedBuffer &) = delete;
-        StreamBackedBuffer &operator=(const StreamBackedBuffer &) = delete;
+        StreamBackedBuffer(const StreamBackedBuffer&) = delete;
+        StreamBackedBuffer& operator=(const StreamBackedBuffer&) = delete;
 
-        ~StreamBackedBuffer() { flush(); }
+        ~StreamBackedBuffer() {
+            flush();
+        }
 
         // Fast access to memory
         // TODO: NOT SAFE AT ALL !!! but maybe that's the compromise
-        [[nodiscard]] uint8_t *get_slot() noexcept { return m_buffers[m_current_buffer_index] + m_current_buffer_size; }
+        [[nodiscard]] uint8_t* get_slot() noexcept {
+            return m_buffers[m_current_buffer_index] + m_current_buffer_size;
+        }
 
         void commit() noexcept {
             // Continue on the same buffer as usual
@@ -80,7 +90,7 @@ namespace FileIO {
              */
             {
                 std::lock_guard lock(m_stream_mutex);
-                m_stream.write(reinterpret_cast<const char *>(m_buffers[m_current_buffer_index]), BufferSize);
+                m_stream.write(reinterpret_cast<const char*>(m_buffers[m_current_buffer_index]), BufferSize);
             }
 
             m_current_buffer_size = 0;
@@ -90,7 +100,7 @@ namespace FileIO {
         void flush() noexcept {
             std::lock_guard lock(m_stream_mutex);
 
-            m_stream.write(reinterpret_cast<const char *>(m_buffers[m_current_buffer_index]), m_current_buffer_size);
+            m_stream.write(reinterpret_cast<const char*>(m_buffers[m_current_buffer_index]), m_current_buffer_size);
             m_stream.flush();
 
             // Reset size to continue using current buffer
@@ -110,7 +120,9 @@ namespace FileIO {
         std::ofstream m_stream;
         std::mutex m_stream_mutex;
 
-        void advance_buffer() { m_current_buffer_index = (m_current_buffer_index + 1) % NumBuffers; }
+        void advance_buffer() {
+            m_current_buffer_index = (m_current_buffer_index + 1) % NumBuffers;
+        }
     };
 
     // TODO: We can dynamically set Capacity based on ElementSize for better aligned access
@@ -122,7 +134,7 @@ namespace FileIO {
                 ((ElementSize * CapacityHint + HugePageSize - 1) / HugePageSize) * HugePageSize;
 
     public:
-        explicit MmapBackedBuffer(const FileHeader &header, const std::filesystem::path &file_path) {
+        explicit MmapBackedBuffer(const FileHeader& header, const std::filesystem::path& file_path) {
             if (std::filesystem::exists(file_path)) {
                 throw std::runtime_error("Trying to write into an existing file: " + file_path.string());
             }
@@ -145,7 +157,7 @@ namespace FileIO {
                 }
             }
 
-            m_base = static_cast<uint8_t *>(mmap(nullptr, m_mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
+            m_base = static_cast<uint8_t*>(mmap(nullptr, m_mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
             std::memcpy(m_base, header, FileHeaderSize);
 
             if (m_base == MAP_FAILED) {
@@ -159,8 +171,8 @@ namespace FileIO {
 #endif
         }
 
-        MmapBackedBuffer(const MmapBackedBuffer &) = delete;
-        MmapBackedBuffer &operator=(const MmapBackedBuffer &) = delete;
+        MmapBackedBuffer(const MmapBackedBuffer&) = delete;
+        MmapBackedBuffer& operator=(const MmapBackedBuffer&) = delete;
 
         ~MmapBackedBuffer() {
             const std::size_t used_bytes = m_current_index * ElementSize;
@@ -174,7 +186,7 @@ namespace FileIO {
             }
         }
 
-        [[nodiscard]] uint8_t *get_slot() const noexcept {
+        [[nodiscard]] uint8_t* get_slot() const noexcept {
             return m_base + FileHeaderSize + m_current_index * ElementSize;
         }
 
@@ -198,12 +210,12 @@ namespace FileIO {
             }
 
             // Extend mapping in-place using mremap. Linux-specific
-            void *new_base = mremap(m_base, m_mapped_size, new_size, MREMAP_MAYMOVE);
+            void* new_base = mremap(m_base, m_mapped_size, new_size, MREMAP_MAYMOVE);
             if (new_base == MAP_FAILED) {
                 throw std::runtime_error("mremap failed");
             }
 
-            m_base = static_cast<uint8_t *>(new_base);
+            m_base = static_cast<uint8_t*>(new_base);
             madvise(m_base + m_mapped_size, ChunkBytes, MADV_SEQUENTIAL);
 #ifdef MADV_HUGEPAGE
             madvise(m_base + m_mapped_size, ChunkBytes, MADV_HUGEPAGE);
@@ -211,11 +223,13 @@ namespace FileIO {
             m_mapped_size = new_size;
         }
 
-        void flush() const { msync(m_base, m_current_index * ElementSize, MS_ASYNC); }
+        void flush() const {
+            msync(m_base, m_current_index * ElementSize, MS_ASYNC);
+        }
 
     private:
         int m_fd{-1};
-        uint8_t *m_base{nullptr};
+        uint8_t* m_base{nullptr};
         std::size_t m_current_index{0};
         std::size_t m_mapped_size{0};
     };

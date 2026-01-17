@@ -90,7 +90,7 @@ namespace Events {
                 std::cerr << "Saving in: " << OutputDirectory << std::endl;
             }
 
-            for (const auto &dir: {OutputDirectory, EventsDirectory}) {
+            for (const auto& dir: {OutputDirectory, EventsDirectory}) {
                 std::filesystem::create_directories(dir);
             }
         }
@@ -98,7 +98,7 @@ namespace Events {
         using Path = std::filesystem::path;
 
         // Helpers for storage duration
-        static const std::string &get_hostname() {
+        static const std::string& get_hostname() {
             static std::string hostname = std::invoke([]() {
                 char hostname_arr[1024];
                 const int err = gethostname(hostname_arr, sizeof hostname_arr);
@@ -136,7 +136,7 @@ namespace Events {
                 std::string s;
                 s.resize(length);
 
-                for (char &c: s) {
+                for (char& c: s) {
                     c = charset[rng() % N];
                 }
 
@@ -184,7 +184,7 @@ namespace Events {
                     .thread_id = get_thread_id(),
             };
 
-            const auto &hostname = get_hostname();
+            const auto& hostname = get_hostname();
             snprintf(header.hostname, sizeof header.hostname, "%s", hostname.c_str());
 
             return header;

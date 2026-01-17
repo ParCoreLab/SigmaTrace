@@ -29,14 +29,14 @@ namespace Events {
         static constexpr size_t Size = ElementSize * Capacity;
 
     public:
-        explicit ThreadLocalRingBuffer(auto &&header, const std::string &file_path) :
+        explicit ThreadLocalRingBuffer(auto&& header, const std::string& file_path) :
             m_current(0), m_file_buffer(std::forward<decltype(header)>(header), file_path) {}
 
         ~ThreadLocalRingBuffer() = default;
 
         // Non-copyable, TODO: maybe movable
-        ThreadLocalRingBuffer(const ThreadLocalRingBuffer &) = delete;
-        ThreadLocalRingBuffer &operator=(const ThreadLocalRingBuffer &) = delete;
+        ThreadLocalRingBuffer(const ThreadLocalRingBuffer&) = delete;
+        ThreadLocalRingBuffer& operator=(const ThreadLocalRingBuffer&) = delete;
         // ThreadLocalRingBuffer(ThreadLocalRingBuffer &&) = delete;
         // ThreadLocalRingBuffer &operator=(ThreadLocalRingBuffer &&) = delete;
 
@@ -47,13 +47,13 @@ namespace Events {
             friend class ThreadLocalRingBuffer;
 
         public:
-            SlotPtrWrapper(ThreadLocalRingBuffer *base_buffer, uint8_t *ptr) : m_ptr(ptr), m_base_buffer(base_buffer) {}
+            SlotPtrWrapper(ThreadLocalRingBuffer* base_buffer, uint8_t* ptr) : m_ptr(ptr), m_base_buffer(base_buffer) {}
 
             // Can't copy
-            SlotPtrWrapper(SlotPtrWrapper &) = delete;
+            SlotPtrWrapper(SlotPtrWrapper&) = delete;
 
             // Can move
-            SlotPtrWrapper(SlotPtrWrapper &&other) noexcept : m_ptr(other.m_ptr), m_base_buffer(other.m_base_buffer) {
+            SlotPtrWrapper(SlotPtrWrapper&& other) noexcept : m_ptr(other.m_ptr), m_base_buffer(other.m_base_buffer) {
                 other.m_ptr = nullptr;
                 other.m_base_buffer = nullptr;
             }
@@ -65,18 +65,26 @@ namespace Events {
                 }
             }
 
-            [[nodiscard]] uint8_t *get() const noexcept{ return m_ptr; }
-            uint8_t *&get_internal_ptr() noexcept { return m_ptr; }
+            [[nodiscard]] uint8_t* get() const noexcept {
+                return m_ptr;
+            }
+            uint8_t*& get_internal_ptr() noexcept {
+                return m_ptr;
+            }
 
         private:
-            uint8_t *m_ptr;
-            ThreadLocalRingBuffer *m_base_buffer;
+            uint8_t* m_ptr;
+            ThreadLocalRingBuffer* m_base_buffer;
         };
 
         // Get slot for next element - file buffer manages its own indexing
-        uint8_t *get_slot() noexcept { return m_file_buffer.get_slot(); }
+        uint8_t* get_slot() noexcept {
+            return m_file_buffer.get_slot();
+        }
 
-        SlotPtrWrapper get_wrapped_slot() noexcept { return SlotPtrWrapper{this, get_slot()}; }
+        SlotPtrWrapper get_wrapped_slot() noexcept {
+            return SlotPtrWrapper{this, get_slot()};
+        }
 
         // TODO: overflow?
         void commit() noexcept {
@@ -84,12 +92,18 @@ namespace Events {
             m_file_buffer.commit();
         }
 
-        void flush() { m_file_buffer.flush(); }
+        void flush() {
+            m_file_buffer.flush();
+        }
 
-        auto current_idx() const noexcept { return m_current; }
+        auto current_idx() const noexcept {
+            return m_current;
+        }
 
         // static constexpr auto size() noexcept { return Size; }
-        static constexpr auto capacity() noexcept { return Capacity; }
+        static constexpr auto capacity() noexcept {
+            return Capacity;
+        }
 
     private:
         // Cache-line aligned to avoid false sharing between producer and consumer
@@ -121,35 +135,35 @@ namespace Events {
             friend class EventRingBuffer;
 
         public:
-            EventHeader *get_header() {
-                return reinterpret_cast<EventHeader *>(static_cast<uint8_t *>(m_base_wrapper.get()));
+            EventHeader* get_header() {
+                return reinterpret_cast<EventHeader*>(static_cast<uint8_t*>(m_base_wrapper.get()));
             }
 
-            EventT *get() {
-                return reinterpret_cast<EventT *>(static_cast<uint8_t *>(m_base_wrapper.get()) + sizeof(EventHeader));
+            EventT* get() {
+                return reinterpret_cast<EventT*>(static_cast<uint8_t*>(m_base_wrapper.get()) + sizeof(EventHeader));
             }
 
         private:
-            explicit TypedSlotPtrWrapper(Buffer::SlotPtrWrapper &&base_wrapper) :
+            explicit TypedSlotPtrWrapper(Buffer::SlotPtrWrapper&& base_wrapper) :
                 m_base_wrapper(std::move(base_wrapper)) {}
             Buffer::SlotPtrWrapper m_base_wrapper;
         };
 
     public:
-        explicit EventRingBuffer(const RuntimeConfig &config) :
+        explicit EventRingBuffer(const RuntimeConfig& config) :
             m_event_header{std::move(config.get_event_file_header<EventT>())},
             m_buffer(m_event_header, config.get_event_file_path<EventT>()) {}
 
         // TODO: switch to span
-        EventT *get_slot(const Timestamp ts_start, const Timestamp ts_end) noexcept {
+        EventT* get_slot(const Timestamp ts_start, const Timestamp ts_end) noexcept {
             if (m_buffer.current_idx() >= m_buffer.capacity()) {
                 m_dropped_count++;
             }
 
-            auto *slot = m_buffer.get_slot();
+            auto* slot = m_buffer.get_slot();
 
             // Write header
-            auto *header = reinterpret_cast<EventHeader *>(slot);
+            auto* header = reinterpret_cast<EventHeader*>(slot);
 
             // EventHeader has defaults. We construct with them and copy
             *header = EventHeader(ts_start, ts_end);
@@ -157,7 +171,7 @@ namespace Events {
             // Write event data after header
             // TODO: is this ok?
             // TODO: maybe we could just move
-            auto *data = reinterpret_cast<EventT *>(static_cast<uint8_t *>(slot) + sizeof(EventHeader));
+            auto* data = reinterpret_cast<EventT*>(static_cast<uint8_t*>(slot) + sizeof(EventHeader));
 
             return data;
         }
@@ -166,7 +180,7 @@ namespace Events {
             TypedSlotPtrWrapper wrapped_slot{m_buffer.get_wrapped_slot()};
 
             // Write header
-            auto *header = wrapped_slot.get_header();
+            auto* header = wrapped_slot.get_header();
 
             // EventHeader has defaults. We construct with them and copy
             *header = EventHeader(ts_start, ts_end);
@@ -176,20 +190,26 @@ namespace Events {
 
         // Record an event with provided timestamp
         // TODO: should probably return true or false
-        void record(const EventT &event, const Timestamp ts_start, const Timestamp ts_end) noexcept {
-            auto *slot = get_slot(ts_start, ts_end);
+        void record(const EventT& event, const Timestamp ts_start, const Timestamp ts_end) noexcept {
+            auto* slot = get_slot(ts_start, ts_end);
 
             EventTrait<EventT>::SerializeTo(event, slot);
 
             m_buffer.commit();
         }
 
-        void flush() { m_buffer.flush(); }
+        void flush() {
+            m_buffer.flush();
+        }
 
-        auto dropped_count() const noexcept { return m_dropped_count; }
+        auto dropped_count() const noexcept {
+            return m_dropped_count;
+        }
 
         // static constexpr auto size() noexcept { return Buffer::size(); }
-        static constexpr auto capacity() noexcept { return Capacity; }
+        static constexpr auto capacity() noexcept {
+            return Capacity;
+        }
 
     private:
         EventFileHeader m_event_header;

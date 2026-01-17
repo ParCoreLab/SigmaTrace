@@ -23,14 +23,14 @@ namespace Events {
          * Maybe it should be a unique_ptr even
          * This is some really weird code
          */
-        static EventRecorder &instance(RuntimeConfig &&config = RuntimeConfig{}) {
+        static EventRecorder& instance(RuntimeConfig&& config = RuntimeConfig{}) {
             static EventRecorder recorder(config);
             return recorder;
         }
 
         // Non-copyable
-        EventRecorder(const EventRecorder &) = delete;
-        EventRecorder &operator=(const EventRecorder &) = delete;
+        EventRecorder(const EventRecorder&) = delete;
+        EventRecorder& operator=(const EventRecorder&) = delete;
 
         // ================================================================
         // Recording and Saving
@@ -43,16 +43,16 @@ namespace Events {
         // to initialize directly instead of doing a memcpy later
         // TODO: this might be suboptimal if upstream user creates a new tread every time
         template<HasEventTrait EventT>
-        void Record(const EventT &event, Timestamp ts_start, Timestamp ts_end = {}) {
+        void Record(const EventT& event, Timestamp ts_start, Timestamp ts_end = {}) {
             using BareT = BareType_t<EventT>;
-            auto &thread_buffers = ThreadBufferRegistry::instance().get_thread_buffers();
-            auto &buffer = thread_buffers.get_or_create<BareT>(m_runtime_config);
+            auto& thread_buffers = ThreadBufferRegistry::instance().get_thread_buffers();
+            auto& buffer = thread_buffers.get_or_create<BareT>(m_runtime_config);
             buffer.buffer().record(event, ts_start, ts_end);
         }
 
         // Records a one-off with only start timestamp
         template<HasEventTrait EventT>
-        void Record(EventT &&event) {
+        void Record(EventT&& event) {
             const Timestamp ts = m_timestamp_source.now();
             return Record(std::forward<EventT>(event), ts);
         }
@@ -62,15 +62,15 @@ namespace Events {
         auto GetSlot() {
             using BareT = BareType_t<EventT>;
             const Timestamp ts = m_timestamp_source.now();
-            auto &thread_buffers = ThreadBufferRegistry::instance().get_thread_buffers();
-            auto &buffer = thread_buffers.get_or_create<BareT>(m_runtime_config);
+            auto& thread_buffers = ThreadBufferRegistry::instance().get_thread_buffers();
+            auto& buffer = thread_buffers.get_or_create<BareT>(m_runtime_config);
             return buffer.buffer().get_wrapped_slot(ts);
         }
 
         // Convenience: Record with in-place construction
         // Usage: recorder.emplace<MyEvent>(arg1, arg2);
         template<HasEventTrait EventT, typename... Args>
-        void Emplace(Args &&...args) {
+        void Emplace(Args&&... args) {
             using BareT = BareType_t<EventT>;
             BareT event{std::forward<Args>(args)...};
             return Record(event);
@@ -78,8 +78,8 @@ namespace Events {
 
         // Force writes to file. TODO: may not be thread safe even though there's a buffer inside
         void Flush() {
-            ThreadBufferRegistry::instance().for_each_thread([](const ThreadBuffers &buffers) {
-                buffers.for_each_buffer([](EventTypeId, IEventBuffer &buf) {
+            ThreadBufferRegistry::instance().for_each_thread([](const ThreadBuffers& buffers) {
+                buffers.for_each_buffer([](EventTypeId, IEventBuffer& buf) {
                     buf.flush();
                 });
             });
@@ -98,9 +98,9 @@ namespace Events {
 
         static Stats get_stats() {
             Stats stats{0, 0, 0};
-            ThreadBufferRegistry::instance().for_each_thread([&stats](const ThreadBuffers &buffers) {
+            ThreadBufferRegistry::instance().for_each_thread([&stats](const ThreadBuffers& buffers) {
                 ++stats.active_threads;
-                buffers.for_each_buffer([&stats](EventTypeId, const IEventBuffer &buf) {
+                buffers.for_each_buffer([&stats](EventTypeId, const IEventBuffer& buf) {
                     // stats.total_buffered += buf.size();
                     stats.total_dropped += buf.dropped_count();
                 });
@@ -111,7 +111,7 @@ namespace Events {
         // Per-event-type statistics
         struct EventTypeStats {
             EventTypeId id;
-            const char *name;
+            const char* name;
             size_t buffered;
             size_t dropped;
             size_t capacity;
@@ -125,8 +125,8 @@ namespace Events {
             EventTypeStats stats{EventTrait<BareT>::id, EventTrait<BareT>::name, 0, 0, 0};
 
             const auto target_id = EventTrait<BareT>::id;
-            ThreadBufferRegistry::instance().for_each_thread([&stats, target_id](const ThreadBuffers &buffers) {
-                buffers.for_each_buffer([&stats, target_id](EventTypeId id, const IEventBuffer &buf) {
+            ThreadBufferRegistry::instance().for_each_thread([&stats, target_id](const ThreadBuffers& buffers) {
+                buffers.for_each_buffer([&stats, target_id](EventTypeId id, const IEventBuffer& buf) {
                     if (id == target_id) {
                         // stats.buffered += buf.size();
                         stats.dropped += buf.dropped_count();
@@ -138,8 +138,13 @@ namespace Events {
         }
         // ================================================================
         // Accessors
-        [[nodiscard]] const TS &timestamp_source() const { return m_timestamp_source; }
-        [[nodiscard]] const RuntimeConfig &runtime_config() const { return m_runtime_config; }
+        [[nodiscard]] const TS& timestamp_source() const {
+            return m_timestamp_source;
+        }
+
+        [[nodiscard]] const RuntimeConfig& runtime_config() const {
+            return m_runtime_config;
+        }
 
     private:
         // Construct with custom runtime configuration

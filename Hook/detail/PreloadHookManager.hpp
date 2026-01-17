@@ -14,7 +14,7 @@ namespace hook::detail {
     class RealFunctionStorage {
     public:
         template<typename Tag>
-        HookTrait<Tag>::FuncPtr &get() {
+        HookTrait<Tag>::FuncPtr& get() {
             return std::get<typename HookTrait<Tag>::FuncPtr>(m_funcs);
         }
 
@@ -61,14 +61,14 @@ namespace hook::detail {
 
         template<ValidCallbackTag Tag>
             requires is_preload_hook_v<Tag>
-        HookTrait<Tag>::FuncPtr &real_func() {
+        HookTrait<Tag>::FuncPtr& real_func() {
             return m_real_funcs.template get<Tag>();
         }
 
         template<ValidCallbackTag Tag, typename DlsymFunc>
             requires is_preload_hook_v<Tag>
-        void resolve_real(void *handle, DlsymFunc &&dlsym_func) noexcept {
-            auto &real = m_real_funcs.template get<Tag>();
+        void resolve_real(void* handle, DlsymFunc&& dlsym_func) noexcept {
+            auto& real = m_real_funcs.template get<Tag>();
             if (!real) {
                 real = reinterpret_cast<HookTrait<Tag>::FuncPtr>(dlsym_func(handle, HookTrait<Tag>::symbol_name));
                 if (!real) {
@@ -78,14 +78,16 @@ namespace hook::detail {
         }
 
         template<typename Tag>
-        void resolve_one(auto &&...args) noexcept {
+        void resolve_one(auto&&... args) noexcept {
             if constexpr (is_preload_hook_v<Tag>) {
                 resolve_real<Tag>(std::forward<decltype(args)>(args)...);
             }
         }
 
         // Resolve all preload hooks
-        void resolve_all(auto &&...args) noexcept { (resolve_one<Tags>(std::forward<decltype(args)>(args)...), ...); }
+        void resolve_all(auto&&... args) noexcept {
+            (resolve_one<Tags>(std::forward<decltype(args)>(args)...), ...);
+        }
 
         // ================================================================
         // Static wrapper - called from LD_PRELOAD hook functions

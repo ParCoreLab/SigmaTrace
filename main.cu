@@ -11,16 +11,16 @@
 
 constexpr size_t DATA_SIZE = 4096;
 
-__global__ void dummy_kernel(void *data, const size_t size) {
+__global__ void dummy_kernel(void* data, const size_t size) {
     const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
-        static_cast<float *>(data)[idx] = static_cast<float>(idx);
+        static_cast<float*>(data)[idx] = static_cast<float>(idx);
     }
 
     Helpers::Cuda::Clock_Block();
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
     // setenv("NCCL_DEBUG", "TRACE", 1);
 
     setenv("NCCL_IB_HCA", "mlx5_0", 1);
@@ -74,10 +74,10 @@ int main(int argc, char *argv[]) {
     NCCL_CHECK(ncclCommInitAll(nccl_comms.data(), num_devices, nccl_devs.data()));
 
     // GPU buffers
-    std::vector<void *> send_buffs(num_devices);
-    std::vector<void *> recv_buffs(num_devices);
+    std::vector<void*> send_buffs(num_devices);
+    std::vector<void*> recv_buffs(num_devices);
 
-    auto memory_type_to_string = [](cudaMemoryType type) -> const char * {
+    auto memory_type_to_string = [](cudaMemoryType type) -> const char* {
         switch (type) {
             case cudaMemoryTypeUnregistered:
                 return "cudaMemoryTypeUnregistered";
@@ -111,8 +111,8 @@ int main(int argc, char *argv[]) {
     for (auto _ = 0; _ < 1; _++) {
         NCCL_CHECK(ncclGroupStart());
         for (int i = 0; i < num_devices; i++) {
-            const auto *send_buff = send_buffs[i];
-            auto *recv_buff = recv_buffs[i];
+            const auto* send_buff = send_buffs[i];
+            auto* recv_buff = recv_buffs[i];
             NCCL_CHECK(ncclAllGather(send_buff, recv_buff, DATA_SIZE, ncclFloat, nccl_comms[i], nullptr));
         }
         NCCL_CHECK(ncclGroupEnd());

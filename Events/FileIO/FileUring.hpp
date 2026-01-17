@@ -2,15 +2,17 @@
 
 #include <atomic>
 #include <condition_variable>
-#include <cstdint>
-#include <fcntl.h>
-#include <liburing.h>
 #include <mutex>
 #include <queue>
 #include <semaphore>
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+#include <cstdint>
+#include <fcntl.h>
+#include <liburing.h>
+
 #include <unistd.h>
 
 /*
@@ -37,7 +39,7 @@ class FileBackedBufferUring {
     };
 
 public:
-    explicit FileBackedBufferUring(const std::string &file_path) {
+    explicit FileBackedBufferUring(const std::string& file_path) {
         // Open file with O_DIRECT for best io_uring performance (optional, requires aligned buffers)
         // Using standard mode for compatibility
         m_fd = open(file_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -57,8 +59,8 @@ public:
     }
 
     // Non-copyable
-    FileBackedBufferUring(const FileBackedBufferUring &) = delete;
-    FileBackedBufferUring &operator=(const FileBackedBufferUring &) = delete;
+    FileBackedBufferUring(const FileBackedBufferUring&) = delete;
+    FileBackedBufferUring& operator=(const FileBackedBufferUring&) = delete;
 
     ~FileBackedBufferUring() {
         flush();
@@ -81,7 +83,9 @@ public:
     }
 
     // Fast access to memory - returns pointer to next slot in current buffer
-    uint8_t *get_slot() { return m_buffers[m_current_buffer_index] + m_current_buffer_size; }
+    uint8_t* get_slot() {
+        return m_buffers[m_current_buffer_index] + m_current_buffer_size;
+    }
 
     // Commit the current slot - minimal latency operation
     void commit() {
@@ -179,7 +183,7 @@ private:
             }
 
             // Submit write to io_uring
-            struct io_uring_sqe *sqe = io_uring_get_sqe(&m_ring);
+            struct io_uring_sqe* sqe = io_uring_get_sqe(&m_ring);
             if (!sqe) {
                 // Queue full, submit and retry
                 io_uring_submit(&m_ring);
@@ -191,7 +195,7 @@ private:
 
             // Prepare write operation
             io_uring_prep_write(sqe, m_fd, m_buffers[req.buffer_index], req.size, offset);
-            io_uring_sqe_set_data(sqe, reinterpret_cast<void *>(static_cast<uintptr_t>(req.buffer_index)));
+            io_uring_sqe_set_data(sqe, reinterpret_cast<void*>(static_cast<uintptr_t>(req.buffer_index)));
 
             // Track in-flight operation
             m_in_flight.fetch_add(1);
@@ -218,7 +222,7 @@ private:
 
     // Process io_uring completions
     void process_completions() {
-        struct io_uring_cqe *cqe;
+        struct io_uring_cqe* cqe;
         unsigned head;
         unsigned count = 0;
 

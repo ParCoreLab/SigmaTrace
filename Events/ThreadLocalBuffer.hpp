@@ -21,7 +21,7 @@ namespace Events {
     public:
         virtual ~IEventBuffer() = default;
         [[nodiscard]] virtual EventTypeId type_id() const = 0;
-        [[nodiscard]] virtual const char *type_name() const = 0;
+        [[nodiscard]] virtual const char* type_name() const = 0;
         // [[nodiscard]] virtual size_t size() const = 0;
         [[nodiscard]] virtual size_t capacity() const = 0;
         [[nodiscard]] virtual size_t dropped_count() const = 0;
@@ -34,19 +34,33 @@ namespace Events {
         static_assert(HasEventTrait<EventT>, "EventT must have EventTrait specialization");
 
     public:
-        explicit TypedEventBuffer(const RuntimeConfig &config) : m_buffer(config) {}
+        explicit TypedEventBuffer(const RuntimeConfig& config) : m_buffer(config) {}
 
-        [[nodiscard]] EventTypeId type_id() const noexcept override { return EventTrait<EventT>::id; }
-        [[nodiscard]] const char *type_name() const noexcept override { return EventTrait<EventT>::name; }
+        [[nodiscard]] EventTypeId type_id() const noexcept override {
+            return EventTrait<EventT>::id;
+        }
+        [[nodiscard]] const char* type_name() const noexcept override {
+            return EventTrait<EventT>::name;
+        }
         // [[nodiscard]] size_t size() const override { return m_buffer.size(); }
-        [[nodiscard]] size_t capacity() const noexcept override { return Capacity; }
-        [[nodiscard]] size_t dropped_count() const noexcept override { return m_buffer.dropped_count(); }
+        [[nodiscard]] size_t capacity() const noexcept override {
+            return Capacity;
+        }
+        [[nodiscard]] size_t dropped_count() const noexcept override {
+            return m_buffer.dropped_count();
+        }
 
-        void flush() noexcept override { m_buffer.flush(); }
+        void flush() noexcept override {
+            m_buffer.flush();
+        }
 
         // Access underlying typed buffer
-        EventRingBuffer<EventT, Capacity> &buffer() noexcept { return m_buffer; }
-        const EventRingBuffer<EventT, Capacity> &buffer() const noexcept { return m_buffer; }
+        EventRingBuffer<EventT, Capacity>& buffer() noexcept {
+            return m_buffer;
+        }
+        const EventRingBuffer<EventT, Capacity>& buffer() const noexcept {
+            return m_buffer;
+        }
 
     private:
         EventRingBuffer<EventT, Capacity> m_buffer;
@@ -60,7 +74,7 @@ namespace Events {
         // Get or create a buffer for a specific event type
         // TODO: Don't hardcode 4096 here
         template<typename EventT, size_t Capacity = DefaultCapacity>
-        TypedEventBuffer<EventT, Capacity> &get_or_create(const RuntimeConfig &config) {
+        TypedEventBuffer<EventT, Capacity>& get_or_create(const RuntimeConfig& config) {
             const auto key = EventTrait<EventT>::id;
 
             /*
@@ -74,23 +88,25 @@ namespace Events {
              */
             auto it = m_buffers.find(key);
             if (it != m_buffers.end()) {
-                return *static_cast<TypedEventBuffer<EventT, Capacity> *>(it->second.get());
+                return *static_cast<TypedEventBuffer<EventT, Capacity>*>(it->second.get());
             }
 
             // First time seeing this event type - create buffer
             // TODO: Do I really need to heap allocate it?
             auto buffer = std::make_unique<TypedEventBuffer<EventT, Capacity>>(config);
-            auto *ptr = buffer.get();
+            auto* ptr = buffer.get();
             m_buffers[key] = std::move(buffer);
             return *ptr;
         }
 
-        std::thread::id thread_id() const noexcept { return m_thread_id; }
+        std::thread::id thread_id() const noexcept {
+            return m_thread_id;
+        }
 
         // Iterate all buffers (for stats collection, flushing)
         template<typename Func>
-        void for_each_buffer(Func &&func) const {
-            for (const auto &[id, buffer]: m_buffers) {
+        void for_each_buffer(Func&& func) const {
+            for (const auto& [id, buffer]: m_buffers) {
                 func(static_cast<EventTypeId>(id), *buffer);
             }
         }
@@ -104,7 +120,7 @@ namespace Events {
     // Allows iteration over all threads for stats and flushing
     class ThreadBufferRegistry {
     public:
-        static ThreadBufferRegistry &instance() noexcept {
+        static ThreadBufferRegistry& instance() noexcept {
             static ThreadBufferRegistry registry;
             return registry;
         }
@@ -118,8 +134,8 @@ namespace Events {
         }
 
         // Get or create thread-local buffers for the calling thread
-        ThreadBuffers &get_thread_buffers() noexcept {
-            thread_local ThreadBuffers *cached = nullptr;
+        ThreadBuffers& get_thread_buffers() noexcept {
+            thread_local ThreadBuffers* cached = nullptr;
 
             if (!cached) {
                 // First call from this thread
@@ -135,17 +151,17 @@ namespace Events {
 
         // Iterate all thread buffers (for global stats, flushing)
         template<typename Func>
-        void for_each_thread(Func &&func) const {
+        void for_each_thread(Func&& func) const {
             std::lock_guard lock(m_mutex);
-            for (const auto &buffers: m_all_buffers) {
+            for (const auto& buffers: m_all_buffers) {
                 func(*buffers);
             }
         }
 
         template<typename Func>
-        void for_each_thread(Func &&func) {
+        void for_each_thread(Func&& func) {
             std::lock_guard lock(m_mutex);
-            for (auto &buffers: m_all_buffers) {
+            for (auto& buffers: m_all_buffers) {
                 func(*buffers);
             }
         }

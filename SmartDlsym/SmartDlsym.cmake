@@ -1,5 +1,4 @@
 add_library(SmartDlsym STATIC
-        # singleton_api.h
         SymbolResolver.cpp
         Dlsym.hpp
         Dlsym.cpp

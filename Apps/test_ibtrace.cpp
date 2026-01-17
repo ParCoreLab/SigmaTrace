@@ -20,17 +20,21 @@ struct SampleHooks : HookManager<SampleHooks, post_send_tag, post_recv_tag, poll
     using HookManager::post;
     using HookManager::pre;
 
-    void pre(post_send_tag, ibv_qp *qp, ibv_send_wr *wr, ibv_send_wr **bad_wr) { ++sends; }
+    void pre(post_send_tag, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) {
+        ++sends;
+    }
 
-    void pre(post_recv_tag, ibv_qp *qp, ibv_recv_wr *wr, ibv_recv_wr **bad_wr) { ++recvs; }
+    void pre(post_recv_tag, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr** bad_wr) {
+        ++recvs;
+    }
 
-    void post(post_send_tag, int ret, ibv_qp *qp, ibv_send_wr *wr, ibv_send_wr **bad_wr) {
+    void post(post_send_tag, int ret, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr) {
         if (ret != 0) {
             std::cerr << "post_send failed: " << ret << std::endl;
         }
     }
 
-    void post(poll_cq_tag, int ret, ibv_cq *cq, int ne, ibv_wc *wc) {
+    void post(poll_cq_tag, int ret, ibv_cq* cq, int ne, ibv_wc* wc) {
         if (ret > 0) {
             completions += ret;
             for (int i = 0; i < ret; ++i) {
@@ -52,7 +56,7 @@ struct SampleHooks : HookManager<SampleHooks, post_send_tag, post_recv_tag, poll
 
 int main() {
     int num_devices{};
-    ibv_device **dev_list = ibv_get_device_list(&num_devices);
+    ibv_device** dev_list = ibv_get_device_list(&num_devices);
     if (!dev_list || !dev_list[0]) {
         std::cerr << "No IB devices" << std::endl;
         return 1;
@@ -60,7 +64,7 @@ int main() {
 
     std::cout << "Found " << num_devices << " IB device(s)" << std::endl;
 
-    ibv_context *ctx = ibv_open_device(dev_list[0]);
+    ibv_context* ctx = ibv_open_device(dev_list[0]);
     if (!ctx) {
         std::cerr << "Failed to open device\n";
         ibv_free_device_list(dev_list);
@@ -77,11 +81,11 @@ int main() {
     // SampleHooks::instance().install(ctx);
 
     // Register additional hooks
-    SampleHooks::instance().register_pre<post_send_tag>([](auto &&...) {
+    SampleHooks::instance().register_pre<post_send_tag>([](auto&&...) {
         std::cout << "Pre post_send hook called" << std::endl;
     });
 
-    SampleHooks::instance().register_post<poll_cq_tag>([](int ret, auto &&...) {
+    SampleHooks::instance().register_post<poll_cq_tag>([](int ret, auto&&...) {
         if (ret > 0) {
             std::cout << "Polled " << ret << " completion(s)" << std::endl;
         }
@@ -114,7 +118,7 @@ int main() {
     std::cout << "Port state: " << port_attr.state << " (4=Active), LID: " << port_attr.lid << std::endl;
 
     // Allocate Protection Domain
-    ibv_pd *pd = ibv_alloc_pd(ctx);
+    ibv_pd* pd = ibv_alloc_pd(ctx);
     if (!pd) {
         std::cerr << "Failed to allocate PD" << std::endl;
         SampleHooks::instance().uninstall(ctx);
@@ -125,7 +129,7 @@ int main() {
     std::cout << "Allocated Protection Domain" << std::endl;
 
     // Create Completion Queue
-    ibv_cq *cq = ibv_create_cq(ctx, 16, nullptr, nullptr, 0);
+    ibv_cq* cq = ibv_create_cq(ctx, 16, nullptr, nullptr, 0);
     if (!cq) {
         std::cerr << "Failed to create CQ" << std::endl;
         ibv_dealloc_pd(pd);
@@ -139,7 +143,7 @@ int main() {
     // Allocate and register memory buffer
     const std::string message{"Hello RDMA!"};
     constexpr size_t buf_size = 4096;
-    void *buf = aligned_alloc(4096, buf_size);
+    void* buf = aligned_alloc(4096, buf_size);
     if (!buf) {
         std::cerr << "Failed to allocate buffer" << std::endl;
         ibv_destroy_cq(cq);
@@ -150,9 +154,9 @@ int main() {
         return 1;
     }
     memset(buf, 0, buf_size);
-    message.copy(static_cast<char *>(buf), message.size(), 0);
+    message.copy(static_cast<char*>(buf), message.size(), 0);
 
-    ibv_mr *mr =
+    ibv_mr* mr =
             ibv_reg_mr(pd, buf, buf_size, IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE);
     if (!mr) {
         std::cerr << "Failed to register MR\n";
@@ -177,7 +181,7 @@ int main() {
     qp_init_attr.cap.max_send_sge = 1;
     qp_init_attr.cap.max_recv_sge = 1;
 
-    ibv_qp *qp = ibv_create_qp(pd, &qp_init_attr);
+    ibv_qp* qp = ibv_create_qp(pd, &qp_init_attr);
     if (!qp) {
         std::cerr << "Failed to create QP" << std::endl;
         ibv_dereg_mr(mr);
@@ -217,7 +221,7 @@ int main() {
     recv_wr.next = nullptr;
 
     {
-        ibv_recv_wr *bad_recv_wr = nullptr;
+        ibv_recv_wr* bad_recv_wr = nullptr;
         int ret = ibv_post_recv(qp, &recv_wr, &bad_recv_wr);
         if (ret != 0) {
             std::cerr << "ibv_post_recv failed: " << ret << std::endl;
@@ -243,7 +247,7 @@ int main() {
     send_wr.send_flags = IBV_SEND_SIGNALED;
 
     {
-        ibv_send_wr *bad_send_wr = nullptr;
+        ibv_send_wr* bad_send_wr = nullptr;
         int ret = ibv_post_send(qp, &send_wr, &bad_send_wr);
         if (ret != 0) {
             std::cerr << "ibv_post_send failed: " << ret << " (expected - QP not in RTS state)" << std::endl;

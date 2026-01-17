@@ -43,13 +43,13 @@ private:
 
     // Read next event from a specific stream
     bool read_event(size_t stream_index) {
-        auto &stream = m_file_streams[stream_index];
+        auto& stream = m_file_streams[stream_index];
         if (!stream.is_open() || stream.eof()) {
             return false;
         }
 
         StoredEvent event;
-        stream.read(reinterpret_cast<char *>(&event), event_size_);
+        stream.read(reinterpret_cast<char*>(&event), event_size_);
         if (stream.gcount() < static_cast<std::streamsize>(event_size_)) {
             stream.close();
             m_current_events[stream_index] = std::nullopt;
@@ -62,12 +62,12 @@ private:
 
 public:
     // Construct from vector of file entries
-    explicit EventStreamMerger(const std::vector<std::filesystem::directory_entry> &file_entries) :
+    explicit EventStreamMerger(const std::vector<std::filesystem::directory_entry>& file_entries) :
         remaining_streams_(0) {
 
         // Open all file streams
         m_file_streams.reserve(file_entries.size());
-        for (const auto &entry: file_entries) {
+        for (const auto& entry: file_entries) {
             m_file_streams.emplace_back(entry.path(), std::ios::binary);
         }
 
@@ -113,10 +113,14 @@ public:
     }
 
     // Check if there are more events available
-    [[nodiscard]] bool has_more() const { return remaining_streams_ > 0; }
+    [[nodiscard]] bool has_more() const {
+        return remaining_streams_ > 0;
+    }
 
     // Get the number of remaining streams
-    [[nodiscard]] size_t remaining_streams() const { return remaining_streams_; }
+    [[nodiscard]] size_t remaining_streams() const {
+        return remaining_streams_;
+    }
 };
 
 int main() {
@@ -132,22 +136,22 @@ int main() {
 
     std::vector<std::filesystem::directory_entry> file_entries;
     std::copy_if(std::filesystem::directory_iterator{events_path}, std::filesystem::directory_iterator{},
-                 std::back_inserter(file_entries), [&events_config](const auto &entry) {
-                     if (!entry.is_regular_file()) {
-                         return false;
-                     }
+                 std::back_inserter(file_entries), [&events_config](const auto& entry) {
+        if (!entry.is_regular_file()) {
+            return false;
+        }
 
-                     const auto filename = entry.path().filename().string();
-                     if (!filename.starts_with(events_config.EventFilePrefix) ||
-                         !filename.ends_with(events_config.EventFileSuffix)) {
-                         return false;
-                     }
+        const auto filename = entry.path().filename().string();
+        if (!filename.starts_with(events_config.EventFilePrefix) ||
+            !filename.ends_with(events_config.EventFileSuffix)) {
+            return false;
+        }
 
-                     return true;
-                 });
+        return true;
+    });
 
     // May help with timestamp matching
-    std::ranges::sort(file_entries, [](const auto &a, const auto &b) {
+    std::ranges::sort(file_entries, [](const auto& a, const auto& b) {
         return a.path().filename() < b.path().filename();
     });
 
@@ -161,9 +165,9 @@ int main() {
 
     // Calculate total size of all files
     const auto all_files_size = std::accumulate(std::begin(file_entries), std::end(file_entries), 0ull,
-                                                [](uint64_t sum, const auto &entry) {
-                                                    return sum + entry.file_size();
-                                                });
+                                                [](uint64_t sum, const auto& entry) {
+        return sum + entry.file_size();
+    });
 
     // Open all files as streams. We will read them all to find the next timestamp and insert into a flat list
     std::vector<std::ifstream> file_streams(file_entries.size());
@@ -184,14 +188,14 @@ int main() {
 
     // Read the first event from each stream
     for (size_t i = 0; i < file_streams.size(); i++) {
-        auto &stream = file_streams[i];
+        auto& stream = file_streams[i];
         if (!stream.is_open() || stream.eof()) {
             continue;
         }
 
-        auto &current_event = current_read_events[i];
+        auto& current_event = current_read_events[i];
 
-        stream.read(reinterpret_cast<char *>(&current_event), event_size);
+        stream.read(reinterpret_cast<char*>(&current_event), event_size);
         if (stream.gcount() < event_size) {
             // Reached end of file
             stream.close();
@@ -200,23 +204,23 @@ int main() {
         }
     }
 
-    std::ranges::make_heap(current_read_events, [](const auto &a, const auto &b) {
+    std::ranges::make_heap(current_read_events, [](const auto& a, const auto& b) {
         return a.header.timestamp > b.header.timestamp;
     });
 
     while (remaining_streams > 0) {
         // Get the event with the smallest timestamp
-        std::ranges::pop_heap(current_read_events, [](const auto &a, const auto &b) {
+        std::ranges::pop_heap(current_read_events, [](const auto& a, const auto& b) {
             return a.header.timestamp > b.header.timestamp;
         });
-        const auto &next_event = current_read_events.back();
+        const auto& next_event = current_read_events.back();
 
         // Add to merged list
         merged_events.push_back(next_event);
 
         // Read the next event from the same stream
         const size_t stream_index = &next_event - &current_read_events[0];
-        auto &stream = file_streams[stream_index];
+        auto& stream = file_streams[stream_index];
         if (!stream.is_open() || stream.eof()) {
             // This stream is done
             current_read_events.pop_back();
@@ -224,8 +228,8 @@ int main() {
             continue;
         }
 
-        auto &current_event = current_read_events[stream_index];
-        stream.read(reinterpret_cast<char *>(&current_event), event_size);
+        auto& current_event = current_read_events[stream_index];
+        stream.read(reinterpret_cast<char*>(&current_event), event_size);
         if (stream.gcount() < event_size) {
             // Reached end of file
             stream.close();
@@ -235,14 +239,14 @@ int main() {
         }
 
         // Re-heapify
-        std::ranges::push_heap(current_read_events, [](const auto &a, const auto &b) {
+        std::ranges::push_heap(current_read_events, [](const auto& a, const auto& b) {
             return a.header.timestamp > b.header.timestamp;
         });
     }
 
     std::cout << "Merged " << merged_events.size() << " events." << std::endl;
 
-    for (const auto &event: merged_events) {
+    for (const auto& event: merged_events) {
         if (event.data.hello == HelloValue) {
             continue;
         }
@@ -257,7 +261,7 @@ int main() {
     std::cout << "\nStreaming events using EventStreamMerger..." << std::endl;
     EventStreamMerger merger(file_entries);
 
-    while (const auto &event = merger.next()) {
+    while (const auto& event = merger.next()) {
         // Process event here
         if (event->data.hello == HelloValue) {
             continue;
