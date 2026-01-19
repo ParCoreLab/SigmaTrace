@@ -27,6 +27,7 @@ namespace Events {
     // visit(EventTrait<EventT>, const EventFileHeader &, EventHeader&& header, EventT&& event) for EventT
     template<typename Derived, typename EventT>
     concept Visitable = requires(Derived d) {
+        // TODO: move the first arg out
         d.visit(std::declval<EventTrait<EventT>>(), std::declval<const EventFileHeader&>(),
                 std::declval<EventHeader &&>(), std::declval<EventT &&>());
     };

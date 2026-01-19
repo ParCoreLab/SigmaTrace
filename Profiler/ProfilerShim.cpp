@@ -112,7 +112,6 @@ struct ProfilerCtx {
     // ================================================
     // Stats
     std::atomic<int> num_nic_accesses{0};
-
     std::atomic<int> num_kernel_launches{0};
     // ================================================
 

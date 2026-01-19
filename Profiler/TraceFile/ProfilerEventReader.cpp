@@ -362,8 +362,8 @@ public:
         m_builder.add_annotation("Process ID", file_header.process_id);
         m_builder.add_annotation("Thread ID", file_header.thread_id);
 
-        std::cout << "[" << header.timestamp_start << "] Memory Registration: addr=0x";
-        std::cout << std::hex << event.addr << std::dec << std::endl;
+        // std::cout << "[" << header.timestamp_start << "] Memory Registration: addr=0x";
+        // std::cout << std::hex << event.addr << std::dec << std::endl;
     }
 
     void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader& file_header, EventHeader&& header,
@@ -382,8 +382,8 @@ public:
         m_builder.instant_event(track_uuid, header.timestamp_start, Meta::name);
         m_builder.add_annotation("addr", event.addr);
 
-        std::cout << "[" << header.timestamp_start << "] DoorbellRing: addr=0x";
-        std::cout << std::hex << event.addr << std::dec << std::endl;
+        // std::cout << "[" << header.timestamp_start << "] DoorbellRing: addr=0x";
+        // std::cout << std::hex << event.addr << std::dec << std::endl;
     }
 
     void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader& file_header, EventHeader&& header,
