@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <sched.h> // For CPU ID
 #include <unistd.h>
 
 #include <concepts>
@@ -24,6 +25,7 @@ namespace Events {
         EventTypeId event_id;
         EventCategory event_category{EventCategory::Unknown};
         char hostname[HOST_NAME_MAX];
+        std::uint64_t cpu_id;
         std::uint64_t process_id;
         std::uint64_t thread_id;
 
@@ -116,6 +118,21 @@ namespace Events {
             return hostname;
         }
 
+        static std::uint64_t get_cpu_id() {
+            const static std::uint64_t cpu_id = std::invoke([]() {
+                const auto cpu_id = sched_getcpu();
+
+                // Apparently can fail if the kernel doesn't support it
+                if (cpu_id < 0) {
+                    throw std::runtime_error("Can't get CPU ID: errno - " + std::to_string(errno));
+                }
+
+                return static_cast<std::uint64_t>(cpu_id);
+            });
+
+            return cpu_id;
+        }
+
         // TODO: uint32_t should suffice and even that is too large
         static std::uint64_t get_process_id() noexcept {
             const static auto process_id{getpid()};
@@ -186,6 +203,7 @@ namespace Events {
                         .event_id = EventTrait<EventT>::id,
                         .event_category = EventTrait<EventT>::category,
                         .hostname = {},
+                        .cpu_id = get_cpu_id(),
                         .process_id = get_process_id(),
                         .thread_id = get_thread_id(),
                 };
