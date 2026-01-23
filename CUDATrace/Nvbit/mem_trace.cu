@@ -71,9 +71,12 @@ namespace cuda_trace {
 } // namespace cuda_trace
 
 // Accessor for late-loaded libraries to get the singleton instance via dlsym
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
 extern "C" cuda_trace::NvbitProfiler* sigma_provider_instance() {
     return &cuda_trace::NvbitProfiler::instance();
 }
+#pragma GCC diagnostic pop
 
 enum class RecvThreadState {
     WORKING,

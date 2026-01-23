@@ -23,9 +23,12 @@ namespace mlx5dv {
 // ================================================================
 
 // Accessor for late-loaded libraries to get the singleton instance via dlsym
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
 extern "C" mlx5dv::Profiler* sigma_provider_instance() {
     return &mlx5dv::Profiler::instance();
 }
+#pragma GCC diagnostic pop
 
 // TODO: this should be in a helper module in HookLib or done automatically
 extern "C" int mlx5dv_init_obj(mlx5dv_obj* obj, uint64_t obj_type) {

@@ -38,7 +38,9 @@ target_link_libraries(Thing PRIVATE nccl)
 Sigma_add_executable(ThingNVSHMEM main_nvshmem.cu)
 set_cuda_rpath(ThingNVSHMEM)
 
+# Preventing some linker issues with clang
 set_target_properties(ThingNVSHMEM PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+target_link_options(ThingNVSHMEM PRIVATE -no-pie)
 
 target_compile_options(ThingNVSHMEM PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
         --generate-line-info

@@ -86,9 +86,12 @@ static void __attribute__((destructor)) finalize() {
 }
 
 // Accessor for late-loaded libraries to get the singleton instance via dlsym
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
 extern "C" ibv::Profiler* sigma_provider_instance() {
     return &ibv::Profiler::instance();
 }
+#pragma GCC diagnostic pop
 
 // ================================================================
 // dlsym/dlvsym interception for libraries that dynamically load ibv funcs
