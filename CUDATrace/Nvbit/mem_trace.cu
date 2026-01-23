@@ -127,6 +127,8 @@ const std::unordered_set<std::string_view> IgnoredFunctions{
 void* recv_thread_fun(void* args);
 
 void nvbit_at_init() {
+    setenv("ACK_CTX_INIT_LIMITATION", "1", 1);
+
     setenv("CUDA_MANAGED_FORCE_DEVICE_ALLOC", "1", 1);
     GET_VAR_INT(instr_begin_interval, "INSTR_BEGIN", 0,
                 "Beginning of the instruction interval where to apply instrumentation");
