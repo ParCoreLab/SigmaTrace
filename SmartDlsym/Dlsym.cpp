@@ -1,4 +1,5 @@
 #include <cassert>
+
 #include <dlfcn.h>
 
 #include <functional>
@@ -9,6 +10,9 @@
 #include "Dlsym.hpp"
 
 namespace smart_dlsym {
+    const int DL_RTLD_NOW = RTLD_NOW;
+    const int DL_RTLD_GLOBAL = RTLD_GLOBAL;
+
     void* (*real_dlopen)(const char*, int) = nullptr;
     void* (*real_dlsym)(void*, const char*) = nullptr;
     void* (*real_dlvsym)(void*, const char*, const char*) = nullptr;

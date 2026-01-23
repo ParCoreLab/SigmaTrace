@@ -13,7 +13,7 @@ namespace Events {
     struct EventTrait {
         static_assert(sizeof(EventT) == 0,
                       "EventTrait must be specialized for this event type. "
-                      "Use DEFINE_EVENT_TRAIT(EventStruct, EventTypeId, \"name\") to define traits.");
+                      "Use DEFINE_EVENT_TRAIT(EventStruct, EventTypeId, EventCategory, \"name\") to define traits.");
     };
 
 } // namespace Events
@@ -21,11 +21,12 @@ namespace Events {
 // Macro to simplify trait definition
 // Must be used at global scope or in Events namespace
 // Usage: DEFINE_EVENT_TRAIT(namespace::CustomEvent, Events::EventTypeId::CustomEventID, "custom_event")
-#define DEFINE_EVENT_TRAIT(EventStruct, EventId, EventName)                                                            \
+#define DEFINE_EVENT_TRAIT(EventStruct, Id, Category, Name)                                                            \
     template<>                                                                                                         \
     struct Events::EventTrait<EventStruct> {                                                                           \
-        static constexpr Events::EventTypeId id = EventId;                                                             \
-        static constexpr const char* name = EventName;                                                                 \
+        static constexpr Events::EventTypeId id = Id;                                                                  \
+        static constexpr Events::EventCategory category = Category;                                                    \
+        static constexpr const char* name = Name;                                                                      \
         static auto GetSize(auto&&) {                                                                                  \
             return sizeof(EventStruct);                                                                                \
         };                                                                                                             \
@@ -49,6 +50,7 @@ namespace Events {
     template<typename T>
     concept HasEventTrait = requires(BareType_t<T>& t) {
         { EventTrait<BareType_t<T>>::id } -> std::convertible_to<EventTypeId>;
+        { EventTrait<BareType_t<T>>::category } -> std::convertible_to<EventCategory>;
         { EventTrait<BareType_t<T>>::name } -> std::convertible_to<const char*>;
         { EventTrait<BareType_t<T>>::GetSize(t) } -> std::convertible_to<size_t>;
         { EventTrait<BareType_t<T>>::SerializeTo(t, std::declval<void*>()) } -> std::same_as<bool>;

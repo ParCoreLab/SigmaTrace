@@ -5,15 +5,13 @@ Sigma_add_library(SmartDlsym STATIC
         Dlsym.cpp
 )
 
-# TODO: may be unnecessary
 set_target_properties(SmartDlsym PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
         OUTPUT_NAME "smart_dlsym"
 )
 
+# TODO: unsure if this is really needed
 set_property(TARGET SmartDlsym PROPERTY ENABLE_EXPORTS ON)
 
 target_link_libraries(SmartDlsym PRIVATE dl)
-
-set_target_properties(SmartDlsym PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")

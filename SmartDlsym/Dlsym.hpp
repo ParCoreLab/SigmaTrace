@@ -12,7 +12,12 @@
  *
  * TODO: Performance test
  */
+
 namespace smart_dlsym {
+    // Trying to avoid making downstream users having to #include <dlfcn.h>
+    extern const int DL_RTLD_NOW;
+    extern const int DL_RTLD_GLOBAL;
+
     using CallbackType = std::function<void*(void*, void*, const char*)>;
 
     // Defined in Dlsym.cpp, shared across all modules linking to libsmart_dlsym.a

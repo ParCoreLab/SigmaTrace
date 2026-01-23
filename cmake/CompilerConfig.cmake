@@ -13,6 +13,18 @@ if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
 endif ()
 
 # ================================================================
+# Compile time variables
+# ================================================================
+set(SIGMA_PROVIDER_VAR_PREFIX "SIGMA_PROVIDER_")
+
+set(SIGMA_TARGET_DIR_FULL "${CMAKE_BINARY_DIR}/target")
+set(SIGMA_PROFILER_PROVIDERS_DIR "./providers")
+
+# target/providers
+set(SIGMA_PROFILER_PROVIDERS_DIR_FULL "${SIGMA_TARGET_DIR_FULL}/${SIGMA_PROFILER_PROVIDERS_DIR}")
+set(SIGMA_LIB_DIR_FULL "${SIGMA_TARGET_DIR_FULL}/lib")
+
+# ================================================================
 # Build Type
 # ================================================================
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -42,7 +54,8 @@ set(SIGMA_CXX_WARNINGS
         -Wall
         -Wextra
         -Wpedantic
-        -Wshadow
+        # We like shadowing
+        # -Wshadow
         -Wcast-align
         # -Wunused
         # No easy way to suppress
@@ -186,16 +199,44 @@ endfunction()
 # Sigma_add_library(name [STATIC|SHARED|MODULE|OBJECT|INTERFACE] [EXCLUDE_FROM_ALL] source1 ...)
 function(Sigma_add_library name)
     add_library(${name} ${ARGN})
+
     get_target_property(type ${name} TYPE)
     if (NOT type STREQUAL "INTERFACE_LIBRARY")
+        set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SIGMA_LIB_DIR_FULL}")
+
         Sigma_apply_compile_options(${name})
     endif ()
+endfunction()
+
+function(Sigma_add_provider_library name)
+    add_library(${name} ${ARGN})
+
+    set_target_properties(${name} PROPERTIES
+            ENABLE_EXPORTS ON
+            POSITION_INDEPENDENT_CODE ON
+            LIBRARY_OUTPUT_DIRECTORY "${SIGMA_PROFILER_PROVIDERS_DIR_FULL}")
+    Sigma_apply_compile_options(${name})
+endfunction()
+
+function(Sigma_profiler_link_provider name provider)
+    target_include_directories(
+            ${name}
+            PUBLIC
+            $<TARGET_PROPERTY:${provider},INTERFACE_INCLUDE_DIRECTORIES>)
+
+    get_target_property(ProviderName ${provider} OUTPUT_NAME)
+
+    # SIGMA_PROVIDER_ibverbs_trace=./providers/libibverbs_trace.so
+    target_compile_definitions(${name} PRIVATE
+            "${SIGMA_PROVIDER_VAR_PREFIX}${ProviderName}=\"${SIGMA_PROFILER_PROVIDERS_DIR}/$<TARGET_FILE_NAME:${provider}>\"")
 endfunction()
 
 # Sigma_add_cuda_library(name [STATIC|SHARED] source1 ...)
 # Convenience for CUDA libraries with separable compilation
 function(Sigma_add_cuda_library name)
     add_library(${name} ${ARGN})
+    set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SIGMA_LIB_DIR_FULL}")
+
     Sigma_apply_compile_options(${name})
     set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 endfunction()

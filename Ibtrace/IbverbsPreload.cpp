@@ -61,13 +61,10 @@ namespace ibv {
             });
         }
 
-        // ================================================================
         // Set up for installing hooks into ctx
-        // ================================================================
         this->register_post<open_device_tag>([this](ibv_context* ctx, ibv_device*, auto&&...) {
             if (ctx) {
                 this->install(ctx);
-
                 LogDebug("Hooks installed");
             }
         });
@@ -75,19 +72,22 @@ namespace ibv {
         this->register_post<close_device_tag>([this](int, ibv_context* ctx, auto&&...) {
             if (ctx) {
                 this->uninstall(ctx);
-
                 LogDebug("Hooks uninstalled");
             }
         });
     }
-
-    Profiler::~Profiler() {
-        LogDebug("Profiler Destroyed");
-    }
 } // namespace ibv
+
+// Explicit instantiation - this is the ONE place the template is instantiated
+template class ibv::IbverbsEventSource<ibv::Profiler>;
 
 static void __attribute__((destructor)) finalize() {
     LogDebug("Unloaded");
+}
+
+// Accessor for late-loaded libraries to get the singleton instance via dlsym
+extern "C" ibv::Profiler* sigma_provider_instance() {
+    return &ibv::Profiler::instance();
 }
 
 // ================================================================

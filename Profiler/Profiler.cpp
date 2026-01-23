@@ -1,6 +1,13 @@
+#include <climits>
+#include <cstring>
+#include <unistd.h>
+
+#include <filesystem>
 #include <iostream>
 
 #include "Launcher.hpp"
+
+#include "ProfilerArgs.hpp"
 
 int main(int argc, char* argv[]) {
     // TODO: boost::program_options in the future
@@ -9,13 +16,26 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Getting the correct relative path to the shim .so
+    std::array<char, PATH_MAX> readlink_buf{};
+    const auto len = readlink("/proc/self/exe", readlink_buf.data(), readlink_buf.size() - 1);
+    if (len == -1) {
+        throw std::runtime_error("readlink failed: " + std::string(strerror(errno)));
+    }
+    const auto binary_dir = std::filesystem::path(readlink_buf.data()).parent_path();
+
+    // Main LD_PRELOAD shim
+    const std::string ShimLib{binary_dir / "libProfilerShim.so"};
+
+    // Set up args for the shim and child process
+    const Profiler::ProfilerArgs profiler_args{.ShimDir = binary_dir};
+    const auto profiler_args_env = profiler_args.to_env();
+
+    // Args for the launch
     const std::string program_bin = argv[1];
     std::vector<const char*> program_args(argv + 1, argv + argc);
-    program_args.push_back(nullptr);
+    const auto shimLibs = std::views::single(ShimLib);
 
-    // TODO: vector because it may be configurable in the future
-    const std::vector<std::string> ld_shims{"libprofiler_shim.so"};
-
-    const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, ld_shims);
+    const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, shimLibs, profiler_args_env);
     return ret;
 }

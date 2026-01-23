@@ -9,25 +9,37 @@
 
 #include "Helpers/Utilities.hpp"
 
+#include "Dlsym.hpp"
+
 #include "EventRecorder.hpp"
 #include "EventTrait.hpp"
 #include "Events.hpp"
 
 // Profiler Event definitions
+#include "Events/CUDAEvents.hpp"
+#include "Events/IbvEvents.hpp"
 #include "Events/Mlx5DvEvents.hpp"
 
 #include "infiniband/mlx5dv.h"
 #include "infiniband/verbs.h"
 
+// Internal headers for mlx5 type definitions
 // TODO: this is inside NVSHMEM. May be NVSHMEM or RDMA-CORE version dependent
 #include <mlx5/mlx5_ifc.h>
 #include <mlx5/mlx5_prm.h>
 
 #include "CUDAEventSource.hpp"
-#include "CUDAEvents.hpp"
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
 
+#include "ProfilerArgs.hpp"
+
+// Build-system defined args to provider .so files
+static constexpr std::string_view SIGMA_IBVERBS_PROVIDER_PATH{SIGMA_PROVIDER_ibverbs_trace};
+static constexpr std::string_view SIGMA_NVBIT_PROVIDER_PATH{SIGMA_PROVIDER_nvbit_memory_tracker};
+static constexpr std::string_view SIGMA_MLX5DV_PROVIDER_PATH{SIGMA_PROVIDER_mlx5dv_trace};
+
+// Convenience
 using Profiler::Events::GpuId_T;
 
 enum class QueueType {
@@ -52,7 +64,7 @@ enum class UarAllocationType {
 };
 
 template<typename EnumT>
-static std::string_view alloc_type_as_string(EnumT type) {
+[[maybe_unused]] static std::string_view alloc_type_as_string(EnumT type) {
     switch (type) {
         case EnumT::WQE:
             return "WQE";
@@ -86,7 +98,7 @@ struct ProfilerCtx {
     // GPU memory allocaations
     // addr -> { size, gpu_id }
     // TODO: Make the value a proper struct so we don't have to do std::get<whatever->second>
-    std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations;
+    std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations{};
     // ================================================
 
     // ================================================
@@ -121,11 +133,114 @@ struct ProfilerCtx {
     }
 
     ProfilerCtx() {
-        m_ibv_profiler = &ibv::Profiler::instance();
-        m_cuda_profiler = &cuda_trace::NvbitProfiler::instance();
-        m_mlx5dv_profiler = &mlx5dv::Profiler::instance();
+        Events::RuntimeConfig eventConfig{};
+        m_event_recorder = &Events::EventRecorder<>::instance(std::move(eventConfig));
 
-        m_event_recorder = &Events::EventRecorder<>::instance();
+        const auto profiler_args = Profiler::ProfilerArgs::from_env();
+
+        if (profiler_args.LoadNvbit) {
+            load_nvbit(profiler_args.ShimDir);
+        }
+
+        if (profiler_args.LoadIbtrace) {
+            load_ibv(profiler_args.ShimDir);
+        }
+
+        if (profiler_args.LoadMlx5dv) {
+            load_mlx5dv(profiler_args.ShimDir);
+        }
+    }
+
+    static ProfilerCtx& instance() {
+        static ProfilerCtx instance;
+        return instance;
+    }
+
+    Events::EventRecorder<>* m_event_recorder{nullptr};
+
+    ibv::Profiler* m_ibv_profiler{nullptr};
+    cuda_trace::NvbitProfiler* m_cuda_profiler{nullptr};
+    mlx5dv::Profiler* m_mlx5dv_profiler{nullptr};
+
+    static void* internal_load_lib(std::string_view lib_name) {
+        const auto mode = smart_dlsym::DL_RTLD_NOW | smart_dlsym::DL_RTLD_GLOBAL;
+        void* ibv_shim = smart_dlsym::real_dlopen(lib_name.data(), mode);
+        if (!ibv_shim) {
+            std::cerr << "Unable to load " << lib_name << std::endl;
+            std::abort();
+        }
+
+        return ibv_shim;
+    }
+
+    template<typename T>
+    static T* get_instance(const std::filesystem::path& lib_name) {
+        if (!std::filesystem::exists(lib_name)) {
+            std::cerr << "Unable to load " << lib_name << " (file doesn't exist)" << std::endl;
+            std::abort();
+        }
+
+        auto* handle = internal_load_lib(lib_name.c_str());
+        auto* get_instance = reinterpret_cast<T* (*) ()>(smart_dlsym::real_dlsym(handle, "sigma_provider_instance"));
+        if (!get_instance) {
+            std::cerr << "Unable to load " << lib_name << " (no sigma_provider_instance)" << std::endl;
+            std::abort();
+        }
+
+        return get_instance();
+    }
+
+    void load_ibv(const std::filesystem::path& shim_dir) noexcept {
+        m_ibv_profiler = get_instance<ibv::Profiler>(shim_dir / SIGMA_IBVERBS_PROVIDER_PATH);
+
+        m_ibv_profiler->register_post<ibv::open_device_tag>(
+                [this](ibv_context* out_context, ibv_device* device, auto ts_start, auto ts_end) {
+            std::cout << "[Profiler] ibv_open_device received" << std::endl;
+
+            auto event = Profiler::Events::IbvOpenDevice{
+                    .context_addr = reinterpret_cast<uint64_t>(out_context),
+                    .node_type = device->node_type,
+                    .transport_type = device->transport_type,
+            };
+
+            snprintf(event.name, sizeof device->name, "%s", device->name);
+            snprintf(event.dev_name, sizeof device->dev_name, "%s", device->dev_name);
+            snprintf(event.dev_path, sizeof device->dev_path, "%s", device->dev_path);
+            snprintf(event.ibdev_path, sizeof device->ibdev_path, "%s", device->ibdev_path);
+
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ibv_profiler->register_post<ibv::close_device_tag>(
+                [this](int, ibv_context* context, auto ts_start, auto ts_end) {
+            std::cout << "[Profiler] ibv_open_device received" << std::endl;
+
+            auto event = Profiler::Events::IbvCloseDevice{
+                    .context_addr = reinterpret_cast<uint64_t>(context),
+            };
+
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        /* IBV stuff unused for now
+        m_ibv_profiler->register_post<ibv::reg_mr_tag>(
+                [this](ibv_mr *out_mr, ibv_pd *pd, void *addr, size_t length, int access) {
+                    auto alloc_addr = reinterpret_cast<uint64_t>(addr);
+                    std::cout << "[Profiler] ibv_reg_mr received at " << std::hex << alloc_addr << std::endl;
+                    // m_ibv_allocations.emplace_back(alloc_addr, length);
+                });
+
+        m_ibv_profiler->register_post<ibv::reg_mr_iova2_tag>(
+                [this](ibv_mr *out_mr, ibv_pd *pd, void *addr, size_t length, auto &&...) {
+                    auto alloc_addr = reinterpret_cast<uint64_t>(addr);
+                    std::cout << "[Profiler] ibv_reg_mr_iova1232 received at " << std::hex << alloc_addr << std::endl;
+                    // m_ibv_allocations.emplace_back(alloc_addr, length);
+                });
+        */
+    }
+
+    void load_nvbit(const std::filesystem::path& shim_dir) noexcept {
+        m_cuda_profiler = get_instance<cuda_trace::NvbitProfiler>(shim_dir / SIGMA_NVBIT_PROVIDER_PATH);
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>(
@@ -143,6 +258,84 @@ struct ProfilerCtx {
             sigma_ignore_unused(size);
         });
 
+        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
+                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
+            // TODO: :(
+            Profiler::Events::CUDAKernelLaunch kernel_launch_data{gpu_id};
+            snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
+
+            m_event_recorder->Record(kernel_launch_data);
+
+            num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
+        });
+
+        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
+                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
+            // TODO: :(
+            Profiler::Events::CUDAKernelExit kernel_exit_data{gpu_id};
+            snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
+
+            m_event_recorder->Record(kernel_exit_data);
+        });
+
+        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
+                [this](int gpu_id, uint64_t addr, [[maybe_unused]] std::string_view sass_str, auto&&...) {
+            // ================================================
+            // Umem
+            for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
+                if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
+                    const auto umem_allocation_entry = m_umem_id_to_type.find(umem_id);
+                    if (umem_allocation_entry == m_umem_id_to_type.end()) {
+                        assert(false && "Empty m_umem_id_to_type");
+                        break;
+                    }
+
+                    const auto [alloc_type, queue_type] = umem_allocation_entry->second;
+
+                    if (alloc_type == UmemAllocationType::Doorbell) {
+                        std::cout << "Doorbell" << std::endl;
+                        const Profiler::Events::DoorbellRing event{
+                                .gpu_id = static_cast<int16_t>(gpu_id),
+                                .nic_id = 0,
+                                .addr = addr,
+                                .wqe_index = 0,
+                                .qp_num = 0,
+                        };
+                        m_event_recorder->Record(event);
+                    }
+
+                    num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+                    return;
+                }
+            }
+            // ================================================
+
+            // ================================================
+            // Uar
+            {
+                const auto uar_allocation_entry = m_mlx5_uar_allocations.find(addr);
+                if (uar_allocation_entry == m_mlx5_uar_allocations.end()) {
+                    return;
+                }
+
+                const auto page_id = uar_allocation_entry->second;
+
+                // TODO: not checking existence
+                const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
+
+                if (alloc_type == UarAllocationType::BlueField) {
+                    // TODO
+                    // const Profiler::Events::DoorbellRing event{.addr = addr};
+                    // m_event_recorder->Record(event);
+                }
+                num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+            }
+            // ================================================
+        });
+    }
+
+    void load_mlx5dv(const std::filesystem::path& shim_dir) {
+        m_mlx5dv_profiler = get_instance<mlx5dv::Profiler>(shim_dir / SIGMA_MLX5DV_PROVIDER_PATH);
 
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>(
                 [](auto&&, mlx5dv_obj* obj, uint64_t obj_type, auto&&...) {
@@ -271,7 +464,7 @@ struct ProfilerCtx {
                             .gpu_id = 0,
                             .nic_id = 0,
                             // TODO
-                            .mem_id = 0,
+                            .mem_id = out_umem->umem_id,
                             .addr = umem_addr,
                             .size = size,
                     },
@@ -282,7 +475,15 @@ struct ProfilerCtx {
             m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
         });
 
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem* umem, auto&&...) {
+        // We can't do register_pre because the pointer will be gone
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem* umem, auto ts_start) {
+            m_event_recorder->Record<Profiler::Events::Mlx5MemoryDereg>(
+                    {
+                            .nic_id = 0,
+                            .mem_id = umem->umem_id,
+                    },
+                    ts_start);
+
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
             for (auto it = m_mlx5_umem_allocations.begin(); it != m_mlx5_umem_allocations.end(); ++it) {
@@ -295,113 +496,7 @@ struct ProfilerCtx {
             std::cerr << "[Profiler] mlx5dv_devx_umem_dereg called with nonexistent umem_id (" << umem->umem_id << ")"
                       << std::endl;
         });
-
-
-        m_ibv_profiler->register_post<ibv::open_device_tag>([](auto&&, ibv_device*, auto&&...) {
-            std::cout << "[Profiler] ibv_open_device received" << std::endl;
-        });
-
-        /* IBV stuff unused for now
-        m_ibv_profiler->register_post<ibv::reg_mr_tag>(
-                [this](ibv_mr *out_mr, ibv_pd *pd, void *addr, size_t length, int access) {
-                    auto alloc_addr = reinterpret_cast<uint64_t>(addr);
-                    std::cout << "[Profiler] ibv_reg_mr received at " << std::hex << alloc_addr << std::endl;
-                    // m_ibv_allocations.emplace_back(alloc_addr, length);
-                });
-
-        m_ibv_profiler->register_post<ibv::reg_mr_iova2_tag>(
-                [this](ibv_mr *out_mr, ibv_pd *pd, void *addr, size_t length, auto &&...) {
-                    auto alloc_addr = reinterpret_cast<uint64_t>(addr);
-                    std::cout << "[Profiler] ibv_reg_mr_iova1232 received at " << std::hex << alloc_addr << std::endl;
-                    // m_ibv_allocations.emplace_back(alloc_addr, length);
-                });
-        */
-
-        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
-                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
-            // TODO: :(
-            Profiler::Events::CUDAKernelLaunch kernel_launch_data{gpu_id};
-            snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
-
-            m_event_recorder->Record(kernel_launch_data);
-
-            num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
-        });
-
-        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
-                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
-            // TODO: :(
-            Profiler::Events::CUDAKernelExit kernel_exit_data{gpu_id};
-            snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
-
-            m_event_recorder->Record(kernel_exit_data);
-        });
-
-        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
-                [this](int gpu_id, uint64_t addr, [[maybe_unused]] std::string_view sass_str, auto&&...) {
-            // ================================================
-            // Umem
-            for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
-                if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
-                    const auto umem_allocation_entry = m_umem_id_to_type.find(umem_id);
-                    if (umem_allocation_entry == m_umem_id_to_type.end()) {
-                        assert(false && "Empty m_umem_id_to_type");
-                        break;
-                    }
-
-                    const auto [alloc_type, queue_type] = umem_allocation_entry->second;
-
-                    if (alloc_type == UmemAllocationType::Doorbell) {
-                        std::cout << "Doorbell" << std::endl;
-                        const Profiler::Events::DoorbellRing event{
-                                .gpu_id = static_cast<int16_t>(gpu_id),
-                                .nic_id = 0,
-                                .addr = addr,
-                                .wqe_index = 0,
-                                .qp_num = 0,
-                        };
-                        m_event_recorder->Record(event);
-                    }
-
-                    num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-                    return;
-                }
-            }
-            // ================================================
-
-            // ================================================
-            // Uar
-            {
-                const auto uar_allocation_entry = m_mlx5_uar_allocations.find(addr);
-                if (uar_allocation_entry == m_mlx5_uar_allocations.end()) {
-                    return;
-                }
-
-                const auto page_id = uar_allocation_entry->second;
-
-                // TODO: not checking existence
-                const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
-
-                if (alloc_type == UarAllocationType::BlueField) {
-                    // const Profiler::Events::DoorbellRing event{.addr = addr};
-                    // m_event_recorder->Record(event);
-                }
-                num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-            }
-            // ================================================
-        });
     }
-
-    static ProfilerCtx& instance() {
-        static ProfilerCtx instance;
-        return instance;
-    }
-
-    ibv::Profiler* m_ibv_profiler;
-    cuda_trace::NvbitProfiler* m_cuda_profiler;
-    mlx5dv::Profiler* m_mlx5dv_profiler;
-
-    Events::EventRecorder<>* m_event_recorder;
 };
 
 static void __attribute__((constructor)) init() {

@@ -1,12 +1,1 @@
-#add_executable(Launcher Launcher.cpp)
-
-Sigma_add_library(Launcher STATIC Launcher.cpp Launcher.hpp)
-#target_link_libraries(Launcher PRIVATE ProfilerTrace ibverbs)
-target_link_libraries(Launcher PRIVATE CUDA::cudart)
-
-target_include_directories(Launcher INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-# >:(
-#target_compile_features(Launcher PUBLIC cxx_std_23)
+include(Launcher.cmake)

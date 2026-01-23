@@ -22,9 +22,13 @@
 namespace Events {
     struct alignas(8) EventFileHeader {
         EventTypeId event_id;
+        EventCategory event_category{EventCategory::Unknown};
         char hostname[HOST_NAME_MAX];
         std::uint64_t process_id;
         std::uint64_t thread_id;
+
+        // Always at the end
+        uint64_t _check{MAGIC_VALUE};
     };
 } // namespace Events
 
@@ -177,16 +181,20 @@ namespace Events {
         // Third, why is it part of a
         template<HasEventTrait EventT>
         [[nodiscard]] EventFileHeader get_event_file_header() const noexcept {
-            // TODO: this can be thread_local
-            EventFileHeader header{
-                    .event_id = EventTrait<EventT>::id,
-                    .hostname = {},
-                    .process_id = get_process_id(),
-                    .thread_id = get_thread_id(),
-            };
+            thread_local EventFileHeader header = std::invoke([]() {
+                auto header = EventFileHeader{
+                        .event_id = EventTrait<EventT>::id,
+                        .event_category = EventTrait<EventT>::category,
+                        .hostname = {},
+                        .process_id = get_process_id(),
+                        .thread_id = get_thread_id(),
+                };
 
-            const auto& hostname = get_hostname();
-            snprintf(header.hostname, sizeof header.hostname, "%s", hostname.c_str());
+                const auto& hostname = get_hostname();
+                snprintf(header.hostname, sizeof header.hostname, "%s", hostname.c_str());
+
+                return header;
+            });
 
             return header;
         }

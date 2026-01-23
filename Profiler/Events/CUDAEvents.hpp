@@ -2,6 +2,7 @@
 
 #include "Common.hpp"
 #include "EventTrait.hpp"
+#include "Events.hpp"
 
 namespace Profiler::Events {
     // TODO: check if no pointers (const char *)
@@ -17,5 +18,7 @@ namespace Profiler::Events {
     };
 } // namespace Profiler::Events
 
-DEFINE_EVENT_TRAIT(Profiler::Events::CUDAKernelLaunch, Events::EventTypeId::CudaKernelLaunch, "kernel_launch");
-DEFINE_EVENT_TRAIT(Profiler::Events::CUDAKernelExit, Events::EventTypeId::CudaKernelExit, "kernel_exit");
+// clang-format off
+DEFINE_EVENT_TRAIT(Profiler::Events::CUDAKernelLaunch, Events::EventTypeId::CudaKernelLaunch, Events::EventCategory::GPU, "kernel_launch");
+DEFINE_EVENT_TRAIT(Profiler::Events::CUDAKernelExit, Events::EventTypeId::CudaKernelExit, Events::EventCategory::GPU, "kernel_exit");
+// clang-format on

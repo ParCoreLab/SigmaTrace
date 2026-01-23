@@ -97,8 +97,11 @@ namespace ibv {
     // ================================================================
     struct Profiler : IbverbsEventSource<Profiler> {
         Profiler();
-        virtual ~Profiler();
     };
+
+    // Prevent other translation units from instantiating their own singleton.
+    // The explicit instantiation is in IbverbsPreload.cpp.
+    extern template class IbverbsEventSource<Profiler>;
 
     // ================================================================
     // LiteEventSource - Pre-built lightweight version

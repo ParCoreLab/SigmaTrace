@@ -9,7 +9,9 @@
 #include "EventRecorderConfig.hpp"
 
 #include "../Events/CUDAEvents.hpp"
+#include "../Events/IbvEvents.hpp"
 #include "../Events/Mlx5DvEvents.hpp"
+#include "Helpers/Utilities.hpp"
 
 // Convenience
 using Events::EventFileHeader;
@@ -19,8 +21,10 @@ using Events::EventTrait;
 namespace ProfilerEvents = Profiler::Events;
 using Profiler::Events::GpuId_T;
 
-using EnabledEvents = Events::TypeList<ProfilerEvents::Mlx5MemoryRegistration, ProfilerEvents::DoorbellRing,
-                                       ProfilerEvents::CUDAKernelLaunch, ProfilerEvents::CUDAKernelExit>;
+using EnabledEvents = Events::TypeList<ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,
+                                       ProfilerEvents::Mlx5MemoryRegistration, ProfilerEvents::Mlx5MemoryDereg,
+                                       ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
+                                       ProfilerEvents::CUDAKernelExit>;
 
 // ============================================================================
 // PerfettoTraceBuilder - Helper for constructing Perfetto traces
@@ -33,26 +37,36 @@ public:
     // Track hierarchy: Root -> Node -> [CPU, GPU, NIC] -> Operation tracks
     enum class TrackType {
         Root = 0,
+        CPU = static_cast<int>(Events::EventCategory::CPU),
+        GPU = static_cast<int>(Events::EventCategory::GPU),
+        NIC = static_cast<int>(Events::EventCategory::NIC),
         Node,
-        CPU,
-        GPU,
-        NIC,
         Operation
     };
     // TODO: dumb. Make tracks dynamic
-    static constexpr std::array<std::string_view, 6> TrackTypeStr{"Root", "Node", "CPU", "GPU", "NIC", "Operation"};
+    const std::map<TrackType, std::string> TrackTypeStr{{TrackType::Root, "Root"}, {TrackType::CPU, "CPU"},
+                                                        {TrackType::GPU, "GPU"},   {TrackType::NIC, "NIC"},
+                                                        {TrackType::Node, "Node"}, {TrackType::Operation, "Operation"}};
 
     // Sequence flags from Perfetto
     static constexpr uint32_t SEQ_INCREMENTAL_STATE_CLEARED = 1;
     static constexpr uint32_t SEQ_NEEDS_INCREMENTAL_STATE = 2;
 
     // Generate deterministic UUID from components
-    static uint64_t make_uuid(const TrackType type, const uint64_t node_id = 0, const uint64_t gpu_id = 0,
+    static uint64_t make_uuid(const TrackType type, const uint64_t node_id = 0, const uint64_t device_id = 0,
                               const uint64_t op_id = 0) {
-        // Pack: [type:8][node:16][gpu:16][op:24]
+        // Pack: [type:8][node:16][device:16][op:24]
         return (static_cast<uint64_t>(type) << 56) | (static_cast<uint64_t>(node_id) << 40) |
-               (static_cast<uint64_t>(gpu_id) << 24) | static_cast<uint64_t>(op_id);
+               (static_cast<uint64_t>(device_id) << 24) | static_cast<uint64_t>(op_id);
     }
+
+    static uint64_t make_uuid(const Events::EventTypeId event_id, const uint64_t node_id, const uint64_t device_id,
+                              const uint64_t op_id) {
+        // Pack: [event:8][node:16][device:16][op:24]
+        return (static_cast<uint64_t>(event_id) << 56) | (static_cast<uint64_t>(node_id) << 40) |
+               (static_cast<uint64_t>(device_id) << 24) | (static_cast<uint64_t>(op_id));
+    }
+
 
     // Register the root track (call once at start)
     void register_root_track(const std::string& name) {
@@ -93,7 +107,7 @@ public:
 
     // Register a CPU/GPU/NIC track
     uint64_t register_device_track(const TrackType track_type, const uint64_t node_id, const uint64_t device_id,
-                                   const std::string& name = "") {
+                                   std::string_view name = "") {
         // TODO: fix the static_cast
         const uint64_t uuid = make_uuid(track_type, node_id, device_id);
         if (m_registered_tracks.contains(uuid)) {
@@ -112,7 +126,14 @@ public:
         std::stringstream ss;
 
         //  GPU 0: GPU-1234
-        ss << TrackTypeStr[static_cast<size_t>(track_type)] << device_id;
+        const auto track_str = TrackTypeStr.find(track_type);
+        if (track_str == TrackTypeStr.end()) {
+            std::cerr << "WARNING: Unknown Track Type: " << static_cast<size_t>(track_type) << std::endl;
+            ss << "Unknown " << device_id;
+        } else {
+            ss << track_str->second << device_id;
+        }
+
         if (!name.empty()) {
             ss << ": " << name;
         }
@@ -148,8 +169,7 @@ public:
     // Slice Events (for RDMA operations, kernel launches, etc.)
     // ========================================================================
     // TODO: std::string_view
-    void begin_slice(uint64_t track_uuid, uint64_t timestamp_ns, const std::string& name,
-                     const std::string& category = "rdma") {
+    auto* begin_slice(uint64_t track_uuid, uint64_t timestamp_ns, const std::string& name, std::string_view category) {
         auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
@@ -158,10 +178,12 @@ public:
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_BEGIN);
         event->set_name(name);
-        event->add_categories(category);
+        event->add_categories(category.data());
+
+        return event;
     }
 
-    void end_slice(uint64_t track_uuid, uint64_t timestamp_ns) {
+    auto* end_slice(uint64_t track_uuid, uint64_t timestamp_ns) {
         auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
@@ -169,17 +191,25 @@ public:
         auto* event = packet->mutable_track_event();
         event->set_track_uuid(track_uuid);
         event->set_type(perfetto::protos::TrackEvent::TYPE_SLICE_END);
+
+        return event;
     }
 
-    void add_slice(const uint64_t track_uuid, const uint64_t ts_start, const uint64_t ts_end, const std::string& name,
-                   const std::string& category = "rdma") {
+    auto* add_slice(const uint64_t track_uuid, const uint64_t ts_start, uint64_t ts_end, const std::string& name,
+                    std::string_view category) {
+        // Safeguard
+        if (ts_end == 0 || ts_start > ts_end) {
+            std::cerr << "Received malformed timestamps for add_slice()" << std::endl;
+            ts_end = ts_start;
+        }
+
         begin_slice(track_uuid, ts_start, name, category);
-        end_slice(track_uuid, ts_end);
+        return end_slice(track_uuid, ts_end);
     }
 
     // Convenience: emit instant event (for doorbell rings, completions, etc.)
-    void instant_event(uint64_t track_uuid, uint64_t timestamp_ns, const std::string& name,
-                       const std::string& category = "rdma") {
+    auto* add_instant_event(uint64_t track_uuid, uint64_t timestamp_ns, const std::string& name,
+                            const std::string& category = "rdma") {
         auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         packet->set_timestamp(timestamp_ns);
@@ -189,6 +219,8 @@ public:
         event->set_type(perfetto::protos::TrackEvent::TYPE_INSTANT);
         event->set_name(name);
         event->add_categories(category);
+
+        return event;
     }
 
     // ========================================================================
@@ -313,6 +345,15 @@ private:
     bool m_emitted_first_packet{false};
 };
 
+struct LocalStorage {
+    std::unordered_map<uint64_t, GpuId_T> ibv_context_to_nic_id;
+
+    // mem id -> flow id
+    std::unordered_map<uint64_t, uint64_t> pending_mem_flows;
+
+    std::unordered_map<uint64_t, uint64_t> pending_ibv_context_flows;
+};
+
 // ============================================================================
 // ProfilerEventReader - Converts binary events to Perfetto traces
 // ============================================================================
@@ -343,27 +384,159 @@ public:
         return m_output_path;
     }
 
+    void add_header_annotations(const EventFileHeader& file_header) {
+        m_builder.add_annotation("Hostname", file_header.hostname);
+        m_builder.add_annotation("CPU ID", file_header.cpu_id);
+        m_builder.add_annotation("Process ID", file_header.process_id);
+        m_builder.add_annotation("Thread ID", file_header.process_id);
+    }
+
+    auto& get_local_storage(GpuId_T node_id, GpuId_T process_id, GpuId_T thread_id) {
+        return m_local_storage[{node_id, process_id, thread_id}];
+    }
+
+    auto& get_local_storage(const EventFileHeader& file_header) {
+        const auto node_id = m_node_ids[file_header.hostname];
+        const auto process_id = file_header.process_id;
+        const auto thread_id = file_header.thread_id;
+
+        return m_local_storage[{node_id, process_id, thread_id}];
+    }
+
+    // Generically handled event
+    template<typename EventT>
+    void visit(EventTrait<EventT> T, const EventFileHeader& file_header, EventHeader&& header, EventT&& event) {
+        using Meta = decltype(T);
+
+        const auto node_id = m_node_ids[file_header.hostname];
+
+        // Try to get the correct ID
+        const auto [category, id] =
+                std::invoke([&file_header, &event]() -> std::tuple<std::string_view, std::uint64_t> {
+            sigma_ignore_unused(event);
+            if constexpr (requires { event.gpu_id; }) {
+                return {"gpu", static_cast<uint64_t>(event.gpu_id)};
+            } else if constexpr (requires { event.nic_id; }) {
+                return {"nic", static_cast<uint64_t>(event.nic_id)};
+            }
+
+            return {"cpu", file_header.cpu_id};
+        });
+
+        const uint64_t track_uuid =
+                m_builder.register_device_track(static_cast<TrackType>(file_header.event_category),
+                                                static_cast<uint64_t>(node_id), static_cast<uint64_t>(id), Meta::name);
+
+        if (header.timestamp_end == 0) {
+            m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name);
+        } else {
+            m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, category);
+        }
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvOpenDevice> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvOpenDevice&& event) {
+        using Meta = decltype(T);
+
+        const std::string nic_name{event.name};
+
+        const auto node_id = m_node_ids[file_header.hostname];
+        const auto nic_id = m_nic_ids[nic_name];
+
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
+                                                                    static_cast<uint64_t>(nic_id), nic_name);
+
+        const auto flow_id = m_builder.new_flow_id();
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "control");
+        add_header_annotations(file_header);
+        slice->add_flow_ids(flow_id);
+
+        m_builder.add_annotation("name", nic_name);
+        m_builder.add_annotation("name", event.dev_name);
+        m_builder.add_annotation("dev_path", event.dev_path);
+        m_builder.add_annotation("ibdev_path", event.ibdev_path);
+
+        // Should be enums
+        m_builder.add_annotation("node_type", static_cast<uint64_t>(event.node_type));
+        m_builder.add_annotation("transport_type", static_cast<uint64_t>(event.transport_type));
+
+        m_builder.add_annotation("Context addr", event.context_addr);
+
+        auto& local_storage = get_local_storage(file_header);
+        local_storage.ibv_context_to_nic_id[event.context_addr] = nic_id;
+        local_storage.pending_ibv_context_flows[event.context_addr] = flow_id;
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvCloseDevice> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvCloseDevice&& event) {
+        using Meta = decltype(T);
+
+        const auto node_id = m_node_ids[file_header.hostname];
+
+        auto& local_storage = get_local_storage(file_header);
+        const auto nic_id = local_storage.ibv_context_to_nic_id[event.context_addr];
+
+        const auto track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::NIC, static_cast<uint64_t>(node_id),
+                                                                static_cast<uint64_t>(nic_id));
+
+        const auto flow_id = local_storage.pending_ibv_context_flows[event.context_addr];
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "control");
+        add_header_annotations(file_header);
+
+        slice->add_terminating_flow_ids(flow_id);
+    }
+
     void visit(EventTrait<ProfilerEvents::Mlx5MemoryRegistration> T, const EventFileHeader& file_header,
                EventHeader&& header, ProfilerEvents::Mlx5MemoryRegistration&& event) {
         using Meta = decltype(T);
 
         const auto node_id = m_node_ids[file_header.hostname];
-        // TODO: This is wrong. There's just no GPU sometimes
         const auto nic_id = event.nic_id;
+
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
+                                                                    static_cast<uint64_t>(nic_id));
+
+        const auto flow_id = m_builder.new_flow_id();
+        auto& local_storage = get_local_storage(file_header);
+        local_storage.pending_mem_flows[event.mem_id] = flow_id;
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "memory");
+
+        slice->add_flow_ids(flow_id);
+        add_header_annotations(file_header);
+
+        m_builder.add_annotation("Memory ID", static_cast<uint64_t>(event.mem_id));
+        m_builder.add_annotation("Flow ID", flow_id);
+        m_builder.add_annotation("Addr", event.addr);
+        m_builder.add_annotation("Size", event.size);
+    }
+
+    void visit(EventTrait<ProfilerEvents::Mlx5MemoryDereg> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::Mlx5MemoryDereg&& event) {
+        using Meta = decltype(T);
+
+        const auto node_id = m_node_ids[file_header.hostname];
+        const auto nic_id = event.nic_id;
+
 
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
                                                                     static_cast<uint64_t>(nic_id));
 
-        m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, "mlx5dv");
-        m_builder.add_annotation("addr", event.addr);
-        m_builder.add_annotation("size", event.size);
+        auto& local_storage = get_local_storage(file_header);
+        const auto flow_id = local_storage.pending_mem_flows[event.mem_id];
+        local_storage.pending_mem_flows.erase(event.mem_id);
 
-        m_builder.add_annotation("Process ID", file_header.process_id);
-        m_builder.add_annotation("Thread ID", file_header.thread_id);
+        auto* slice = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name, "memory");
+        add_header_annotations(file_header);
+        m_builder.add_annotation("Memory ID", static_cast<uint64_t>(event.mem_id));
 
-        // std::cout << "[" << header.timestamp_start << "] Memory Registration: addr=0x";
-        // std::cout << std::hex << event.addr << std::dec << std::endl;
+        slice->add_terminating_flow_ids(flow_id);
     }
 
     void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader& file_header, EventHeader&& header,
@@ -379,11 +552,10 @@ public:
                                                                     static_cast<uint64_t>(gpu_id));
 
         // Emit instant event for doorbell ring
-        m_builder.instant_event(track_uuid, header.timestamp_start, Meta::name);
-        m_builder.add_annotation("addr", event.addr);
+        m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name);
+        add_header_annotations(file_header);
 
-        // std::cout << "[" << header.timestamp_start << "] DoorbellRing: addr=0x";
-        // std::cout << std::hex << event.addr << std::dec << std::endl;
+        m_builder.add_annotation("Addr", event.addr);
     }
 
     void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader& file_header, EventHeader&& header,
@@ -487,6 +659,9 @@ private:
 
     // TODO: This gives First-come, first-serve IDs
     std::map<std::string, GpuId_T> m_node_ids;
+    std::map<std::string, GpuId_T> m_nic_ids;
+
+    std::map<std::tuple<GpuId_T, GpuId_T, GpuId_T>, LocalStorage> m_local_storage;
 
     // Track pending operations for flow/slice matching
     // std::unordered_map<uint64_t, uint64_t> m_pending_flows;  // request_id -> flow_id

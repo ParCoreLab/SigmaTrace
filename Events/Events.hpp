@@ -16,16 +16,19 @@ namespace Events {
         Unknown = 0,
 
         // IBVerbs events (100-199)
-        IbvPostSend = 100,
-        IbvPostRecv = 101,
-        IbvPollCq = 102,
-        IbvPostSrqRecv = 103,
-        IbvReqNotifyCq = 104,
-        IbvCompletion = 105, // Individual work completion
+        IbvOpenDevice = 100,
+        IbvCloseDevice = 101,
+        IbvPostSend = 102,
+        IbvPostRecv = 103,
+        IbvPollCq = 104,
+        IbvPostSrqRecv = 105,
+        IbvReqNotifyCq = 106,
+        IbvCompletion = 107, // Individual work completion
 
         // mlx5dv specific events
         Mlx5dvDoorbellRing = 200,
         Mlx5MemoryRegistration = 201,
+        Mlx5MemoryDereg = 202,
 
         // CUDA events (200-299) - reserved for future
         CudaKernelLaunch = 300,
@@ -45,7 +48,12 @@ namespace Events {
 
         MAX_EVENT_TYPE = 65535
     };
-
     static_assert(static_cast<uint16_t>(EventTypeId::MAX_EVENT_TYPE) <= std::numeric_limits<EventId_T>::max());
 
+    enum class EventCategory {
+        Unknown = 0,
+        CPU,
+        GPU,
+        NIC,
+    };
 } // namespace Events

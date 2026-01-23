@@ -70,6 +70,11 @@ namespace cuda_trace {
     NvbitProfiler::NvbitProfiler() = default;
 } // namespace cuda_trace
 
+// Accessor for late-loaded libraries to get the singleton instance via dlsym
+extern "C" cuda_trace::NvbitProfiler* sigma_provider_instance() {
+    return &cuda_trace::NvbitProfiler::instance();
+}
+
 enum class RecvThreadState {
     WORKING,
     STOP,

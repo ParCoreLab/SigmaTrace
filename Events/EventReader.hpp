@@ -84,9 +84,21 @@ namespace Events {
                 // File-wide header
                 stream.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
                 if (stream.gcount() != sizeof(file_header)) {
-                    // TODO: log
+                    // TODO: log better
+                    std::cerr << "Failed reading file: " << path << std::endl;
+
+                    stream.close();
                     return;
                 }
+
+                if (file_header._check != MAGIC_VALUE) {
+                    std::cerr << "Magic value check fail in File header: " << path << std::endl;
+                    std::cerr << "File is corrupted or recorded with an older version. Closing stream... " << std::endl;
+
+                    stream.close();
+                    return;
+                }
+
                 event_id = file_header.event_id;
 
                 peek_next();
