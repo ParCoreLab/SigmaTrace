@@ -387,7 +387,9 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t& grid_l
     }
 
     /* instrument */
-    instrument_function_if_needed(ctx, func);
+    if (profiler.memop_enabled()) {
+        instrument_function_if_needed(ctx, func);
+    }
 
     // int nregs = 0;
     // CUDA_SAFECALL(cuFuncGetAttribute(&nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, func));
@@ -441,6 +443,9 @@ static void leave_kernel_launch(CTXstate* ctx_state, CUcontext ctx, CUfunction f
     // TODO: Might be better to do it after cudaDeviceSynchronize
     auto& profiler = cuda_trace::NvbitProfiler::instance();
 
+    // make sure user kernel finishes to avoid deadlock
+    cudaDeviceSynchronize();
+
     int32_t gpu_id{};
     cudaGetDevice(&gpu_id);
     // TODO: better error handling
@@ -449,8 +454,6 @@ static void leave_kernel_launch(CTXstate* ctx_state, CUcontext ctx, CUfunction f
     const char* kernel_name{nvbit_get_func_name(ctx, func)};
     profiler.invoke_custom<cuda_trace::cuda_kernel_exit_tag>(gpu_id, kernel_name);
 
-    // make sure user kernel finishes to avoid deadlock
-    cudaDeviceSynchronize();
     /* push a flush channel kernel */
     flush_channel<<<1, 1>>>(ctx_state->channel_dev);
 

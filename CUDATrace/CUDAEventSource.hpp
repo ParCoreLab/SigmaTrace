@@ -29,6 +29,18 @@ namespace cuda_trace {
     // ================================================================
     struct NvbitProfiler : CUDAEventSource<NvbitProfiler> {
         NvbitProfiler();
+
+        void enable_memop() noexcept {
+            m_trace_memop = true;
+        }
+
+        bool memop_enabled() const noexcept {
+            return m_trace_memop;
+        }
+
+    private:
+        // Memory operation tracing is too expensive
+        bool m_trace_memop{false};
     };
 
 } // namespace cuda_trace

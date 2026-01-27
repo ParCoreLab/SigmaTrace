@@ -305,6 +305,7 @@ struct ProfilerCtx {
 
     void load_nvbit(const std::filesystem::path& shim_dir) noexcept {
         m_cuda_profiler = get_instance<cuda_trace::NvbitProfiler>(shim_dir / SIGMA_NVBIT_PROVIDER_PATH);
+        // m_cuda_profiler->enable_memop();
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>(
