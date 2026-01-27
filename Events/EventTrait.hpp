@@ -16,12 +16,17 @@ namespace Events {
                       "Use DEFINE_EVENT_TRAIT(EventStruct, EventTypeId, EventCategory, \"name\") to define traits.");
     };
 
+    // Ensuring duplicate IDs aren't registered
+    template<EventTypeId id>
+    struct EventIdTracker {};
 } // namespace Events
 
 // Macro to simplify trait definition
 // Must be used at global scope or in Events namespace
 // Usage: DEFINE_EVENT_TRAIT(namespace::CustomEvent, Events::EventTypeId::CustomEventID, "custom_event")
 #define DEFINE_EVENT_TRAIT(EventStruct, Id, Category, Name)                                                            \
+    template<>                                                                                                         \
+    struct Events::EventIdTracker<Id> {};                                                                              \
     template<>                                                                                                         \
     struct Events::EventTrait<EventStruct> {                                                                           \
         static constexpr Events::EventTypeId id = Id;                                                                  \
