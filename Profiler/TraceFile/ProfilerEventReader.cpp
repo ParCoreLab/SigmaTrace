@@ -282,40 +282,27 @@ public:
     // ========================================================================
 
     // Add debug annotation to the most recent packet's track event
-    void add_annotation(const std::string& key, uint64_t value) {
-        if (m_trace.packet_size() == 0)
+    template<typename T>
+    void add_annotation(const std::string& key, const T& value) {
+        if (m_trace.packet_size() == 0) {
             return;
-        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
-        auto* ann = event->add_debug_annotations();
-        ann->set_name(key);
-        ann->set_uint_value(value);
-    }
+        }
 
-    void add_annotation(const std::string& key, int64_t value) {
-        if (m_trace.packet_size() == 0)
-            return;
         auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
         auto* ann = event->add_debug_annotations();
         ann->set_name(key);
-        ann->set_int_value(value);
-    }
 
-    void add_annotation(const std::string& key, const std::string& value) {
-        if (m_trace.packet_size() == 0)
-            return;
-        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
-        auto* ann = event->add_debug_annotations();
-        ann->set_name(key);
-        ann->set_string_value(value);
-    }
-
-    void add_annotation(const std::string& key, double value) {
-        if (m_trace.packet_size() == 0)
-            return;
-        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
-        auto* ann = event->add_debug_annotations();
-        ann->set_name(key);
-        ann->set_double_value(value);
+        if constexpr (std::is_integral_v<T>) {
+            if constexpr (std::is_signed_v<T>) {
+                ann->set_int_value(value);
+            } else {
+                ann->set_uint_value(value);
+            }
+        } else if constexpr (std::is_floating_point_v<T>) {
+            ann->set_double_value(value);
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            ann->set_string_value(value);
+        }
     }
 
     // ========================================================================
@@ -459,8 +446,8 @@ public:
         m_builder.add_annotation("ibdev_path", event.ibdev_path);
 
         // Should be enums
-        m_builder.add_annotation("node_type", static_cast<uint64_t>(event.node_type));
-        m_builder.add_annotation("transport_type", static_cast<uint64_t>(event.transport_type));
+        m_builder.add_annotation("node_type", event.node_type);
+        m_builder.add_annotation("transport_type", event.transport_type);
 
         m_builder.add_annotation("Context addr", event.context_addr);
 
@@ -510,7 +497,7 @@ public:
         slice->add_flow_ids(flow_id);
         add_header_annotations(file_header);
 
-        m_builder.add_annotation("Memory ID", static_cast<uint64_t>(event.mem_id));
+        m_builder.add_annotation("Memory ID", event.mem_id);
         m_builder.add_annotation("Flow ID", flow_id);
         m_builder.add_annotation("Addr", event.addr);
         m_builder.add_annotation("Size", event.size);
@@ -534,7 +521,7 @@ public:
 
         auto* slice = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name, "memory");
         add_header_annotations(file_header);
-        m_builder.add_annotation("Memory ID", static_cast<uint64_t>(event.mem_id));
+        m_builder.add_annotation("Memory ID", event.mem_id);
 
         slice->add_terminating_flow_ids(flow_id);
     }
@@ -556,6 +543,9 @@ public:
         add_header_annotations(file_header);
 
         m_builder.add_annotation("Addr", event.addr);
+        m_builder.add_annotation("wqe_index", event.wqe_index);
+        m_builder.add_annotation("qp_num", event.qp_num);
+        m_builder.add_annotation("Is_CPU_Hijack", event.is_cpu_hijack ? "Yes" : "No");
     }
 
     void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader& file_header, EventHeader&& header,
