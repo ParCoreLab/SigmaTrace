@@ -27,8 +27,10 @@ namespace Profiler::Events {
         GpuId_T gpu_id;
         int16_t nic_id;
         uint64_t addr;
+        uint64_t fake_addr{0};
         uint64_t wqe_index;
         uint32_t qp_num;
+        bool is_cpu_hijack{false};
     };
 } // namespace Profiler::Events
 

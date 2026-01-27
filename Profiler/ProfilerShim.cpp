@@ -1,9 +1,12 @@
 #include <atomic>
+#include <limits>
 #include <map>
 #include <tuple>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include "Helpers/CudaHelpers.hpp"
 
@@ -32,12 +35,72 @@
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
 
+#include "Modules/CudaExportTableOverwrite/ExportTableOverwrite.hpp"
+
 #include "ProfilerArgs.hpp"
+
+// Intel specific
+#include <immintrin.h>
+// Both
+#include <dlfcn.h>
+#include <x86intrin.h>
 
 // Build-system defined args to provider .so files
 static constexpr std::string_view SIGMA_IBVERBS_PROVIDER_PATH{SIGMA_PROVIDER_ibverbs_trace};
 static constexpr std::string_view SIGMA_NVBIT_PROVIDER_PATH{SIGMA_PROVIDER_nvbit_memory_tracker};
 static constexpr std::string_view SIGMA_MLX5DV_PROVIDER_PATH{SIGMA_PROVIDER_mlx5dv_trace};
+
+namespace Profiler::hack {
+    // Addresses upstream asked to register. Filled in below functions
+    // Accesses to this *shouldn't* need synchronization
+    std::unordered_set<void*> CuMemHostRegisterAddrs{};
+
+    // Fake addresses we ignore. Filled in mlx5dv hooks
+    std::unordered_set<void*> CuMemHostRegisterIgnoredAddrs{};
+
+    // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1gf0a9fe11544326dabd743b7aa6b54223
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
+    CUresult Fake_cuMemHostRegister_v2(void* p, size_t bytesize, unsigned int Flags) {
+        static auto* real_cuMemHostRegister = reinterpret_cast<decltype(cuMemHostRegister_v2)*>(
+                CudaExportTable::get_real_cu_func("cuMemHostRegister_v2"));
+
+        if (!real_cuMemHostRegister) {
+            std::cerr << "No real_cuMemHostRegister" << std::endl;
+            std::abort();
+        }
+
+        // massive hack
+        if (CuMemHostRegisterIgnoredAddrs.contains(p)) {
+            CuMemHostRegisterAddrs.emplace(p);
+            return CUDA_SUCCESS;
+        }
+
+        return real_cuMemHostRegister(p, bytesize, Flags);
+    }
+    static_assert(std::is_same_v<decltype(cuMemHostRegister), decltype(Fake_cuMemHostRegister_v2)>);
+    static_assert(std::is_same_v<decltype(cuMemHostRegister_v2), decltype(Fake_cuMemHostRegister_v2)>);
+
+    // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g63f450c8125359be87b7623b1c0b2a14
+    CUresult Fake_cuMemHostUnregister(void* p) {
+        static auto* real_cuMemHostUnregister = reinterpret_cast<decltype(cuMemHostUnregister)*>(
+                CudaExportTable::get_real_cu_func("cuMemHostUnregister"));
+
+        if (!real_cuMemHostUnregister) {
+            std::cerr << "No real_cuMemHostUnregister" << std::endl;
+            std::abort();
+        }
+
+        // massive hack
+        if (CuMemHostRegisterIgnoredAddrs.contains(p)) {
+            return CUDA_SUCCESS;
+        }
+
+        return cuMemHostUnregister(p);
+    }
+    static_assert(std::is_same_v<decltype(cuMemHostUnregister), decltype(Fake_cuMemHostUnregister)>);
+#pragma GCC diagnostic pop
+} // namespace Profiler::hack
 
 // Convenience
 using Profiler::Events::GpuId_T;
@@ -77,19 +140,6 @@ template<typename EnumT>
     }
 }
 
-// TODO: for debugging
-[[maybe_unused]] static int find_gpu_index(const uint64_t addr) {
-    cudaPointerAttributes attrs{};
-    CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<const void*>(addr)));
-
-    if (attrs.type == cudaMemoryTypeUnregistered) {
-        return -1;
-    }
-
-    assert(attrs.device > 0 && "Returning invalid device ID from get_gpu_index");
-    return attrs.device;
-}
-
 struct ProfilerCtx {
     // TODO: rename
     std::mutex m_ibv_allocations_mutex;
@@ -118,21 +168,35 @@ struct ProfilerCtx {
 
     // <addr, length, umem ID>
     std::vector<std::tuple<AddrType, size_t, UmemIdType>> m_mlx5_umem_allocations;
+    // TODO: boost multimap
     std::map<AddrType, UarPageIdType> m_mlx5_uar_allocations;
+    std::map<UarPageIdType, AddrType> m_mlx5_uar_page_id_to_addr;
+
+    std::map<UarPageIdType, std::shared_ptr<bool>> m_mlx5_fake_uar_runner_signals;
     // ================================================
 
     // ================================================
     // Stats
     std::atomic<int> num_nic_accesses{0};
+    std::atomic<int> num_nic_doorbell_accesses{0};
+    std::atomic<int> num_fake_nic_accesses{0};
     std::atomic<int> num_kernel_launches{0};
     // ================================================
 
     ~ProfilerCtx() {
-        std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl;
-        std::cout << "[Profiler] num_kernel_launches: " << std::dec << num_kernel_launches << std::endl;
+        // std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl;
+        std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_doorbell_accesses << std::endl;
+        std::cout << "[Profiler] num_fake_nic_accesses: " << std::dec << num_fake_nic_accesses << std::endl;
+        // std::cout << "[Profiler] num_kernel_launches: " << std::dec << num_kernel_launches << std::endl;
     }
 
     ProfilerCtx() {
+        Profiler::CudaExportTable::register_overwrite(
+                "cuMemHostRegister_v2", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostRegister_v2));
+
+        Profiler::CudaExportTable::register_overwrite(
+                "cuMemHostUnregister", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostUnregister));
+
         Events::RuntimeConfig eventConfig{};
         m_event_recorder = &Events::EventRecorder<>::instance(std::move(eventConfig));
 
@@ -293,7 +357,6 @@ struct ProfilerCtx {
                     const auto [alloc_type, queue_type] = umem_allocation_entry->second;
 
                     if (alloc_type == UmemAllocationType::Doorbell) {
-                        std::cout << "Doorbell" << std::endl;
                         const Profiler::Events::DoorbellRing event{
                                 .gpu_id = static_cast<int16_t>(gpu_id),
                                 .nic_id = 0,
@@ -302,6 +365,9 @@ struct ProfilerCtx {
                                 .qp_num = 0,
                         };
                         m_event_recorder->Record(event);
+                        num_nic_doorbell_accesses.fetch_add(1, std::memory_order_relaxed);
+                    } else if (alloc_type == UmemAllocationType::BlueField) {
+                        std::cout << "TODO: BlueField" << std::endl;
                     }
 
                     num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
@@ -324,9 +390,11 @@ struct ProfilerCtx {
                 const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
 
                 if (alloc_type == UarAllocationType::BlueField) {
+                    std::cout << "TODO: BlueField UAR" << std::endl;
                     // TODO
                     // const Profiler::Events::DoorbellRing event{.addr = addr};
                     // m_event_recorder->Record(event);
+                    num_nic_doorbell_accesses.fetch_add(1, std::memory_order_relaxed);
                 }
                 num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
             }
@@ -419,13 +487,148 @@ struct ProfilerCtx {
             }
         });
 
+        // Fake UAR hijack runs first
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
                 [this](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto&&...) {
-            auto uar_reg_addr = reinterpret_cast<uint64_t>(out_uar->reg_addr);
+            sigma_ignore_unused(flags);
+
+            std::scoped_lock lock(m_ibv_allocations_mutex);
+
+            // TODO: why are there duplicate allocations?
+            // returning here breaks things...
+            // if (m_mlx5_uar_page_id_to_addr.contains(out_uar->page_id)) {
+            //     return;
+            // }
+
+            constexpr auto page_size{4096};
+            void* uar_fake_page_addr;
+            CUDA_CHECK(cudaHostAlloc(&uar_fake_page_addr, page_size, cudaHostAllocMapped));
+            memset(uar_fake_page_addr, 0, page_size);
+
+            auto base_addr_real = out_uar->base_addr;
+            auto reg_addr_real = out_uar->reg_addr;
+
+            const ptrdiff_t doorbell_offset = static_cast<char*>(reg_addr_real) - static_cast<char*>(base_addr_real);
+            if (doorbell_offset < 64) {
+                std::cerr << "doorbell_offset (" << doorbell_offset << ") should not be smaller than 64 bytes"
+                          << std::endl;
+                std::abort();
+            }
+
+            // Not fully sure if this is really necessarily the doorbell addr
+            void* fake_reg_addr = static_cast<char*>(uar_fake_page_addr) + doorbell_offset;
+
+            // We really only need reg_addr but not setting both causes issues later. See doorbell_offset
+            out_uar->base_addr = uar_fake_page_addr;
+            out_uar->reg_addr = fake_reg_addr;
+
+            // This shouldn't need synchronization but it'll grow infinitely
+            Profiler::hack::CuMemHostRegisterIgnoredAddrs.insert(out_uar->reg_addr);
+
+            // const uint64_t initial_value = *static_cast<uint64_t*>(uar_fake_page);
+            const uint64_t initial_value = __atomic_load_n(static_cast<uint64_t*>(fake_reg_addr), __ATOMIC_ACQUIRE);
+
+            const auto [inserted_signal, is_inserted] =
+                    m_mlx5_fake_uar_runner_signals.emplace(out_uar->page_id, std::make_shared<bool>(true));
+
+            // TODO: this just happens for some reason
+            if (!is_inserted) {
+                std::cerr << "ERROR: Could not insert to m_mlx5_fake_uar_runner_signals" << std::endl;
+                // std::abort();
+            }
+
+            std::thread([this,
+                         is_uar_alive = inserted_signal->second, // Signal thread to stop on uar free. Copied shared_ptr
+                         reg_addr_real,                          // ok
+                         uar_fake_page_addr,                     // Entire page page addr
+                         fake_reg_addr,                          // Just the doorbell addr
+                         initial_value                           // ok
+            ]() __attribute__((target("mwaitx"))) {
+                uint64_t current_value = initial_value;
+
+                while (*is_uar_alive.get()) {
+                    _mm_monitorx(uar_fake_page_addr, 0, 0);
+
+                    /*
+                     * ECX=0 means no timeout
+                     * Using inline asm since intrinsic always sets timeout
+                     *
+                     * __asm__ __volatile__(
+                     * "mwaitx"
+                     * :
+                     * : "a"(0),    // EAX: hints (0 = default)
+                     *   "c"(0),    // ECX: 0 = no timeout
+                     *   "b"(0)     // EBX: ignored when ECX=0
+                     * :
+                     * );
+                     *
+                     *
+                     * Might be pointless in user-space
+                     * https://stackoverflow.com/questions/71241346/mwaitx-instruction-not-blocking
+                     */
+                    _mm_mwaitx(0, 0, std::numeric_limits<unsigned int>::max());
+
+                    // Atomic load for safety
+                    // This is possibly still not good! GPU-PCIe-NIC ordering is different from CPU
+                    const uint64_t written_val =
+                            __atomic_load_n(static_cast<uint64_t*>(fake_reg_addr), __ATOMIC_ACQUIRE);
+
+                    if (written_val == current_value) {
+                        // Spurious wakeup, ignore
+                        continue;
+                    }
+
+                    num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+
+                    // TODO: debug stuff
+                    // from ibgda_ring_db
+                    [[maybe_unused]] auto* written_doorbell_ctrl_seq = static_cast<mlx5_wqe_ctrl_seg*>(fake_reg_addr);
+
+                    const Profiler::Events::DoorbellRing event{
+                            .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
+                            .nic_id = 1,
+                            .addr = reinterpret_cast<uint64_t>(reg_addr_real),
+                            .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
+                            .wqe_index = 0, // TODO
+                            .qp_num = 0,    // TODO
+                            .is_cpu_hijack = true,
+                    };
+                    m_event_recorder->Record(event);
+
+                    // Forward to real NIC dbr
+                    {
+                        std::scoped_lock lock(m_ibv_allocations_mutex);
+
+                        // UAR has been freed
+                        // TODO: maybe get the lock earlier in case we have some writes
+                        if (!*is_uar_alive.get()) {
+                            return;
+                        }
+
+                        // if (Profiler::hack::CuMemHostRegisterAddrs.contains(uar_fake_page)) { ... }
+                        __atomic_store_n(static_cast<uint64_t*>(reg_addr_real), written_val, __ATOMIC_RELEASE);
+                        num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+                        current_value = written_val;
+                    }
+                }
+            }).detach();
+        });
+
+        m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
+                [this](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto&&...) {
+            std::scoped_lock lock(m_ibv_allocations_mutex);
+
+            if (m_mlx5_uar_page_id_to_addr.contains(out_uar->page_id)) {
+                std::cerr << "WARNING: Duplicate page id in mlx5dv_devx_alloc_uar " << out_uar->page_id << std::endl;
+                return;
+            }
+
+            const auto uar_reg_addr = reinterpret_cast<uint64_t>(out_uar->reg_addr);
             // auto uar_base_addr = reinterpret_cast<uint64_t>(out_uar->base_addr);
 
             // TODO: not checking existence
             m_mlx5_uar_allocations[uar_reg_addr] = out_uar->page_id;
+            m_mlx5_uar_page_id_to_addr[out_uar->page_id] = uar_reg_addr;
 
             /*
              * flags -> https://man7.org/linux/man-pages/man3/mlx5dv_devx_alloc_uar.3.html
@@ -443,6 +646,13 @@ struct ProfilerCtx {
         m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto&&...) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
+            // Signal our runner thread to stop
+            // We can erase here because it's a shared_ptr
+            if (m_mlx5_fake_uar_runner_signals.contains(devx_uar->page_id)) {
+                *m_mlx5_fake_uar_runner_signals[devx_uar->page_id].get() = false;
+                m_mlx5_fake_uar_runner_signals.erase(devx_uar->page_id);
+            }
+
             const auto& uar_alloc = m_mlx5_uar_allocations.find(devx_uar->page_id);
             if (uar_alloc == m_mlx5_uar_allocations.end()) {
                 // std::cerr << "[Profiler] mlx5dv_devx_free_uar called with nonexistent page_id (" << devx_uar->page_id
@@ -451,6 +661,7 @@ struct ProfilerCtx {
             }
 
             m_mlx5_uar_allocations.erase(uar_alloc);
+            m_mlx5_uar_page_id_to_addr.erase(devx_uar->page_id);
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(

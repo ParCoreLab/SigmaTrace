@@ -218,10 +218,10 @@ void instrument_function_if_needed(CUcontext ctx, CUfunction func) {
         const std::string function_signature{nvbit_get_func_name(ctx, f)};
         std::string_view function_name = parse_function_name(function_signature);
 
+        // std::cout << "Entering: " << function_signature << std::endl;
         if (IgnoredFunctions.contains(function_name)) {
             continue;
         }
-        // std::cout << "Entering: " << function_signature << std::endl;
 
         /* get vector of instructions of function "f" */
         const std::vector<Instr*>& instrs = nvbit_get_instrs(ctx, f);

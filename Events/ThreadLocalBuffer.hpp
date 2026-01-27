@@ -125,6 +125,7 @@ namespace Events {
             return registry;
         }
 
+        /*
         ~ThreadBufferRegistry() {
             // Mutex here to prevent thread from dying while we're still flushing
             // TODO: may be unnecessary
@@ -132,6 +133,7 @@ namespace Events {
             std::cout << "ThreadBufferRegistry destroyed, " << m_all_buffers.size()
                       << " thread buffers were registered.\n";
         }
+        */
 
         // Get or create thread-local buffers for the calling thread
         ThreadBuffers& get_thread_buffers() noexcept {

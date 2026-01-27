@@ -10,6 +10,11 @@ target_link_libraries(Profiler PRIVATE Launcher)
 # ================================================================
 
 # ================================================================
+# Profiler Modules
+add_subdirectory(Modules/CudaExportTableOverwrite)
+# ================================================================
+
+# ================================================================
 # Master LD_PRELOAD Shim for the Profiler
 Sigma_add_library(ProfilerShim SHARED ProfilerShim.cpp ProfilerArgs.hpp)
 
@@ -26,11 +31,13 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     target_link_libraries(${ProfilerShimTarget} PUBLIC
             -Wl,--whole-archive
             SmartDlsym
+            ProfilerExportTableOverwrite
             -Wl,--no-whole-archive
     )
     set_target_properties(${ProfilerShimTarget} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
 
     # Runtime dependencies
+    target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cuda_driver)
     target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cudart)
     target_link_libraries(${ProfilerShimTarget} PRIVATE SigmaHelpers)
 

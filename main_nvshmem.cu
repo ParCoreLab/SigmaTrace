@@ -128,6 +128,8 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
     */
 
     nvshmem_finalize();
+
+    std::cout << "Goodbye from PE " << my_pe << std::endl;
 }
 
 int main(int argc, char* argv[]) {

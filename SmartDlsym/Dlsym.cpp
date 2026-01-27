@@ -10,6 +10,8 @@
 #include "Dlsym.hpp"
 
 namespace smart_dlsym {
+    void* DL_RTLD_DEFAULT = RTLD_DEFAULT;
+    void* DL_RTLD_NEXT = RTLD_NEXT;
     const int DL_RTLD_NOW = RTLD_NOW;
     const int DL_RTLD_GLOBAL = RTLD_GLOBAL;
 

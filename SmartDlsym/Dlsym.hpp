@@ -15,6 +15,8 @@
 
 namespace smart_dlsym {
     // Trying to avoid making downstream users having to #include <dlfcn.h>
+    extern void* DL_RTLD_DEFAULT;
+    extern void* DL_RTLD_NEXT;
     extern const int DL_RTLD_NOW;
     extern const int DL_RTLD_GLOBAL;
 
