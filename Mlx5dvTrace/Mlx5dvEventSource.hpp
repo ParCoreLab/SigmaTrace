@@ -10,11 +10,11 @@ namespace mlx5dv {
                                                                 init_obj_tag, devx_umem_reg_tag, devx_umem_dereg_tag,
                                                                 obj_create_tag, devx_alloc_uar_tag, devx_free_uar_tag> {
 
+    public:
         using Base = hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, init_obj_tag,
                                                 devx_umem_reg_tag, devx_umem_dereg_tag, obj_create_tag,
                                                 devx_alloc_uar_tag, devx_free_uar_tag>;
 
-    public:
         using Context = Base::Context;
 
     protected:

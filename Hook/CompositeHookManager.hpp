@@ -63,9 +63,6 @@ namespace hook {
 
         using Base = CallbackManager<Derived, Tags...>;
 
-        using TimestampSource = Config::TimestampSourceType;
-        TimestampSource m_timestamp{};
-
         /*
          *TODO: Right now both implementations get all the tags.
          *This is OK for now, but should use detail/PartitionTag.hpp in the future
@@ -75,6 +72,9 @@ namespace hook {
 
     public:
         using Context = detail::ObjectContext<Tags...>;
+
+        using TimestampSource = Config::TimestampSourceType;
+        TimestampSource m_timestamp{};
 
         // Singleton
         static Derived& instance() noexcept {
