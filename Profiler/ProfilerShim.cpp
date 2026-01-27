@@ -36,6 +36,7 @@
 #include "Mlx5dvEventSource.hpp"
 
 #include "Modules/CudaExportTableOverwrite/ExportTableOverwrite.hpp"
+#include "Modules/MemoryHijack/MemoryRepeater.hpp"
 
 #include "ProfilerArgs.hpp"
 
@@ -173,6 +174,9 @@ struct ProfilerCtx {
     std::map<UarPageIdType, AddrType> m_mlx5_uar_page_id_to_addr;
 
     std::map<UarPageIdType, std::shared_ptr<bool>> m_mlx5_fake_uar_runner_signals;
+
+    using MemoryRepeaterHandle = Profiler::MemoryRepeater::MemoryRepeaterHandle;
+    std::unordered_map<UarPageIdType, std::vector<MemoryRepeaterHandle>> m_mlx5_uar_hijack_handles;
     // ================================================
 
     // ================================================
@@ -488,7 +492,7 @@ struct ProfilerCtx {
             }
         });
 
-        // Fake UAR hijack runs first
+        // 1. Fake UAR hijack
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
                 [this](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto&&...) {
             sigma_ignore_unused(flags);
@@ -526,101 +530,37 @@ struct ProfilerCtx {
             // This shouldn't need synchronization but it'll grow infinitely
             Profiler::hack::CuMemHostRegisterIgnoredAddrs.insert(out_uar->reg_addr);
 
-            // const uint64_t initial_value = *static_cast<uint64_t*>(uar_fake_page);
-            const uint64_t initial_value = __atomic_load_n(static_cast<uint64_t*>(fake_reg_addr), __ATOMIC_ACQUIRE);
+            MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real,
+                                        [this, reg_addr_real, fake_reg_addr](const uint64_t new_val) {
+                sigma_ignore_unused(new_val);
 
-            const auto [inserted_signal, is_inserted] =
-                    m_mlx5_fake_uar_runner_signals.emplace(out_uar->page_id, std::make_shared<bool>(true));
+                const Profiler::Events::DoorbellRing event{
+                        .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
+                        .nic_id = 1,
+                        .addr = reinterpret_cast<uint64_t>(reg_addr_real),
+                        .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
+                        .wqe_index = 0, // TODO
+                        .qp_num = 0,    // TODO
+                        .is_cpu_hijack = true,
+                };
+                m_event_recorder->Record(event);
 
-            // TODO: this just happens for some reason
-            if (!is_inserted) {
-                std::cerr << "ERROR: Could not insert to m_mlx5_fake_uar_runner_signals" << std::endl;
-                // std::abort();
-            }
+                num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+            }};
 
-            std::thread([this,
-                         is_uar_alive = inserted_signal->second, // Signal thread to stop on uar free. Copied shared_ptr
-                         reg_addr_real,                          // ok
-                         uar_fake_page_addr,                     // Entire page page addr
-                         fake_reg_addr,                          // Just the doorbell addr
-                         initial_value                           // ok
-            ]() __attribute__((target("mwaitx"))) {
-                uint64_t current_value = initial_value;
-
-                while (*is_uar_alive.get()) {
-                    _mm_monitorx(uar_fake_page_addr, 0, 0);
-
-                    /*
-                     * ECX=0 means no timeout
-                     * Using inline asm since intrinsic always sets timeout
-                     *
-                     * __asm__ __volatile__(
-                     * "mwaitx"
-                     * :
-                     * : "a"(0),    // EAX: hints (0 = default)
-                     *   "c"(0),    // ECX: 0 = no timeout
-                     *   "b"(0)     // EBX: ignored when ECX=0
-                     * :
-                     * );
-                     *
-                     *
-                     * Might be pointless in user-space
-                     * https://stackoverflow.com/questions/71241346/mwaitx-instruction-not-blocking
-                     */
-                    _mm_mwaitx(0, 0, std::numeric_limits<unsigned int>::max());
-
-                    // Atomic load for safety
-                    // This is possibly still not good! GPU-PCIe-NIC ordering is different from CPU
-                    const uint64_t written_val =
-                            __atomic_load_n(static_cast<uint64_t*>(fake_reg_addr), __ATOMIC_ACQUIRE);
-
-                    if (written_val == current_value) {
-                        // Spurious wakeup, ignore
-                        continue;
-                    }
-
-                    num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-
-                    // TODO: debug stuff
-                    // from ibgda_ring_db
-                    [[maybe_unused]] auto* written_doorbell_ctrl_seq = static_cast<mlx5_wqe_ctrl_seg*>(fake_reg_addr);
-
-                    const Profiler::Events::DoorbellRing event{
-                            .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
-                            .nic_id = 1,
-                            .addr = reinterpret_cast<uint64_t>(reg_addr_real),
-                            .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
-                            .wqe_index = 0, // TODO
-                            .qp_num = 0,    // TODO
-                            .is_cpu_hijack = true,
-                    };
-                    m_event_recorder->Record(event);
-
-                    // Forward to real NIC dbr
-                    {
-                        std::scoped_lock lock(m_ibv_allocations_mutex);
-
-                        // UAR has been freed
-                        // TODO: maybe get the lock earlier in case we have some writes
-                        if (!*is_uar_alive.get()) {
-                            return;
-                        }
-
-                        // if (Profiler::hack::CuMemHostRegisterAddrs.contains(uar_fake_page)) { ... }
-                        __atomic_store_n(static_cast<uint64_t*>(reg_addr_real), written_val, __ATOMIC_RELEASE);
-                        num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-                        current_value = written_val;
-                    }
-                }
-            }).detach();
+            auto& hijack_handles = m_mlx5_uar_hijack_handles[out_uar->page_id];
+            auto& inserted_handle = hijack_handles.emplace_back(std::move(handle));
+            inserted_handle.start();
         });
 
+        // 2. Memory tracking
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
                 [this](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto&&...) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
             if (m_mlx5_uar_page_id_to_addr.contains(out_uar->page_id)) {
-                std::cerr << "WARNING: Duplicate page id in mlx5dv_devx_alloc_uar " << out_uar->page_id << std::endl;
+                // TODO :(*
+                // std::cerr << "WARNING: Duplicate page id in mlx5dv_devx_alloc_uar " << out_uar->page_id << std::endl;
                 return;
             }
 
@@ -644,6 +584,23 @@ struct ProfilerCtx {
             }
         });
 
+        // 1. For hijack
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto&&...) {
+            std::scoped_lock lock(m_ibv_allocations_mutex);
+
+            const auto& handles = m_mlx5_uar_hijack_handles.find(devx_uar->page_id);
+            if (handles == m_mlx5_uar_hijack_handles.end()) {
+                return;
+            }
+
+            for (auto& h: handles->second) {
+                h.signal_finish();
+            }
+
+            m_mlx5_uar_hijack_handles.erase(handles);
+        });
+
+        // 2. For memory tracking
         m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto&&...) {
             std::scoped_lock lock(m_ibv_allocations_mutex);
 
