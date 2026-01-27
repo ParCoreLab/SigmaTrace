@@ -48,11 +48,11 @@
     } while (0)
 
 // TODO: some systems can't link to ncclMemAlloc for some reason
-#if NCCL_VERSION_CODE >= NCCL_VERSION(2, 19, 0)
-#define NCCL_MALLOC(addr, size) NCCL_CHECK(ncclMemAlloc((addr), (size)))
-#else
+// #if NCCL_VERSION_CODE >= NCCL_VERSION(2, 19, 0)
+// #define NCCL_MALLOC(addr, size) NCCL_CHECK(ncclMemAlloc((addr), (size)))
+// #else
 #define NCCL_MALLOC(addr, size) CUDA_CHECK(cudaMalloc((addr), (size)))
-#endif
+// #endif
 #endif
 
 #ifdef NVTX_VERSION

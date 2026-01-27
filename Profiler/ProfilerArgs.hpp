@@ -111,8 +111,9 @@ namespace Profiler {
                 return val_str_unwrapped;
             } else {
                 // Failsafe if the class has unsupported types
-                // Might be buggy on some compilers (GCC 12)
-                static_assert(std::false_type(), "Unsupported type in parse_env");
+                // DR on some compilers (<= GCC 12)
+                // https://www.reddit.com/r/cpp_questions/comments/1it55nq/gcc_114clang_14_static_assert_hits_even_without/
+                static_assert(sizeof(T) && false);
             }
 
             throw std::runtime_error("Invalid value from " + env_name + ": " + std::string{val});

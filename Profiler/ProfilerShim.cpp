@@ -510,6 +510,8 @@ struct ProfilerCtx {
             CUDA_CHECK(cudaHostAlloc(&uar_fake_page_addr, page_size, cudaHostAllocMapped));
             memset(uar_fake_page_addr, 0, page_size);
 
+            // TODO: don't do this if buffers can't be set in the first place (no PeerMappingOverride)
+            // Causes a segfault later
             auto base_addr_real = out_uar->base_addr;
             auto reg_addr_real = out_uar->reg_addr;
 
