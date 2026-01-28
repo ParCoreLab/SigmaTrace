@@ -1,8 +1,7 @@
-#include <dlfcn.h>
-
 #include <deque>
 #include <iostream>
 #include <sstream>
+#include <string_view>
 
 #include "Dlsym.hpp"
 
@@ -49,8 +48,13 @@ static void LogCall(Args&&... args) {
 // Ibv profiler class with the hooks we care about
 // ================================================================
 namespace ibv {
+    constexpr std::string_view LibPath{"libibverbs.so"};
+
     Profiler::Profiler() {
         LogDebug("Profiler Initialized");
+
+        auto* libibverbs_handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
+        resolve_all(libibverbs_handle, smart_dlsym::real_dlsym);
 
         // ================================================================
         // DEBUG: Log al calls
@@ -93,30 +97,7 @@ extern "C" ibv::Profiler* sigma_provider_instance() {
 }
 #pragma GCC diagnostic pop
 
-// ================================================================
-// dlsym/dlvsym interception for libraries that dynamically load ibv funcs
-// TODO: can possibly be in namespace ibv
-// TODO: can be generated in Hooks lib instead of here
-// ================================================================
-// TODO: this should be in a helper module in HookLib or be done automatically
-template<typename Tag>
-static void InitMoveThisSomewhereElse() {
-    // TODO: Hack! Some libraries dlopen, some dlsym and others just use the symbols
-    // This makes sure the symbol we use is the same as a link-time symbol
-    // the upstream library uses (I think).
-    // If we dlopen libibverbs in init(), NVSHMEM breaks
-    // If we don't load it, NCCL breaks
-    // go figure
-    auto& profiler = ibv::Profiler::instance();
-    auto& real_func = profiler.real_func<Tag>();
-    if (!real_func) {
-        auto* libibverbs_handle = smart_dlsym::real_dlopen("libibverbs.so", RTLD_NOW);
-        profiler.resolve_all(libibverbs_handle, smart_dlsym::real_dlsym);
-    }
-}
-
 extern "C" ibv_context* ibv_open_device(ibv_device* device) {
-    InitMoveThisSomewhereElse<ibv::open_device_tag>();
     return ibv::Profiler::invoke_preload<ibv::open_device_tag>(device);
 }
 
@@ -136,7 +117,6 @@ extern "C" int ibv_dereg_mr(ibv_mr* mr) {
 }
 
 extern "C" ibv_mr* ibv_reg_mr_iova2(ibv_pd* pd, void* addr, size_t length, uint64_t iova, unsigned int access) {
-    InitMoveThisSomewhereElse<ibv::reg_mr_iova2_tag>();
     return ibv::Profiler::invoke_preload<ibv::reg_mr_iova2_tag>(pd, addr, length, iova, access);
 }
 
@@ -166,46 +146,7 @@ extern "C" ibv_ah* ibv_create_ah(ibv_pd* pd, ibv_ah_attr* attr) {
 }
 
 // ================================================================
-static void register_symbols() {
-    static const std::unordered_map<std::string, void*> hook_map = {
-            {"ibv_open_device", reinterpret_cast<void*>(ibv_open_device)},
-            {"ibv_close_device", reinterpret_cast<void*>(ibv_close_device)},
-            {"ibv_reg_mr", reinterpret_cast<void*>(ibv_reg_mr)},
-            {"ibv_dereg_mr", reinterpret_cast<void*>(ibv_dereg_mr)},
-            {"ibv_reg_mr_iova2", reinterpret_cast<void*>(ibv_reg_mr_iova2)},
-            {"ibv_reg_dmabuf_mr", reinterpret_cast<void*>(ibv_reg_dmabuf_mr)},
-            {"ibv_alloc_pd", reinterpret_cast<void*>(ibv_alloc_pd)},
-            {"ibv_create_cq", reinterpret_cast<void*>(ibv_create_cq)},
-            {"ibv_create_qp", reinterpret_cast<void*>(ibv_create_qp)},
-            {"ibv_modify_qp", reinterpret_cast<void*>(ibv_modify_qp)},
-            {"ibv_create_ah", reinterpret_cast<void*>(ibv_create_ah)},
-    };
-
-    auto& profiler = ibv::Profiler::instance();
-
-    for (auto& [symbol_name, symbol_hook]: hook_map) {
-        smart_dlsym::register_symbol(symbol_name, [&symbol_name, &profiler, symbol_hook](void* real_func, auto&&...) {
-            // Update the real function pointer in the profiler
-            void** real_func_ptr = profiler.real_func_by_name(symbol_name);
-            if (real_func_ptr) {
-                if constexpr (DebugPrint) {
-                    std::stringstream ss;
-                    ss << "dlsym replaced " << symbol_name;
-                    LogDebug(ss.str());
-                }
-
-                *real_func_ptr = real_func;
-            }
-
-            return symbol_hook;
-        });
-    }
-}
-
 static void __attribute__((constructor /* (201) */)) init() {
-    register_symbols();
-
-    // Initialize profiler
     ibv::Profiler::instance();
 
     LogDebug("Loaded");

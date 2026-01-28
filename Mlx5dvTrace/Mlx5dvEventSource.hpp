@@ -22,8 +22,8 @@ namespace mlx5dv {
     };
     // ================================================================
     struct Profiler : Mlx5dvEventSource<Profiler> {
-        Profiler() = default;
-        virtual ~Profiler() = default;
+        Profiler();
+        ~Profiler() = default;
     };
 
 } // namespace mlx5dv
