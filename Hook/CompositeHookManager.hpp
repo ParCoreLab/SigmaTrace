@@ -124,8 +124,17 @@ namespace hook {
         // 1. Preload hook management
         // ================================================================
         // using PreloadBase::real_func;
-        void resolve_all(auto&&... args) noexcept {
-            m_preload_impl.resolve_all(std::forward<decltype(args)>(args)...);
+        template<typename Tag>
+        void resolve_one_preload(auto&&... args) noexcept {
+            if constexpr (is_preload_hook_v<Tag>) {
+                auto default_func = InvokePreloadPtr<Tag, typename HookTrait<Tag>::FuncPtr>::get();
+                m_preload_impl.template resolve_real<Tag>(std::forward<decltype(args)>(args)..., default_func);
+            }
+        }
+
+        void resolve_all_preload(auto&&... args) noexcept {
+            // m_preload_impl.resolve_all(std::forward<decltype(args)>(args)...);
+            (resolve_one_preload<Tags>(std::forward<decltype(args)>(args)...), ...);
         }
 
         template<ValidCallbackTag Tag>
@@ -347,6 +356,32 @@ namespace hook {
                 op = ctx.template original<Tag>();
             }
         }
+
+        // Helper to create a function pointer matching HookTrait<Tag>::FuncPtr that calls invoke_preload
+        // We're basically specializing the template away so we can use it like a function pointer
+        // TODO: should be more generic and moved to a helper module
+        template<typename Tag, typename FuncPtr>
+        struct InvokePreloadPtr;
+
+        template<typename Tag, typename Ret, typename... Args>
+        struct InvokePreloadPtr<Tag, Ret (*)(Args...) noexcept> {
+            static Ret call(Args... args) noexcept {
+                return invoke_preload<Tag>(std::forward<Args>(args)...);
+            }
+            static constexpr auto get() noexcept {
+                return &call;
+            }
+        };
+
+        template<typename Tag, typename Ret, typename... Args>
+        struct InvokePreloadPtr<Tag, Ret (*)(Args...)> {
+            static Ret call(Args... args) {
+                return invoke_preload<Tag>(std::forward<Args>(args)...);
+            }
+            static constexpr auto get() {
+                return &call;
+            }
+        };
 
         // Implementations
         PreloadBase m_preload_impl;

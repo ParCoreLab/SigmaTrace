@@ -10,7 +10,7 @@ namespace mlx5dv {
 
     Profiler::Profiler() {
         auto* libmlx5_handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
-        resolve_all(libmlx5_handle, smart_dlsym::real_dlsym);
+        resolve_all_preload(libmlx5_handle);
     }
 } // namespace mlx5dv
 // ================================================================

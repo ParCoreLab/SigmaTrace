@@ -2,6 +2,8 @@
 
 #include <cassert>
 
+#include "Dlsym.hpp"
+
 #include "CallbackManager.hpp"
 #include "HookTrait.hpp"
 
@@ -65,16 +67,40 @@ namespace hook::detail {
             return m_real_funcs.template get<Tag>();
         }
 
-        template<ValidCallbackTag Tag, typename DlsymFunc>
+        template<ValidCallbackTag Tag>
             requires is_preload_hook_v<Tag>
-        void resolve_real(void* handle, DlsymFunc&& dlsym_func) noexcept {
-            auto& real = m_real_funcs.template get<Tag>();
-            if (!real) {
-                real = reinterpret_cast<HookTrait<Tag>::FuncPtr>(dlsym_func(handle, HookTrait<Tag>::symbol_name));
-                if (!real) {
-                    std::cerr << "[hook] Failed to resolve " << HookTrait<Tag>::symbol_name << std::endl;
+        void resolve_real(void* handle, HookTrait<Tag>::FuncPtr default_func = nullptr) noexcept {
+            using Trait = HookTrait<Tag>;
+
+            // Preload in case downstream users don't use dlsym
+            auto** real_fn_ptr = &m_real_funcs.template get<Tag>();
+            if (!*real_fn_ptr) {
+                *real_fn_ptr = reinterpret_cast<Trait::FuncPtr>(smart_dlsym::real_dlsym(handle, Trait::symbol_name));
+                if (!*real_fn_ptr) {
+                    std::cerr << "[hook] Failed to resolve " << Trait::symbol_name << std::endl;
+                    return;
                 }
             }
+
+            auto* hook_fn = smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_DEFAULT, Trait::symbol_name);
+            if (!hook_fn || hook_fn == reinterpret_cast<void*>(*real_fn_ptr)) {
+                if (!hook_fn) {
+                    std::cerr << "[hook] WARN: No hook function for " << Trait::symbol_name << std::endl;
+                }
+
+                // Default to passing through to invoke_preload
+                hook_fn = reinterpret_cast<void*>(default_func);
+            }
+
+            // Replace the function if downstream calls dlvsym. This ensures we has
+            smart_dlsym::register_symbol(Trait::symbol_name, [real_fn_ptr, hook_fn](void* real_func, auto&&...) {
+                // Switch to the dlsym version
+                if (*real_fn_ptr) {
+                    *real_fn_ptr = reinterpret_cast<Trait::FuncPtr>(real_func);
+                }
+
+                return hook_fn;
+            });
         }
 
         template<typename Tag>

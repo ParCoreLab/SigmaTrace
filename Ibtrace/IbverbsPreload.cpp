@@ -54,7 +54,7 @@ namespace ibv {
         LogDebug("Profiler Initialized");
 
         auto* libibverbs_handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
-        resolve_all(libibverbs_handle, smart_dlsym::real_dlsym);
+        resolve_all_preload(libibverbs_handle);
 
         // ================================================================
         // DEBUG: Log al calls

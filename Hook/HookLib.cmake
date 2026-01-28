@@ -12,4 +12,10 @@ target_include_directories(HookLib INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# Headers without linking
+target_include_directories(
+        HookLib
+        INTERFACE
+        $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
+
 target_link_libraries(HookLib INTERFACE SigmaHelpers)
