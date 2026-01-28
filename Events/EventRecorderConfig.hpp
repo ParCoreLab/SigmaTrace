@@ -85,15 +85,21 @@ namespace Events {
         std::string EventFileSuffix = ".events";
 
         // Ensure output directories exist
+        // TODO: all processes/threads in the same launch should have the same root dir. Maybe boost file lock?
         // TODO: probably not a good idea to do this here. What if we copied the config or want to use const?
-        void ensure_output_directory() {
+        void ensure_output_directory(const int _max_retries = 3) {
             if (std::filesystem::exists(OutputDirectory)) {
+                if (_max_retries <= 0) {
+                    std::cerr << "Could not find a suitable output directory. Please clean up the dir" << std::endl;
+                }
+
+                std::cerr << "Warning: Output directory " << OutputDirectory << " already exists." << std::endl;
                 // TODO: maybe handle this better
                 const auto timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
                 OutputDirectory = OutputDirectory.string() + "_" + std::to_string(timestamp);
                 EventsDirectory = OutputDirectory / "events";
-                std::cerr << "Warning: Output directory " << OutputDirectory << " already exists.";
                 std::cerr << "Saving in: " << OutputDirectory << std::endl;
+                return ensure_output_directory(_max_retries - 1);
             }
 
             for (const auto& dir: {OutputDirectory, EventsDirectory}) {
