@@ -435,7 +435,9 @@ static void enter_kernel_launch(CUcontext ctx, CUfunction func, uint64_t& grid_l
     }
 
     /* enable instrumented code to run */
-    nvbit_enable_instrumented(ctx, func, true);
+    if (profiler.memop_enabled()) {
+        nvbit_enable_instrumented(ctx, func, true);
+    }
 }
 
 // the function is only called for non cuda graph launch cases.
