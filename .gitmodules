@@ -13,3 +13,7 @@
 	path = Imports/perfetto
 	url = https://github.com/google/perfetto.git
 	branch = releases/v50.x
+[submodule "Imports/abseil-cpp"]
+	path = Imports/abseil-cpp
+	url = https://github.com/abseil/abseil-cpp.git
+	branch = lts_2026_01_07

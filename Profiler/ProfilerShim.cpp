@@ -12,6 +12,7 @@
 
 #include "Helpers/Utilities.hpp"
 
+// smart_dlsym
 #include "Dlsym.hpp"
 
 #include "EventRecorder.hpp"
@@ -31,20 +32,16 @@
 #include <mlx5/mlx5_ifc.h>
 #include <mlx5/mlx5_prm.h>
 
+// Event providers
 #include "CUDAEventSource.hpp"
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
 
+// Profiler-specific modules
 #include "Modules/CudaExportTableOverwrite/ExportTableOverwrite.hpp"
 #include "Modules/MemoryHijack/MemoryRepeater.hpp"
 
 #include "ProfilerArgs.hpp"
-
-// Intel specific
-#include <immintrin.h>
-// Both
-#include <dlfcn.h>
-#include <x86intrin.h>
 
 // Build-system defined args to provider .so files
 static constexpr std::string_view SIGMA_IBVERBS_PROVIDER_PATH{SIGMA_PROVIDER_ibverbs_trace};
@@ -194,6 +191,19 @@ struct ProfilerCtx {
         // std::cout << "[Profiler] num_kernel_launches: " << std::dec << num_kernel_launches << std::endl;
     }
 
+    // See Note[late_load]
+    // Event module will interface with the filesystem and may print to stderr
+    void LateLoad() {
+        m_event_recorder = &Events::EventRecorder<>::instance(std::move(m_event_recorder_config));
+    }
+
+    /*
+     * WARNING: Some calls are unsafe in this function.
+     * Do not use std::cout or related functions that may depend on libc
+     * See Note[late_load]
+     */
+    // WARNING: Some calls are unsafe in this function, such as std::cout. We need to wait until __libc_start_main
+    // See LateLoad
     ProfilerCtx() {
         Profiler::CudaExportTable::register_overwrite(
                 "cuMemHostRegister_v2", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostRegister_v2));
@@ -201,10 +211,10 @@ struct ProfilerCtx {
         Profiler::CudaExportTable::register_overwrite(
                 "cuMemHostUnregister", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostUnregister));
 
-        Events::RuntimeConfig eventConfig{};
-        m_event_recorder = &Events::EventRecorder<>::instance(std::move(eventConfig));
-
         const auto profiler_args = Profiler::ProfilerArgs::from_env();
+
+        // Will be populated with things from profiler_args in the future
+        m_event_recorder_config = {};
 
         if (profiler_args.LoadNvbit) {
             load_nvbit(profiler_args.ShimDir);
@@ -224,6 +234,7 @@ struct ProfilerCtx {
         return instance;
     }
 
+    Events::RuntimeConfig m_event_recorder_config;
     Events::EventRecorder<>* m_event_recorder{nullptr};
 
     ibv::Profiler* m_ibv_profiler{nullptr};
@@ -670,6 +681,30 @@ struct ProfilerCtx {
     }
 };
 
+// See Note[late_load]
 static void __attribute__((constructor)) init() {
     ProfilerCtx::instance();
 }
+
+/*
+ * Note[late_load]: We delay full ProfilerCtx initialization until after __libc_start_main to prevent
+ * segfaults in libraries. ProfilerCtx::instance() should only be used to initialize
+ * modules with no symbol dependencies, mainly provider setup.
+ */
+using libc_start_main_type = int (*)(int (*)(int, char**, char**), int, char**, void (*)(), void (*)(), void (*)(),
+                                     void*);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
+extern "C" int __libc_start_main(int (*main)(int, char**, char**), int argc, char** argv, void (*init)(void),
+                                 void (*fini)(void), void (*rtld_fini)(void), void* stack_end) {
+
+    static auto* real_func = reinterpret_cast<libc_start_main_type>(
+            smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_NEXT, "__libc_start_main"));
+
+    // At this point all libraries should be loaded
+    ProfilerCtx::instance().LateLoad();
+
+    return real_func(main, argc, argv, init, fini, rtld_fini, stack_end);
+}
+#pragma GCC diagnostic pop
