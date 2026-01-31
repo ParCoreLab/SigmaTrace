@@ -7,7 +7,7 @@
 #include "Common.hpp"
 #include "EventTrait.hpp"
 
-// TODO: compile these into an .so or something so future readers can reliable read back maybe
+// TODO: compile these into an .so or something so future readers can reliably read back maybe
 
 namespace Profiler::Events {
     struct alignas(8) IbvOpenDevice {

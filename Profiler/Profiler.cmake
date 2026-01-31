@@ -3,7 +3,7 @@
 
 # ================================================================
 # Profiler launcher executable
-Sigma_add_executable(Profiler Profiler.cpp ProfilerArgs.hpp)
+Sigma_add_executable(Profiler Profiler.cpp ProfilerArgs.hpp ProfilerProviders.hpp)
 set_target_properties(Profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
 
 target_link_libraries(Profiler PRIVATE Launcher)
@@ -17,7 +17,7 @@ add_subdirectory(Modules/MemoryHijack)
 
 # ================================================================
 # Master LD_PRELOAD Shim for the Profiler
-Sigma_add_library(ProfilerShim SHARED ProfilerShim.cpp ProfilerArgs.hpp)
+Sigma_add_library(ProfilerShim SHARED ProfilerShim.cpp ProfilerArgs.hpp ProfilerProviders.hpp)
 
 foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     # Internal headers coped from NVSHMEM/rdma-core tree
@@ -59,6 +59,7 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
 
     # Make sure we build before the profiler
     add_dependencies(Profiler ${ProfilerShimTarget})
+    target_link_libraries(Profiler PRIVATE ${SIGMA_PROVIDER_PATHS_TARGET})
 endforeach ()
 # ================================================================
 

@@ -8,6 +8,7 @@
 #include "Launcher.hpp"
 
 #include "ProfilerArgs.hpp"
+#include "ProfilerProviders.hpp"
 
 int main(int argc, char* argv[]) {
     // TODO: boost::program_options in the future
@@ -24,18 +25,35 @@ int main(int argc, char* argv[]) {
     }
     const auto binary_dir = std::filesystem::path(readlink_buf.data()).parent_path();
 
-    // Main LD_PRELOAD shim
-    const std::string ShimLib{binary_dir / "libProfilerShim.so"};
 
     // Set up args for the shim and child process
-    const Profiler::ProfilerArgs profiler_args{.ShimDir = binary_dir};
+    const Profiler::ProfilerArgs profiler_args{
+            .ShimDir = binary_dir,
+            .LoadIbtrace = true,
+            .LoadMlx5dv = true,
+    };
+
+    std::vector<std::filesystem::path> shim_libs{};
+    if (profiler_args.LoadIbtrace) {
+        shim_libs.emplace_back(binary_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
+    }
+
+    if (profiler_args.LoadMlx5dv) {
+        shim_libs.emplace_back(binary_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
+    }
+
+    // Main LD_PRELOAD shim
+    // We need to add this at the end
+    shim_libs.emplace_back(binary_dir / "libProfilerShim.so");
+
     const auto profiler_args_env = profiler_args.to_env();
 
     // Args for the launch
     const std::string program_bin = argv[1];
     std::vector<const char*> program_args(argv + 1, argv + argc);
-    const auto shimLibs = std::views::single(ShimLib);
 
-    const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, shimLibs, profiler_args_env);
+    const auto ibv_lib = binary_dir / "providers/libibverbs_trace.so";
+
+    const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, shim_libs, profiler_args_env);
     return ret;
 }

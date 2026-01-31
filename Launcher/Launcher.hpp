@@ -22,22 +22,21 @@ namespace Launcher {
                               const RangeOf<std::string> auto& extra_env = {}) {
         const auto pwd = std::filesystem::current_path();
 
-        // This owns the strings
-        std::vector<std::string> ld_library_paths;
-        ld_library_paths.reserve(std::ranges::size(shim_paths));
-
-        std::ranges::transform(shim_paths, std::back_inserter(ld_library_paths),
-                               [&](const std::string& lib_path) -> std::string {
-            return "LD_PRELOAD=" + (pwd / lib_path).string();
-        });
+        // Build LD_PRELOAD=path1:path2:... string
+        // Maybe in a better future we'll use C++23 views::join_with
+        std::string ld_preload_str = "LD_PRELOAD=";
+        bool is_first_ld_path{true};
+        for (const auto& lib_path: shim_paths) {
+            // Probably not needed
+            if (!is_first_ld_path) {
+                ld_preload_str += ':';
+            }
+            ld_preload_str += (pwd / lib_path).string();
+            is_first_ld_path = false;
+        }
 
         std::vector<const char*> c_program_env;
-        c_program_env.reserve(ld_library_paths.size());
-
-        std::ranges::transform(ld_library_paths, std::back_inserter(c_program_env),
-                               [](const std::string& s) -> const char* {
-            return s.c_str();
-        });
+        c_program_env.push_back(ld_preload_str.c_str());
 
         // Add profiler-specific environment (if any)
         for (const auto& e: extra_env) {
