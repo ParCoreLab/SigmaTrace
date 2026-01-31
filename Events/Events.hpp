@@ -16,42 +16,48 @@ namespace Events {
         Unknown = 0,
 
         // IBVerbs events (100-199)
-        IbvOpenDevice = 100,
-        IbvCloseDevice = 101,
-        IbvMemoryReg = 102,
+        IbvDeviceRegistration = 100,
+        IbvOpenDevice,
+        IbvCloseDevice,
         // ================================================================
-        IbvPostSend = 103,
-        IbvPostSendWr = 104,
-        IbvPostSendSg = 105,
+        IbvMemoryReg,
         // ================================================================
-        IbvPostRecv = 106,
-        IbvPostRecvWr = 107,
+        IbvCreateQp,
+        IbvDestroyQp,
+        IbvModifyQp,
         // ================================================================
-        IbvPollCq = 108,
-        IbvPollCqCompletion = 109,
+        IbvPostSend,
+        IbvPostSendWr,
+        IbvPostSendSg,
         // ================================================================
-        IbvPostSrqRecv = 110,
-        IbvReqNotifyCq = 111,
+        IbvPostRecv,
+        IbvPostRecvWr,
+        // ================================================================
+        IbvPollCq,
+        IbvPollCqCompletion,
+        // ================================================================
+        IbvPostSrqRecv,
+        IbvReqNotifyCq,
         // IbvCompletion = 112, // Individual work completion
         // ================================================================
 
         // mlx5dv specific events
         Mlx5dvDoorbellRing = 200,
-        Mlx5MemoryRegistration = 201,
-        Mlx5MemoryDereg = 202,
+        Mlx5MemoryRegistration,
+        Mlx5MemoryDereg,
 
-        // CUDA events (200-299) - reserved for future
+        // CUDA events
         CudaKernelLaunch = 300,
-        CudaKernelExit = 301,
-        CudaMemcpy = 302,
-        CudaMemset = 303,
-        CudaSync = 304,
+        CudaKernelExit,
+        CudaMemcpy,
+        CudaMemset,
+        CudaSync,
 
-        // NCCL events (300-399) - reserved for future
+        // NCCL events
         NcclAllReduce = 400,
-        NcclAllGather = 401,
-        NcclBroadcast = 402,
-        NcclReduceScatter = 403,
+        NcclAllGather,
+        NcclBroadcast,
+        NcclReduceScatter,
 
         // User-defined events start at 1000
         UserDefined = 1000,

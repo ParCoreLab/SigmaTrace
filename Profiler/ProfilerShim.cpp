@@ -315,7 +315,21 @@ struct ProfilerCtx {
                 [this](ibv_context* out_context, ibv_device* device, auto ts_start, auto ts_end) {
             std::cout << "[Profiler] ibv_open_device received" << std::endl;
 
-            auto event = Profiler::Events::IbvOpenDevice{
+            // Here we disgrace god
+            // Just proc it
+            ibv_device_attr attr;
+            ibv_query_device(out_context, &attr);
+
+            // We want to save a global id on a device that is actually used.
+            // This isn't traced and should precede other ibv events
+            // We record with 0 timestamp to make sure it appears before open_device
+            const Profiler::Events::IbvDeviceRegistration registration_event{
+                    .context_addr = reinterpret_cast<uint64_t>(out_context),
+                    .node_guid = attr.node_guid,
+            };
+            m_event_recorder->Record(registration_event, 0);
+
+            Profiler::Events::IbvOpenDevice event{
                     .context_addr = reinterpret_cast<uint64_t>(out_context),
                     .node_type = device->node_type,
                     .transport_type = device->transport_type,
@@ -337,6 +351,70 @@ struct ProfilerCtx {
                     .context_addr = reinterpret_cast<uint64_t>(context),
             };
 
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ibv_profiler->register_post<ibv::create_qp_tag>(
+                [this](ibv_qp* out_qp, ibv_pd* pd, ibv_qp_init_attr* qp_init_attr, auto ts_start, auto ts_end) {
+            sigma_ignore_unused(pd);
+            sigma_ignore_unused(qp_init_attr);
+
+            Profiler::Events::IbvCreateQp event{
+                    .context_addr = reinterpret_cast<uint64_t>(out_qp->context),
+                    .qp_num = out_qp->qp_num,
+            };
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ibv_profiler->register_post<ibv::destroy_qp_tag>([this](int, ibv_qp* qp, auto ts_start, auto ts_end) {
+            std::cout << "destroy_qp with ctx " << qp->context << std::endl;
+
+            Profiler::Events::IbvDestroyQp event{
+                    // WARNING: not qp->context. Why? I have no clue
+                    .context_addr = reinterpret_cast<uint64_t>(qp->pd->context),
+                    .qp_num = qp->qp_num,
+            };
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+
+        m_ibv_profiler->register_post<ibv::modify_qp_tag>(
+                [this](int, ibv_qp* qp, ibv_qp_attr* attr, int attr_mask, auto ts_start, auto ts_end) {
+            // std::cout << "[Profiler] We modifying qps" << std::endl;
+
+            if (!(attr_mask & IBV_QP_DEST_QPN)) {
+                return;
+            }
+
+            // const auto dest_qp_num = attr->dest_qp_num;
+            // const auto dlid = attr->ah_attr.dlid;
+            // const auto& grh = attr->ah_attr.grh;
+            //
+            // const auto a = attr->ah_attr.grh.dgid.raw;
+            //
+            // static std::mutex mutex{};
+            // std::scoped_lock lock(mutex);
+            //
+            // const thread_local auto thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
+            //
+            // std::cout << static_cast<uint8_t>(thread_id) << " [QP] " << qp->qp_num << " -> " << " " << dest_qp_num
+            //           << " " << dlid << std::endl;
+
+            /*
+            Profiler::Events::IbvModifyQp event{
+                .context_addr = reinterpret_cast<uint64_t>(qp->context),
+                .qp_num = qp->qp_num,
+                .dest_qp_num = attr->dest_qp_num,
+                .dgid = attr->ah_attr.grh.dgid,
+                .dlid = attr->ah_attr.dlid
+            };
+            */
+
+            Profiler::Events::IbvModifyQp event{
+                    .context_addr = reinterpret_cast<uint64_t>(qp->context),
+                    .qp_num = qp->qp_num,
+                    .attr = *attr,
+            };
             m_event_recorder->Record(event, ts_start, ts_end);
         });
 

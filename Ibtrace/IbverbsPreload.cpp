@@ -105,6 +105,10 @@ extern "C" int ibv_close_device(ibv_context* context) {
     return ibv::Profiler::invoke_preload<ibv::close_device_tag>(context);
 }
 
+extern "C" int ibv_query_device(ibv_context* context, ibv_device_attr* device_attr) {
+    return ibv::Profiler::invoke_preload<ibv::query_device_tag>(context, device_attr);
+}
+
 #ifdef ibv_reg_mr
 #undef ibv_reg_mr
 #endif
@@ -135,6 +139,10 @@ extern "C" ibv_cq* ibv_create_cq(ibv_context* context, int cqe, void* cq_context
 
 extern "C" ibv_qp* ibv_create_qp(ibv_pd* pd, ibv_qp_init_attr* qp_init_attr) {
     return ibv::Profiler::invoke_preload<ibv::create_qp_tag>(pd, qp_init_attr);
+}
+
+extern "C" int ibv_destroy_qp(ibv_qp* qp) {
+    return ibv::Profiler::invoke_preload<ibv::destroy_qp_tag>(qp);
 }
 
 extern "C" int ibv_modify_qp(ibv_qp* qp, ibv_qp_attr* attr, int attr_mask) {

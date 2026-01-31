@@ -29,18 +29,19 @@ namespace ibv {
     // ================================================================
     template<typename Derived>
     class IbverbsEventSource
-        : public hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, ibv_context, post_send_tag,
-                                            post_recv_tag, poll_cq_tag, req_notify_cq_tag, post_srq_recv_tag,
-                                            open_device_tag, close_device_tag, reg_mr_tag, dereg_mr_tag,
-                                            reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag, create_cq_tag,
-                                            create_qp_tag, modify_qp_tag, create_ah_tag> {
+        : public hook::CompositeHookManager<
+                  Derived, hook::DefaultHookManagerConfig, ibv_context, post_send_tag, post_recv_tag, poll_cq_tag,
+                  req_notify_cq_tag, post_srq_recv_tag, open_device_tag, close_device_tag, query_device_tag, reg_mr_tag,
+                  dereg_mr_tag, reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag, create_cq_tag, create_qp_tag,
+                  destroy_qp_tag, modify_qp_tag, create_ah_tag> {
 
         // TODO: too verbose
-        using Base = hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, ibv_context, post_send_tag,
-                                                post_recv_tag, poll_cq_tag, req_notify_cq_tag, post_srq_recv_tag,
-                                                open_device_tag, close_device_tag, reg_mr_tag, dereg_mr_tag,
-                                                reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag, create_cq_tag,
-                                                create_qp_tag, modify_qp_tag, create_ah_tag>;
+        using Base =
+                hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, ibv_context, post_send_tag,
+                                           post_recv_tag, poll_cq_tag, req_notify_cq_tag, post_srq_recv_tag,
+                                           open_device_tag, close_device_tag, query_device_tag, reg_mr_tag,
+                                           dereg_mr_tag, reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag,
+                                           create_cq_tag, create_qp_tag, destroy_qp_tag, modify_qp_tag, create_ah_tag>;
 
     public:
         using Context = Base::Context;
@@ -52,7 +53,7 @@ namespace ibv {
 
         // TODO: the two functions below might need rework
         template<hook::ValidCallbackTag Tag>
-        auto& get_op(ibv_context* ctx) noexcept {
+        auto& get_op(ibv_context* ctx) const noexcept {
             if constexpr (std::is_same_v<Tag, post_send_tag>) {
                 return ctx->ops.post_send;
             } else if constexpr (std::is_same_v<Tag, post_recv_tag>) {

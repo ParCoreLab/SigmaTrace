@@ -24,6 +24,7 @@ DEFINE_OBJECT_OPS_HOOK(ibv, post_srq_recv, "ibv_post_srq_recv", int, ibv_srq*, i
 // // ================================================================
 DEFINE_PRELOAD_HOOK(ibv, open_device, "ibv_open_device", ibv_context*, ibv_device*);
 DEFINE_PRELOAD_HOOK(ibv, close_device, "ibv_close_device", int, ibv_context*);
+DEFINE_PRELOAD_HOOK(ibv, query_device, "ibv_query_device", int, ibv_context*, ibv_device_attr*);
 DEFINE_PRELOAD_HOOK(ibv, reg_mr, "ibv_reg_mr", ibv_mr*, ibv_pd*, void*, size_t, int);
 DEFINE_PRELOAD_HOOK(ibv, dereg_mr, "ibv_dereg_mr", int, ibv_mr*);
 DEFINE_PRELOAD_HOOK(ibv, reg_mr_iova2, "ibv_reg_mr_iova2", ibv_mr*, ibv_pd*, void*, size_t, uint64_t, unsigned int);
@@ -31,6 +32,7 @@ DEFINE_PRELOAD_HOOK(ibv, reg_dmabuf_mr, "ibv_reg_dmabuf_mr", ibv_mr*, ibv_pd*, u
 DEFINE_PRELOAD_HOOK(ibv, alloc_pd, "ibv_alloc_pd", ibv_pd*, ibv_context*);
 DEFINE_PRELOAD_HOOK(ibv, create_cq, "ibv_create_cq", ibv_cq*, ibv_context*, int, void*, ibv_comp_channel*, int);
 DEFINE_PRELOAD_HOOK(ibv, create_qp, "ibv_create_qp", ibv_qp*, ibv_pd*, ibv_qp_init_attr*);
+DEFINE_PRELOAD_HOOK(ibv, destroy_qp, "ibv_destroy_qp", int, ibv_qp*);
 DEFINE_PRELOAD_HOOK(ibv, modify_qp, "ibv_modify_qp", int, ibv_qp*, ibv_qp_attr*, int);
 DEFINE_PRELOAD_HOOK(ibv, create_ah, "ibv_create_ah", ibv_ah*, ibv_pd*, ibv_ah_attr*);
 

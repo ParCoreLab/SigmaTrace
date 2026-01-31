@@ -10,6 +10,14 @@
 // TODO: compile these into an .so or something so future readers can reliably read back maybe
 
 namespace Profiler::Events {
+    // Non trace
+    struct alignas(8) IbvDeviceRegistration {
+        uint64_t context_addr;
+
+        // ibv_device_attr
+        uint64_t node_guid;
+    };
+
     struct alignas(8) IbvOpenDevice {
         uint64_t context_addr;
         char name[64]{};
@@ -24,6 +32,40 @@ namespace Profiler::Events {
     struct alignas(8) IbvCloseDevice {
         uint64_t context_addr;
     };
+
+    struct alignas(8) IbvCreateQp {
+        uint64_t context_addr;
+        uint32_t qp_num;
+        // ibv_qp_init_attr qp_init_attr
+    };
+
+    struct alignas(8) IbvDestroyQp {
+        uint64_t context_addr;
+        uint32_t qp_num;
+    };
+
+    // verbs.h
+    struct alignas(8) IbvModifyQp {
+        uint64_t context_addr;
+        uint32_t qp_num;
+
+        // Just record everything, why not :)
+        ibv_qp_attr attr;
+
+        /*
+        uint32_t dest_qp_num;
+
+        ibv_gid dgid;
+
+        // ibv_ah_attr
+        uint16_t dlid;
+        uint8_t sl;
+
+        uint8_t port_num;
+        */
+    };
+    // TODO: event system should do this
+    static_assert(std::is_trivial_v<ibv_qp_attr> && std::is_standard_layout_v<ibv_qp_attr>);
 
     enum class IbvMemoryRegType : uint16_t {
         Unknown = 0,
@@ -99,8 +141,13 @@ namespace Profiler::Events {
 } // namespace Profiler::Events
 
 // clang-format off
+DEFINE_EVENT_TRAIT(Profiler::Events::IbvDeviceRegistration, Events::EventTypeId::IbvDeviceRegistration, Events::EventCategory::NIC, "IBV Device Registration");
 DEFINE_EVENT_TRAIT(Profiler::Events::IbvOpenDevice, Events::EventTypeId::IbvOpenDevice, Events::EventCategory::NIC, "ibv_open_device");
 DEFINE_EVENT_TRAIT(Profiler::Events::IbvCloseDevice, Events::EventTypeId::IbvCloseDevice, Events::EventCategory::NIC, "ibv_close_device");
+
+DEFINE_EVENT_TRAIT(Profiler::Events::IbvCreateQp, Events::EventTypeId::IbvCreateQp, Events::EventCategory::NIC, "ibv_create_qp");
+DEFINE_EVENT_TRAIT(Profiler::Events::IbvDestroyQp, Events::EventTypeId::IbvDestroyQp, Events::EventCategory::NIC, "ibv_destroy_qp");
+DEFINE_EVENT_TRAIT(Profiler::Events::IbvModifyQp, Events::EventTypeId::IbvModifyQp, Events::EventCategory::NIC, "ibv_modify_qp");
 
 DEFINE_EVENT_TRAIT(Profiler::Events::IbvMemoryReg, Events::EventTypeId::IbvMemoryReg, Events::EventCategory::NIC, "IBV Memory Registration");
 DEFINE_EVENT_TRAIT(Profiler::Events::IbvPostSend, Events::EventTypeId::IbvPostSend, Events::EventCategory::NIC, "ibv_post_send");
