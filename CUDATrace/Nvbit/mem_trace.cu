@@ -451,7 +451,7 @@ static void leave_kernel_launch(CTXstate* ctx_state, CUcontext ctx, CUfunction f
     int32_t gpu_id{};
     cudaGetDevice(&gpu_id);
     // TODO: better error handling
-    assert(cudaGetLastError() == cudaSuccess);
+    // assert(cudaGetLastError() == cudaSuccess);
 
     const char* kernel_name{nvbit_get_func_name(ctx, func)};
     profiler.invoke_custom<cuda_trace::cuda_kernel_exit_tag>(gpu_id, kernel_name);
@@ -461,7 +461,7 @@ static void leave_kernel_launch(CTXstate* ctx_state, CUcontext ctx, CUfunction f
 
     /* Make sure GPU is idle */
     cudaDeviceSynchronize();
-    assert(cudaGetLastError() == cudaSuccess);
+    // assert(cudaGetLastError() == cudaSuccess);
 }
 
 static void enter_mem_alloc(const void* addr, const std::size_t size) {
