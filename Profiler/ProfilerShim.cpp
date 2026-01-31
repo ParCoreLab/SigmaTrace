@@ -42,11 +42,7 @@
 #include "Modules/MemoryHijack/MemoryRepeater.hpp"
 
 #include "ProfilerArgs.hpp"
-
-// Build-system defined args to provider .so files
-static constexpr std::string_view SIGMA_IBVERBS_PROVIDER_PATH{SIGMA_PROVIDER_ibverbs_trace};
-static constexpr std::string_view SIGMA_NVBIT_PROVIDER_PATH{SIGMA_PROVIDER_nvbit_memory_tracker};
-static constexpr std::string_view SIGMA_MLX5DV_PROVIDER_PATH{SIGMA_PROVIDER_mlx5dv_trace};
+#include "ProfilerProviders.hpp"
 
 namespace Profiler::hack {
     // Addresses upstream asked to register. Filled in below functions
@@ -313,7 +309,7 @@ struct ProfilerCtx {
     }
 
     void load_ibv(const std::filesystem::path& shim_dir) noexcept {
-        m_ibv_profiler = get_instance<ibv::Profiler>(shim_dir / SIGMA_IBVERBS_PROVIDER_PATH);
+        m_ibv_profiler = get_instance<ibv::Profiler>(shim_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
 
         m_ibv_profiler->register_post<ibv::open_device_tag>(
                 [this](ibv_context* out_context, ibv_device* device, auto ts_start, auto ts_end) {
@@ -522,7 +518,7 @@ struct ProfilerCtx {
     }
 
     void load_nvbit(const std::filesystem::path& shim_dir) noexcept {
-        m_cuda_profiler = get_instance<cuda_trace::NvbitProfiler>(shim_dir / SIGMA_NVBIT_PROVIDER_PATH);
+        m_cuda_profiler = get_instance<cuda_trace::NvbitProfiler>(shim_dir / Profiler::SIGMA_NVBIT_PROVIDER_PATH);
         // m_cuda_profiler->enable_memop();
 
         // TODO: pass this along
@@ -622,7 +618,7 @@ struct ProfilerCtx {
     }
 
     void load_mlx5dv(const std::filesystem::path& shim_dir) {
-        m_mlx5dv_profiler = get_instance<mlx5dv::Profiler>(shim_dir / SIGMA_MLX5DV_PROVIDER_PATH);
+        m_mlx5dv_profiler = get_instance<mlx5dv::Profiler>(shim_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
 
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>(
                 [](auto&&, mlx5dv_obj* obj, uint64_t obj_type, auto&&...) {

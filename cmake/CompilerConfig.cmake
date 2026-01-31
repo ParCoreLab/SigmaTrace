@@ -16,6 +16,7 @@ endif ()
 # Compile time variables
 # ================================================================
 set(SIGMA_PROVIDER_VAR_PREFIX "SIGMA_PROVIDER_")
+set(SIGMA_PROVIDER_PATHS_TARGET "sigma_provider_paths")
 
 set(SIGMA_TARGET_DIR_FULL "${CMAKE_BINARY_DIR}/target")
 set(SIGMA_PROFILER_PROVIDERS_DIR "./providers")
@@ -219,6 +220,13 @@ function(Sigma_add_provider_library name)
 endfunction()
 
 function(Sigma_profiler_link_provider name provider)
+    set(provider_defs_target ${SIGMA_PROVIDER_PATHS_TARGET})
+
+    # Create interface target for this provider's definitions if it doesn't exist
+    if (NOT TARGET ${provider_defs_target})
+        add_library(${provider_defs_target} INTERFACE)
+    endif ()
+
     target_include_directories(
             ${name}
             PUBLIC
@@ -227,8 +235,10 @@ function(Sigma_profiler_link_provider name provider)
     get_target_property(ProviderName ${provider} OUTPUT_NAME)
 
     # SIGMA_PROVIDER_ibverbs_trace=./providers/libibverbs_trace.so
-    target_compile_definitions(${name} PRIVATE
+    target_compile_definitions(${provider_defs_target} INTERFACE
             "${SIGMA_PROVIDER_VAR_PREFIX}${ProviderName}=\"${SIGMA_PROFILER_PROVIDERS_DIR}/$<TARGET_FILE_NAME:${provider}>\"")
+
+    target_link_libraries(${name} PRIVATE ${provider_defs_target})
 endfunction()
 
 # Sigma_add_cuda_library(name [STATIC|SHARED] source1 ...)
