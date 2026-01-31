@@ -1,0 +1,17 @@
+option(BUILD_ABSEIL "Build bundled Abseil" ON)
+set(ABSEIL_ROOT "" CACHE PATH "Prefix where system Abseil is installed")
+
+# Not an external project because there are too many targets and this is easier
+if (BUILD_ABSEIL)
+    set(ABSL_BUILD_TESTING OFF)
+    set(ABSL_USE_GOOGLETEST_HEAD OFF)
+    set(ABSL_PROPAGATE_CXX_STD ON)
+    set(ABSL_ENABLE_INSTALL ON)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/Imports/abseil-cpp" "${CMAKE_BINARY_DIR}/abseil-build" EXCLUDE_FROM_ALL SYSTEM)
+else ()
+    if (ABSEIL_ROOT)
+        find_package(absl REQUIRED PATHS "${ABSEIL_ROOT}" NO_DEFAULT_PATH)
+    else ()
+        find_package(absl REQUIRED)
+    endif ()
+endif ()

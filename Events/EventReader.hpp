@@ -60,10 +60,16 @@ namespace Events {
             return process_merged();
         }
 
+        const auto& get_stats() const noexcept {
+            return m_event_stats;
+        }
+
     protected:
         Derived& derived() {
             return static_cast<Derived&>(*this);
         }
+
+        std::map<std::string_view, size_t> m_event_stats{};
 
     private:
         // Single stream state
@@ -204,7 +210,8 @@ namespace Events {
                     ++count;
                 } else {
                     // No reader for this, we need to skip the stream...
-                    std::cerr << "WARNING: No reader for ID " << static_cast<int>(state.event_id) << std::endl;
+                    std::cerr << "WARNING: No reader for ID " << static_cast<EventId_T>(state.event_id) << ". "
+                              << "Add its tag to the type list" << std::endl;
                     state.stream.close();
                     continue;
                 }
@@ -239,6 +246,8 @@ namespace Events {
 
             // There must be a visitor for this event if we're at this point
             derived().visit(EventTrait<EventT>{}, state.file_header, std::move(stored.header), std::move(stored.data));
+
+            ++m_event_stats[EventTrait<EventT>::name];
 
             return true;
         }

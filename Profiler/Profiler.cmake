@@ -71,5 +71,9 @@ target_link_libraries(ProfilerEventReader PRIVATE EventsLib)
 target_include_directories(ProfilerEventReader PRIVATE "${CMAKE_SOURCE_DIR}/Events")
 
 target_link_libraries(ProfilerEventReader PRIVATE PerfettoProto)
+target_link_libraries(ProfilerEventReader PRIVATE
+        absl::hash
+        absl::flat_hash_map
+        absl::flat_hash_set)
 # ================================================================
 

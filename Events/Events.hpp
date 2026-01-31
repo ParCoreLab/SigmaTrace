@@ -18,12 +18,22 @@ namespace Events {
         // IBVerbs events (100-199)
         IbvOpenDevice = 100,
         IbvCloseDevice = 101,
-        IbvPostSend = 102,
-        IbvPostRecv = 103,
-        IbvPollCq = 104,
-        IbvPostSrqRecv = 105,
-        IbvReqNotifyCq = 106,
-        IbvCompletion = 107, // Individual work completion
+        IbvMemoryReg = 102,
+        // ================================================================
+        IbvPostSend = 103,
+        IbvPostSendWr = 104,
+        IbvPostSendSg = 105,
+        // ================================================================
+        IbvPostRecv = 106,
+        IbvPostRecvWr = 107,
+        // ================================================================
+        IbvPollCq = 108,
+        IbvPollCqCompletion = 109,
+        // ================================================================
+        IbvPostSrqRecv = 110,
+        IbvReqNotifyCq = 111,
+        // IbvCompletion = 112, // Individual work completion
+        // ================================================================
 
         // mlx5dv specific events
         Mlx5dvDoorbellRing = 200,
@@ -55,5 +65,8 @@ namespace Events {
         CPU,
         GPU,
         NIC,
+        // TODO: need to differentiate between CPU and GPU RDMA calls as well as non-RDMA ops
+        // GPU_RDMA,
+        // CPU_RDM
     };
 } // namespace Events

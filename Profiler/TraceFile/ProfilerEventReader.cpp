@@ -1,7 +1,10 @@
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <unordered_map>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
+#include <absl/hash/hash.h>
 
 #include <perfetto/trace/perfetto_trace.pb.h>
 
@@ -21,10 +24,19 @@ using Events::EventTrait;
 namespace ProfilerEvents = Profiler::Events;
 using Profiler::Events::GpuId_T;
 
-using EnabledEvents = Events::TypeList<ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,
-                                       ProfilerEvents::Mlx5MemoryRegistration, ProfilerEvents::Mlx5MemoryDereg,
-                                       ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
-                                       ProfilerEvents::CUDAKernelExit>;
+using EnabledEvents =
+        Events::TypeList<ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,                             //
+                         ProfilerEvents::IbvMemoryReg,                                                              //
+                         ProfilerEvents::IbvPostSend, ProfilerEvents::IbvPostSendWr, ProfilerEvents::IbvPostSendSg, //
+                         ProfilerEvents::IbvPostRecv, ProfilerEvents::IbvPostRecvWr,                                //
+                         ProfilerEvents::IbvPollCq, ProfilerEvents::IbvCompletion,                                  //
+                         ProfilerEvents::Mlx5MemoryRegistration, ProfilerEvents::Mlx5MemoryDereg,                   //
+                         ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
+                         ProfilerEvents::CUDAKernelExit //
+                         >;
+
+template<typename T, typename... Ts>
+concept OneOf = (std::same_as<T, Ts> || ...);
 
 // ============================================================================
 // PerfettoTraceBuilder - Helper for constructing Perfetto traces
@@ -40,33 +52,28 @@ public:
         CPU = static_cast<int>(Events::EventCategory::CPU),
         GPU = static_cast<int>(Events::EventCategory::GPU),
         NIC = static_cast<int>(Events::EventCategory::NIC),
+        NIC_QP,
         Node,
         Operation
     };
     // TODO: dumb. Make tracks dynamic
-    const std::map<TrackType, std::string> TrackTypeStr{{TrackType::Root, "Root"}, {TrackType::CPU, "CPU"},
-                                                        {TrackType::GPU, "GPU"},   {TrackType::NIC, "NIC"},
-                                                        {TrackType::Node, "Node"}, {TrackType::Operation, "Operation"}};
+    const absl::flat_hash_map<TrackType, std::string> TrackTypeStr{{TrackType::Root, "Root"},
+                                                                   {TrackType::CPU, "CPU"},
+                                                                   {TrackType::GPU, "GPU"},
+                                                                   {TrackType::NIC, "NIC"},
+                                                                   {TrackType::NIC_QP, "QP"},
+                                                                   {TrackType::Node, "Node"},
+                                                                   {TrackType::Operation, "Operation"}};
 
     // Sequence flags from Perfetto
     static constexpr uint32_t SEQ_INCREMENTAL_STATE_CLEARED = 1;
     static constexpr uint32_t SEQ_NEEDS_INCREMENTAL_STATE = 2;
 
-    // Generate deterministic UUID from components
-    static uint64_t make_uuid(const TrackType type, const uint64_t node_id = 0, const uint64_t device_id = 0,
-                              const uint64_t op_id = 0) {
-        // Pack: [type:8][node:16][device:16][op:24]
-        return (static_cast<uint64_t>(type) << 56) | (static_cast<uint64_t>(node_id) << 40) |
-               (static_cast<uint64_t>(device_id) << 24) | static_cast<uint64_t>(op_id);
+    template<typename... Args>
+    static uint64_t make_uuid(Args&&... args) {
+        // Warning: this can produce different hashes with the same values if their types don't match
+        return absl::HashOf(std::forward<Args>(args)...);
     }
-
-    static uint64_t make_uuid(const Events::EventTypeId event_id, const uint64_t node_id, const uint64_t device_id,
-                              const uint64_t op_id) {
-        // Pack: [event:8][node:16][device:16][op:24]
-        return (static_cast<uint64_t>(event_id) << 56) | (static_cast<uint64_t>(node_id) << 40) |
-               (static_cast<uint64_t>(device_id) << 24) | (static_cast<uint64_t>(op_id));
-    }
-
 
     // Register the root track (call once at start)
     void register_root_track(const std::string& name) {
@@ -85,7 +92,7 @@ public:
         auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
         desc->set_name(name);
-        m_registered_tracks[uuid] = true;
+        m_registered_tracks.emplace(uuid);
     }
 
     // One node is one network host
@@ -95,13 +102,19 @@ public:
             return uuid;
         }
 
+        const auto root_uuid = make_uuid(TrackType::Root);
+
         auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
-        desc->set_parent_uuid(make_uuid(TrackType::Root));
-        desc->set_name(name.empty() ? "Node " + std::to_string(node_id) : name);
-        m_registered_tracks[uuid] = true;
+        desc->set_parent_uuid(root_uuid);
+
+        // Node 0: hostname
+        auto node_name = "Node " + std::to_string(node_id) + ": " + name;
+        desc->set_name(std::move(node_name));
+
+        m_registered_tracks.emplace(uuid);
         return uuid;
     }
 
@@ -115,13 +128,13 @@ public:
         }
 
         // Ensure parent node track exists
-        register_node_track(node_id);
+        const auto node_uuid = register_node_track(node_id);
 
         auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         auto* desc = packet->mutable_track_descriptor();
         desc->set_uuid(uuid);
-        desc->set_parent_uuid(make_uuid(TrackType::Node, node_id));
+        desc->set_parent_uuid(node_uuid);
 
         std::stringstream ss;
 
@@ -140,29 +153,26 @@ public:
 
         desc->set_name(ss.str());
 
-        m_registered_tracks[uuid] = true;
+        m_registered_tracks.emplace(uuid);
         return uuid;
     }
 
-    // Register an operation track for async operations (parent: GPU)
-    uint64_t register_operation_track(const uint64_t node_id, const uint64_t gpu_id, const uint64_t op_id,
-                                      const std::string& name) {
-        const uint64_t uuid = make_uuid(TrackType::Operation, node_id, gpu_id, op_id);
-        if (m_registered_tracks.contains(uuid)) {
-            return uuid;
+    // Register an operation or subdevice track
+    uint64_t register_subdevice_track(const uint64_t parent_uuid, const uint64_t subdevice_uuid,
+                                      const uint64_t subdevice_id, const std::string& name = "") {
+        if (m_registered_tracks.contains(subdevice_uuid)) {
+            return subdevice_uuid;
         }
-
-        // Ensure parent GPU track exists
-        register_device_track(TrackType::GPU, node_id, gpu_id);
 
         auto* packet = m_trace.add_packet();
         packet->set_trusted_packet_sequence_id(m_sequence_id);
         auto* desc = packet->mutable_track_descriptor();
-        desc->set_uuid(uuid);
-        desc->set_parent_uuid(make_uuid(TrackType::GPU, node_id, gpu_id));
-        desc->set_name(name);
-        m_registered_tracks[uuid] = true;
-        return uuid;
+        desc->set_uuid(subdevice_uuid);
+        desc->set_parent_uuid(parent_uuid);
+        desc->set_name(name + std::to_string(subdevice_id));
+        m_registered_tracks.emplace(subdevice_uuid);
+
+        return subdevice_uuid;
     }
 
     // ========================================================================
@@ -232,6 +242,10 @@ public:
         return m_next_flow_id++;
     }
 
+    uint64_t new_correlation_id() {
+        return m_next_correlation_id++;
+    }
+
     // Begin a flow at the source (e.g., nvshmem_put initiator)
     void begin_flow(uint64_t track_uuid, uint64_t timestamp_ns, uint64_t flow_id, const std::string& name,
                     const std::string& category = "data_flow") {
@@ -280,15 +294,8 @@ public:
     // ========================================================================
     // Debug Annotations (for attaching metadata to events)
     // ========================================================================
-
-    // Add debug annotation to the most recent packet's track event
     template<typename T>
-    void add_annotation(const std::string& key, const T& value) {
-        if (m_trace.packet_size() == 0) {
-            return;
-        }
-
-        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
+    void add_annotation(perfetto::protos::TrackEvent* event, const std::string& key, const T& value) {
         auto* ann = event->add_debug_annotations();
         ann->set_name(key);
 
@@ -303,6 +310,19 @@ public:
         } else if constexpr (std::is_same_v<T, std::string>) {
             ann->set_string_value(value);
         }
+    }
+
+    // Add debug annotation to the most recent packet's track event
+    // TODO: change the semantics of this. Getting the last packet is weird
+    template<typename T>
+    void add_annotation(const std::string& key, const T& value) {
+        if (m_trace.packet_size() == 0) {
+            return;
+        }
+
+        auto* event = m_trace.mutable_packet(m_trace.packet_size() - 1)->mutable_track_event();
+
+        return add_annotation(event, key, value);
     }
 
     // ========================================================================
@@ -326,19 +346,23 @@ public:
 
 private:
     perfetto::protos::Trace m_trace;
-    std::unordered_map<uint64_t, bool> m_registered_tracks;
+    absl::flat_hash_set<uint64_t> m_registered_tracks;
     uint64_t m_next_flow_id{1};
+    uint64_t m_next_correlation_id{1};
     uint32_t m_sequence_id{1}; // Constant sequence ID (single-threaded writer)
     bool m_emitted_first_packet{false};
 };
 
 struct LocalStorage {
-    std::unordered_map<uint64_t, GpuId_T> ibv_context_to_nic_id;
+    absl::flat_hash_map<uint64_t, uint64_t> ibv_context_to_nic_id;
 
     // mem id -> flow id
-    std::unordered_map<uint64_t, uint64_t> pending_mem_flows;
+    absl::flat_hash_map<uint64_t, uint64_t> pending_mem_flows;
 
-    std::unordered_map<uint64_t, uint64_t> pending_ibv_context_flows;
+    absl::flat_hash_map<uint64_t, uint64_t> pending_ibv_context_flows;
+
+    // (qp_num, wr_id) -> flow id
+    absl::flat_hash_map<std::tuple<uint64_t, uint32_t>, uint64_t> pending_ibv_completions;
 };
 
 // ============================================================================
@@ -371,23 +395,34 @@ public:
         return m_output_path;
     }
 
-    void add_header_annotations(const EventFileHeader& file_header) {
-        m_builder.add_annotation("Hostname", file_header.hostname);
-        m_builder.add_annotation("CPU ID", file_header.cpu_id);
-        m_builder.add_annotation("Process ID", file_header.process_id);
-        m_builder.add_annotation("Thread ID", file_header.process_id);
+    void add_header_annotations(perfetto::protos::TrackEvent* event, const EventFileHeader& file_header) {
+        m_builder.add_annotation(event, "Hostname", file_header.hostname);
+        m_builder.add_annotation(event, "CPU ID", file_header.cpu_id);
+        m_builder.add_annotation(event, "Process ID", file_header.process_id);
+        m_builder.add_annotation(event, "Thread ID", file_header.process_id);
     }
 
-    auto& get_local_storage(GpuId_T node_id, GpuId_T process_id, GpuId_T thread_id) {
-        return m_local_storage[{node_id, process_id, thread_id}];
+    auto& thread_local_storage(GpuId_T node_id, GpuId_T process_id, GpuId_T thread_id) {
+        return m_thread_local_storage[{node_id, process_id, thread_id}];
     }
 
-    auto& get_local_storage(const EventFileHeader& file_header) {
-        const auto node_id = m_node_ids[file_header.hostname];
+    auto& thread_local_storage(const EventFileHeader& file_header) {
+        const auto node_id = register_node(file_header.hostname);
         const auto process_id = file_header.process_id;
         const auto thread_id = file_header.thread_id;
 
-        return m_local_storage[{node_id, process_id, thread_id}];
+        return m_thread_local_storage[{node_id, process_id, thread_id}];
+    }
+
+    auto& process_local_storage(GpuId_T node_id, GpuId_T process_id) {
+        return m_process_local_storage[{node_id, process_id}];
+    }
+
+    auto& process_local_storage(const EventFileHeader& file_header) {
+        const auto node_id = register_node(file_header.hostname);
+        const auto process_id = file_header.process_id;
+
+        return m_process_local_storage[{node_id, process_id}];
     }
 
     // Generically handled event
@@ -395,24 +430,26 @@ public:
     void visit(EventTrait<EventT> T, const EventFileHeader& file_header, EventHeader&& header, EventT&& event) {
         using Meta = decltype(T);
 
-        const auto node_id = m_node_ids[file_header.hostname];
+        const auto node_id = register_node(file_header.hostname);
 
         // Try to get the correct ID
-        const auto [category, id] =
-                std::invoke([&file_header, &event]() -> std::tuple<std::string_view, std::uint64_t> {
+        const auto [category, device_id] =
+                std::invoke([this, &file_header, &event]() -> std::tuple<std::string_view, std::int32_t> {
             sigma_ignore_unused(event);
-            if constexpr (requires { event.gpu_id; }) {
-                return {"gpu", static_cast<uint64_t>(event.gpu_id)};
-            } else if constexpr (requires { event.nic_id; }) {
-                return {"nic", static_cast<uint64_t>(event.nic_id)};
+            if constexpr (requires { event.context_addr; }) {
+                auto& local_storage = process_local_storage(file_header);
+                const auto nic_id = local_storage.ibv_context_to_nic_id[event.context_addr];
+                return {"nic", nic_id};
+            } else if constexpr (requires { event.gpu_id; }) {
+                return {"gpu", event.gpu_id};
             }
 
             return {"cpu", file_header.cpu_id};
         });
 
-        const uint64_t track_uuid =
-                m_builder.register_device_track(static_cast<TrackType>(file_header.event_category),
-                                                static_cast<uint64_t>(node_id), static_cast<uint64_t>(id), Meta::name);
+        const uint64_t track_uuid = m_builder.register_device_track(static_cast<TrackType>(file_header.event_category),
+                                                                    static_cast<uint64_t>(node_id),
+                                                                    static_cast<uint64_t>(device_id), Meta::name);
 
         if (header.timestamp_end == 0) {
             m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name);
@@ -421,81 +458,228 @@ public:
         }
     }
 
-    void visit(EventTrait<ProfilerEvents::IbvOpenDevice> T, const EventFileHeader& file_header, EventHeader&& header,
-               ProfilerEvents::IbvOpenDevice&& event) {
-        using Meta = decltype(T);
+    // ========================================================================
+    // CPU-side ibv events
+    uint64_t get_ibv_qp_wr_flow_id(LocalStorage& local_storage, const auto& event) {
+        auto& completion_flow_map = local_storage.pending_ibv_completions;
 
-        const std::string nic_name{event.name};
+        uint64_t flow_id{0};
+        const auto& flow_entry = completion_flow_map.find({event.qp_num, event.wr_id});
+        // WRs IDs are reused sometimes
+        if (flow_entry != completion_flow_map.end()) {
+            flow_id = flow_entry->second;
+        } else {
+            flow_id = m_builder.new_flow_id();
+            completion_flow_map.insert({{event.qp_num, event.wr_id}, flow_id});
+        }
 
-        const auto node_id = m_node_ids[file_header.hostname];
-        const auto nic_id = m_nic_ids[nic_name];
-
-        const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
-                                                                    static_cast<uint64_t>(nic_id), nic_name);
-
-        const auto flow_id = m_builder.new_flow_id();
-
-        auto* slice =
-                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "control");
-        add_header_annotations(file_header);
-        slice->add_flow_ids(flow_id);
-
-        m_builder.add_annotation("name", nic_name);
-        m_builder.add_annotation("name", event.dev_name);
-        m_builder.add_annotation("dev_path", event.dev_path);
-        m_builder.add_annotation("ibdev_path", event.ibdev_path);
-
-        // Should be enums
-        m_builder.add_annotation("node_type", event.node_type);
-        m_builder.add_annotation("transport_type", event.transport_type);
-
-        m_builder.add_annotation("Context addr", event.context_addr);
-
-        auto& local_storage = get_local_storage(file_header);
-        local_storage.ibv_context_to_nic_id[event.context_addr] = nic_id;
-        local_storage.pending_ibv_context_flows[event.context_addr] = flow_id;
+        return flow_id;
     }
 
-    void visit(EventTrait<ProfilerEvents::IbvCloseDevice> T, const EventFileHeader& file_header, EventHeader&& header,
-               ProfilerEvents::IbvCloseDevice&& event) {
-        using Meta = decltype(T);
+    template<typename EventT>
+    // requires OneOf<EventT, ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,
+    //                ProfilerEvents::IbvMemoryReg, ProfilerEvents::IbvPostSend, ProfilerEvents::IbvPostSendWr,
+    //                ProfilerEvents::IbvPostSendSg, ProfilerEvents::IbvPostRecv, ProfilerEvents::IbvPostRecvWr,
+    //                ProfilerEvents::IbvPollCq, ProfilerEvents::IbvCompletion>
+    auto* visit_ibv(const EventFileHeader& file_header, EventHeader&& header, EventT&& event, bool is_nic = false) {
+        using Meta = EventTrait<EventT>;
 
-        const auto node_id = m_node_ids[file_header.hostname];
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        // const auto thread_id = file_header.thread_id;
 
-        auto& local_storage = get_local_storage(file_header);
+        auto& local_storage = process_local_storage(file_header);
         const auto nic_id = local_storage.ibv_context_to_nic_id[event.context_addr];
 
-        const auto track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::NIC, static_cast<uint64_t>(node_id),
-                                                                static_cast<uint64_t>(nic_id));
+        const uint64_t cpu_track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+        const uint64_t nic_track_uuid = m_builder.register_device_track(TrackType::NIC, node_id, nic_id);
 
+        const auto ts_start{header.timestamp_start};
+        const auto ts_end{header.timestamp_end};
+
+        auto track_uuid = cpu_track_uuid;
+        if (is_nic) {
+            if constexpr (requires { event.qp_num; }) {
+                const uint64_t qp_track_uuid = m_builder.make_uuid(TrackType::NIC_QP, node_id, nic_id, event.qp_num);
+                m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
+                track_uuid = qp_track_uuid;
+            } else {
+                track_uuid = nic_track_uuid;
+            }
+        }
+
+        auto* slice = m_builder.add_slice(track_uuid, ts_start, ts_end, Meta::name, "ibv");
+        add_header_annotations(slice, file_header);
+        add_header_annotations(slice, file_header);
+
+        m_builder.add_annotation(slice, "Context Addr", event.context_addr);
+
+        return slice;
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvOpenDevice>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvOpenDevice&& event) {
+        // This visitor sets up the NIC ID mapping
+        const std::string nic_name{event.name};
+
+        const auto node_id = register_node(file_header.hostname);
+        const auto nic_id = register_nic(nic_name);
+
+        // Ensure NIC track with name exists
+        m_builder.register_device_track(TrackType::NIC, node_id, nic_id, nic_name);
+
+        auto& local_storage = process_local_storage(file_header);
+        local_storage.ibv_context_to_nic_id[event.context_addr] = nic_id;
+
+        const auto flow_id = m_builder.new_flow_id();
+        local_storage.pending_ibv_context_flows[event.context_addr] = flow_id;
+
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
+        slice->add_flow_ids(flow_id);
+
+        m_builder.add_annotation(slice, "name", nic_name);
+        m_builder.add_annotation(slice, "name", event.dev_name);
+        m_builder.add_annotation(slice, "dev_path", event.dev_path);
+        m_builder.add_annotation(slice, "ibdev_path", event.ibdev_path);
+
+        // Should be enums
+        m_builder.add_annotation(slice, "node_type", event.node_type);
+        m_builder.add_annotation(slice, "transport_type", event.transport_type);
+
+        m_builder.add_annotation(slice, "Context addr", event.context_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvCloseDevice>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvCloseDevice&& event) {
+        auto& local_storage = process_local_storage(file_header);
         const auto flow_id = local_storage.pending_ibv_context_flows[event.context_addr];
 
-        auto* slice =
-                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "control");
-        add_header_annotations(file_header);
-
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
         slice->add_terminating_flow_ids(flow_id);
     }
+
+    void visit(EventTrait<ProfilerEvents::IbvMemoryReg>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvMemoryReg&& event) {
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
+
+        m_builder.add_annotation(slice, "Addr", event.addr);
+        m_builder.add_annotation(slice, "Size", event.size);
+        m_builder.add_annotation(slice, "Type", event.type);
+        m_builder.add_annotation(slice, "GPU ID", event.gpu_id);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvPostSend>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvPostSend&& event) {
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
+
+        m_builder.add_annotation(slice, "QP Num", event.qp_num);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvPostSendWr>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvPostSendWr&& event) {
+        auto* slice =
+                visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event), true);
+
+        const auto flow_id = get_ibv_qp_wr_flow_id(process_local_storage(file_header), event);
+        slice->add_flow_ids(flow_id);
+
+        m_builder.add_annotation("QP Num", event.qp_num);
+        m_builder.add_annotation("WR ID", event.wr_id);
+        m_builder.add_annotation("Num SGE", event.num_sge);
+        m_builder.add_annotation("Opcode", event.opcode);
+        m_builder.add_annotation("Send Flags", event.send_flags);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvPostSendSg>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvPostSendSg&& event) {
+        auto* slice =
+                visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event), true);
+
+        const auto flow_id = get_ibv_qp_wr_flow_id(process_local_storage(file_header), event);
+        slice->add_flow_ids(flow_id);
+
+        m_builder.add_annotation("QP Num", event.qp_num);
+        m_builder.add_annotation("WR ID", event.wr_id);
+        m_builder.add_annotation("Addr", event.addr);
+        m_builder.add_annotation("Length", event.length);
+        m_builder.add_annotation("Lkey", event.lkey);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvPostRecv>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvPostRecv&& event) {
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
+
+        m_builder.add_annotation(slice, "QP Num", event.qp_num);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvPostRecvWr>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvPostRecvWr&& event) {
+        auto* slice =
+                visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event), true);
+
+        const auto flow_id = get_ibv_qp_wr_flow_id(process_local_storage(file_header), event);
+        slice->add_flow_ids(flow_id);
+
+        // TODO: cross-node flow with lkey
+
+        m_builder.add_annotation(slice, "QP Num", event.qp_num);
+        m_builder.add_annotation(slice, "WR ID", event.wr_id);
+        m_builder.add_annotation(slice, "Num SGE", event.num_sge);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvPollCq>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvPollCq&& event) {
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
+
+        m_builder.add_annotation(slice, "Num Completed", event.num_completed);
+        m_builder.add_annotation("Num Requested", event.num_requested);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvCompletion>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvCompletion&& event) {
+        auto* slice =
+                visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event), true);
+
+        // Try to terminate ibv flows
+        auto& local_storage = process_local_storage(file_header);
+        auto& completion_flow_map = local_storage.pending_ibv_completions;
+        const auto& flow_entry = completion_flow_map.find({event.qp_num, event.wr_id});
+        if (flow_entry == completion_flow_map.end()) {
+            std::cerr << "WARNING: IbvCompletion found no preceding flows" << std::endl;
+        } else {
+            const auto flow_id = flow_entry->second;
+            slice->add_terminating_flow_ids(flow_id);
+            completion_flow_map.erase(flow_entry);
+        }
+
+        m_builder.add_annotation("QP Num", event.qp_num);
+        m_builder.add_annotation("WR ID", event.wr_id);
+        m_builder.add_annotation("Opcode", event.opcode);
+        m_builder.add_annotation("Status", event.status);
+        m_builder.add_annotation("Byte len", event.pkey_index);
+    }
+    // ========================================================================
 
     void visit(EventTrait<ProfilerEvents::Mlx5MemoryRegistration> T, const EventFileHeader& file_header,
                EventHeader&& header, ProfilerEvents::Mlx5MemoryRegistration&& event) {
         using Meta = decltype(T);
 
-        const auto node_id = m_node_ids[file_header.hostname];
+        const auto node_id = register_node(file_header.hostname);
         const auto nic_id = event.nic_id;
 
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
                                                                     static_cast<uint64_t>(nic_id));
 
+        // TODO: not checking if exists...
         const auto flow_id = m_builder.new_flow_id();
-        auto& local_storage = get_local_storage(file_header);
+        auto& local_storage = process_local_storage(file_header);
         local_storage.pending_mem_flows[event.mem_id] = flow_id;
 
         auto* slice =
                 m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "memory");
 
         slice->add_flow_ids(flow_id);
-        add_header_annotations(file_header);
+        add_header_annotations(slice, file_header);
 
         m_builder.add_annotation("Memory ID", event.mem_id);
         m_builder.add_annotation("Flow ID", flow_id);
@@ -507,20 +691,19 @@ public:
                ProfilerEvents::Mlx5MemoryDereg&& event) {
         using Meta = decltype(T);
 
-        const auto node_id = m_node_ids[file_header.hostname];
+        const auto node_id = register_node(file_header.hostname);
         const auto nic_id = event.nic_id;
-
 
         // Ensure GPU track exists
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
                                                                     static_cast<uint64_t>(nic_id));
 
-        auto& local_storage = get_local_storage(file_header);
+        auto& local_storage = process_local_storage(file_header);
         const auto flow_id = local_storage.pending_mem_flows[event.mem_id];
         local_storage.pending_mem_flows.erase(event.mem_id);
 
         auto* slice = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name, "memory");
-        add_header_annotations(file_header);
+        add_header_annotations(slice, file_header);
         m_builder.add_annotation("Memory ID", event.mem_id);
 
         slice->add_terminating_flow_ids(flow_id);
@@ -530,7 +713,7 @@ public:
                ProfilerEvents::DoorbellRing&& event) {
         using Meta = decltype(T);
 
-        const auto node_id = m_node_ids[file_header.hostname];
+        const auto node_id = register_node(file_header.hostname);
         const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
@@ -539,8 +722,8 @@ public:
                                                                     static_cast<uint64_t>(gpu_id));
 
         // Emit instant event for doorbell ring
-        m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name);
-        add_header_annotations(file_header);
+        auto* instant_event = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name);
+        add_header_annotations(instant_event, file_header);
 
         m_builder.add_annotation("Addr", event.addr);
         m_builder.add_annotation("wqe_index", event.wqe_index);
@@ -550,7 +733,7 @@ public:
 
     void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader& file_header, EventHeader&& header,
                ProfilerEvents::CUDAKernelLaunch&& event) {
-        const auto node_id = m_node_ids[file_header.hostname];
+        const auto node_id = register_node(file_header.hostname);
         const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
@@ -564,7 +747,7 @@ public:
 
     void visit(EventTrait<ProfilerEvents::CUDAKernelExit>, const EventFileHeader& file_header, EventHeader&& header,
                ProfilerEvents::CUDAKernelExit&& event) {
-        const auto node_id = m_node_ids[file_header.hostname];
+        const auto node_id = register_node(file_header.hostname);
         const auto gpu_id = event.gpu_id;
 
         // Ensure GPU track exists
@@ -647,11 +830,45 @@ private:
     std::filesystem::path m_output_path;
     PerfettoTraceBuilder m_builder;
 
-    // TODO: This gives First-come, first-serve IDs
-    std::map<std::string, GpuId_T> m_node_ids;
-    std::map<std::string, GpuId_T> m_nic_ids;
+    template<typename T>
+    uint32_t register_node(T&& key) {
+        const auto& [entry, inserted] = m_node_ids.try_emplace(std::forward<T>(key), m_current_node_id);
+        if (!inserted) {
+            return entry->second;
+        }
 
-    std::map<std::tuple<GpuId_T, GpuId_T, GpuId_T>, LocalStorage> m_local_storage;
+        m_builder.register_node_track(entry->second, entry->first);
+
+        ++m_current_node_id;
+        return entry->second;
+    }
+
+    template<typename T>
+    uint32_t register_nic(T&& key) {
+        const auto& [entry, inserted] = m_nic_ids.try_emplace(std::forward<T>(key), m_current_nic_id);
+        if (!inserted) {
+            return entry->second;
+        }
+
+        ++m_current_nic_id;
+        return entry->second;
+    }
+
+    // TODO: This gives First-come, first-serve IDs
+    uint32_t m_current_node_id{0};
+    absl::flat_hash_map<std::string, decltype(m_current_node_id)> m_node_ids;
+
+    uint32_t m_current_nic_id{0};
+    absl::flat_hash_map<std::string, decltype(m_current_nic_id)> m_nic_ids;
+
+    // Node ID
+    absl::flat_hash_map<std::tuple<GpuId_T, GpuId_T>, LocalStorage> m_node_local_storage;
+
+    // Node ID, Process ID
+    absl::flat_hash_map<std::tuple<GpuId_T, GpuId_T>, LocalStorage> m_process_local_storage;
+
+    // Node ID, Process ID, Thread ID
+    absl::flat_hash_map<std::tuple<GpuId_T, GpuId_T, GpuId_T>, LocalStorage> m_thread_local_storage;
 
     // Track pending operations for flow/slice matching
     // std::unordered_map<uint64_t, uint64_t> m_pending_flows;  // request_id -> flow_id
@@ -682,6 +899,25 @@ int main(int argc, char* argv[]) {
 
     const size_t count = reader.process();
     std::cout << "\nProcessed " << count << " events." << std::endl;
+
+    // Print stats
+    // TODO: not clean
+    const auto& stats_map = reader.get_stats();
+    std::vector<std::pair<std::string_view, std::size_t>> sorted_stats;
+    sorted_stats.reserve(stats_map.size());
+    for (const auto& entry: stats_map) {
+        sorted_stats.emplace_back(entry.first, entry.second);
+    }
+
+    sorted_stats.reserve(stats_map.size());
+    std::ranges::make_heap(sorted_stats, [](const auto& a, const auto& b) {
+        return a.second < b.second;
+    });
+
+    std::cout << "=== Stats ===" << std::endl;
+    for (const auto& [event_name, event_count]: sorted_stats) {
+        std::cout << event_name << ": " << event_count << std::endl;
+    }
 
     return 0;
 }

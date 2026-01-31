@@ -17,6 +17,7 @@ endfunction()
 # Dependencies
 # TODO: don't pollute CMAKE_MODULE_PATH
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Imports")
+include(Abseil)
 include(RDMA_CORE)
 include(NCCL)
 include(NVSHMEM)

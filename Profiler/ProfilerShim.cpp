@@ -177,6 +177,49 @@ struct ProfilerCtx {
     // ================================================
 
     // ================================================
+    // ibv memory tracking
+    // address -> (size, device_id)
+    // TODO: put this in a module with more info (memory type, device type) and better (binary) search
+    std::map<uint64_t, std::tuple<uint64_t, GpuId_T>> m_ibv_memory_registrations;
+
+    GpuId_T find_gpu_id(const uint64_t addr) {
+        const auto& entry = m_ibv_memory_registrations.find(addr);
+
+        // Exact match
+        if (entry != m_ibv_memory_registrations.end()) {
+            return std::get<1>(entry->second);
+        }
+
+        for (const auto& [mem_addr, mem_info]: m_ibv_memory_registrations) {
+            const auto [length, device_id] = mem_info;
+
+            if (mem_addr <= addr && addr < (mem_addr + length)) {
+                return device_id;
+            }
+        }
+
+        return Profiler::Events::UnknownDeviceId;
+    }
+
+    static GpuId_T get_addr_gpu_id(uint64_t addr) {
+        int cuda_dev;
+        CUDA_CHECK(cudaGetDevice(&cuda_dev));
+
+        cudaPointerAttributes attrs{};
+        CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<void*>(addr)));
+
+        GpuId_T gpu_id{static_cast<GpuId_T>(attrs.device)};
+        if (attrs.type == cudaMemoryTypeUnregistered) {
+            // Making sure it's a well defined value
+            return Profiler::Events::UnknownDeviceId;
+        }
+
+        return gpu_id;
+    }
+    // ================================================
+
+
+    // ================================================
     // Stats
     std::atomic<int> num_nic_accesses{0};
     std::atomic<int> num_nic_doorbell_accesses{0};
@@ -301,21 +344,181 @@ struct ProfilerCtx {
             m_event_recorder->Record(event, ts_start, ts_end);
         });
 
-        /* IBV stuff unused for now
-        m_ibv_profiler->register_post<ibv::reg_mr_tag>(
-                [this](ibv_mr *out_mr, ibv_pd *pd, void *addr, size_t length, int access) {
-                    auto alloc_addr = reinterpret_cast<uint64_t>(addr);
-                    std::cout << "[Profiler] ibv_reg_mr received at " << std::hex << alloc_addr << std::endl;
-                    // m_ibv_allocations.emplace_back(alloc_addr, length);
-                });
+        // ================================================
+        // Memory registration
+        // TODO: this can be done automatically/declaratively by declaring which arg is addr, which one is length, etc.
+        m_ibv_profiler->register_post<ibv::reg_mr_tag>([this]<typename TS>(ibv_mr* out_mr, ibv_pd* pd, void* addr,
+                                                                           size_t length, int access, TS ts_start,
+                                                                           TS ts_end) {
+            sigma_ignore_unused(out_mr);
+            sigma_ignore_unused(pd);
+            sigma_ignore_unused(access);
+
+            const auto alloc_addr = reinterpret_cast<uint64_t>(addr);
+
+            const auto gpu_id = get_addr_gpu_id(alloc_addr);
+            if (gpu_id != Profiler::Events::UnknownDeviceId) {
+                const auto [_, inserted] = m_ibv_memory_registrations.insert({alloc_addr, {length, gpu_id}});
+                if (!inserted) {
+                    std::cerr << "reg_mr_tag addr " << addr << " already registered" << std::endl;
+                    // std::abort();
+                    return;
+                }
+            }
+
+            const Profiler::Events::IbvMemoryReg event{
+                    .context_addr = reinterpret_cast<uint64_t>(pd->context),
+                    .gpu_id = gpu_id,
+                    .addr = alloc_addr,
+                    .size = length,
+                    .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
+            };
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
 
         m_ibv_profiler->register_post<ibv::reg_mr_iova2_tag>(
-                [this](ibv_mr *out_mr, ibv_pd *pd, void *addr, size_t length, auto &&...) {
-                    auto alloc_addr = reinterpret_cast<uint64_t>(addr);
-                    std::cout << "[Profiler] ibv_reg_mr_iova1232 received at " << std::hex << alloc_addr << std::endl;
-                    // m_ibv_allocations.emplace_back(alloc_addr, length);
-                });
-        */
+                [this]<typename TS>(ibv_mr* out_mr, ibv_pd* pd, void* addr, size_t length, uint64_t iova,
+                                    unsigned int access, TS ts_start, TS ts_end) {
+            sigma_ignore_unused(out_mr);
+            sigma_ignore_unused(pd);
+            sigma_ignore_unused(iova);
+            sigma_ignore_unused(access);
+
+            const auto alloc_addr = reinterpret_cast<uint64_t>(addr);
+
+            const auto gpu_id = get_addr_gpu_id(alloc_addr);
+            if (gpu_id != Profiler::Events::UnknownDeviceId) {
+                const auto [_, inserted] = m_ibv_memory_registrations.insert({alloc_addr, {length, gpu_id}});
+                if (!inserted) {
+                    std::cerr << "reg_mr_iova2_tag addr " << addr << " already registered" << std::endl;
+                    std::abort();
+                }
+            }
+
+            const Profiler::Events::IbvMemoryReg event{
+                    .context_addr = reinterpret_cast<uint64_t>(pd->context),
+                    .gpu_id = gpu_id,
+                    .addr = alloc_addr,
+                    .size = length,
+                    .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
+            };
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ibv_profiler->register_post<ibv::post_send_tag>(
+                [this]<typename TS>(auto&&, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr, TS ts_start, TS ts_end) {
+            sigma_ignore_unused(bad_wr);
+
+            const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
+
+            const Profiler::Events::IbvPostSend post_send_event{
+                    .context_addr = context_addr,
+                    .gpu_id = 0,
+                    .qp_num = qp->qp_num,
+            };
+            m_event_recorder->Record(post_send_event, ts_start, ts_end);
+
+            // TODO: probably an ibv lib function for this
+            for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
+                const Profiler::Events::IbvPostSendWr wr_event{
+                        .context_addr = context_addr,
+                        .gpu_id = 0,
+                        .qp_num = qp->qp_num,
+                        .wr_id = wr_it->wr_id,
+                        .num_sge = wr_it->num_sge,
+                        .opcode = wr_it->opcode,
+                        .send_flags = wr_it->send_flags,
+                };
+                m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
+
+                for (auto sg_idx = 0; sg_idx < wr_it->num_sge; sg_idx++) {
+                    const auto& sg = wr_it->sg_list[sg_idx];
+
+                    const auto sg_addr = sg.addr;
+                    const auto gpu_idx = find_gpu_id(sg_addr);
+                    const auto sg_length = static_cast<size_t>(sg.length);
+
+                    const Profiler::Events::IbvPostSendSg wr_sg_event{
+                            .context_addr = context_addr,
+                            .gpu_id = gpu_idx,
+                            .qp_num = qp->qp_num,
+                            .wr_id = wr_it->wr_id,
+                            .addr = sg_addr,
+                            .length = sg_length,
+                            .lkey = sg.lkey,
+                    };
+                    m_event_recorder->Record(wr_sg_event, ts_start + 2, ts_end - 2);
+                }
+            }
+        });
+
+        m_ibv_profiler->register_post<ibv::post_recv_tag>(
+                [this]<typename TS>(auto&&, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr** bad_wr, TS ts_start, TS ts_end) {
+            sigma_ignore_unused(bad_wr);
+
+            assert(wr->num_sge <= 1 && "TODO: More than 1 SGE found");
+
+            const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
+
+            {
+                const Profiler::Events::IbvPostRecv recv_event{
+                        .context_addr = context_addr,
+                        .qp_num = qp->qp_num,
+                };
+                m_event_recorder->Record(recv_event, ts_start, ts_end);
+            }
+
+            for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
+                const auto gpu_id = find_gpu_id(reinterpret_cast<uint64_t>(qp->pd));
+
+                const Profiler::Events::IbvPostRecvWr recv_wr_event{
+                        .context_addr = context_addr,
+                        .gpu_id = gpu_id,
+                        .qp_num = qp->qp_num,
+                        .wr_id = wr_it->wr_id,
+                        .num_sge = wr_it->num_sge,
+                };
+                m_event_recorder->Record(recv_wr_event, ts_start + 1, ts_end - 1);
+            }
+        });
+
+        m_ibv_profiler->register_post<ibv::poll_cq_tag>(
+                [this]<typename TS>(int out_ret, ibv_cq* cq, int num_entries, ibv_wc* wc, TS ts_start, TS ts_end) {
+            sigma_ignore_unused(num_entries);
+
+            const auto context_addr = reinterpret_cast<uint64_t>(cq->context);
+
+            {
+                const Profiler::Events::IbvPollCq poll_cq_event{
+                        .context_addr = context_addr,
+                        .cq_addr = reinterpret_cast<uint64_t>(cq),
+                        // TODO: might be wrong. Look at cq->
+                        .num_requested = num_entries,
+                        .num_completed = out_ret,
+                };
+                m_event_recorder->Record(poll_cq_event, ts_start, ts_end);
+            }
+
+            // Most polls won't have anything
+            if (out_ret == 0) [[likely]] {
+                return;
+            }
+
+            for (auto i = 0; i < out_ret; i++) {
+                const auto& wc_entry = wc[i];
+
+                const Profiler::Events::IbvCompletion completion_event{
+                        .context_addr = context_addr,
+                        .qp_num = wc_entry.qp_num,
+                        .wr_id = wc_entry.wr_id,
+                        .opcode = wc_entry.opcode,
+                        .status = wc_entry.status,
+                        .byte_len = wc_entry.byte_len,
+                        .pkey_index = wc_entry.pkey_index,
+                };
+                m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
+            }
+        });
     }
 
     void load_nvbit(const std::filesystem::path& shim_dir) noexcept {
@@ -443,7 +646,10 @@ struct ProfilerCtx {
             sigma_ignore_unused(out);
             sigma_ignore_unused(outlen);
 
-            assert(out_obj && "mlx5dv::obj_create_tag resulted in null");
+            if (!out_obj) {
+                std::cerr << "mlx5dv::obj_create_tag resulted in null" << std::endl;
+                return;
+            }
 
             // TODO
             // std::scoped_lock lock(m_ibv_allocations_mutex);
