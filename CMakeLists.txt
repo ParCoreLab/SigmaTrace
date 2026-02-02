@@ -28,7 +28,8 @@ include(Perfetto)
 add_subdirectory(Modules)
 
 # "Main" Test Executable
-Sigma_add_executable(Thing main.cu)
+# Excluded because ncclMemAlloc is broken on some systems
+Sigma_add_executable(Thing EXCLUDE_FROM_ALL main.cu)
 target_link_libraries(Thing PRIVATE SigmaHelpers)
 #target_link_libraries(Thing PRIVATE CUDA::cudart)
 

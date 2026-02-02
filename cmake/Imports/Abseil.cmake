@@ -1,7 +1,11 @@
 option(BUILD_ABSEIL "Build bundled Abseil" ON)
 set(ABSEIL_ROOT "" CACHE PATH "Prefix where system Abseil is installed")
 
-# Not an external project because there are too many targets and this is easier
+# Not an External Project because there are too many targets
+# with complex interdependencies and this is easier
+# We can't find_package after an ExternalProject_add because it happens
+# after the initial configure step and fails because the dependencies
+# from the ExternalProject_add don't exist :(
 if (BUILD_ABSEIL)
     set(ABSL_BUILD_TESTING OFF)
     set(ABSL_USE_GOOGLETEST_HEAD OFF)

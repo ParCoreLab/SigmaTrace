@@ -7,14 +7,24 @@ if (BUILD_NCCL)
         list(APPEND NCCL_DEPENDS_LIST rdma-core ibverbs verbs mlx5)
     endif ()
 
+    # nccl doesn't compile with clang
+    # We default to gcc because some systems have broken nvc++
+    if("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
+        set(SIGMA_NCCL_C_COMPILER "gcc")
+        set(SIGMA_NCCL_CXX_COMPILER "g++")
+    else()
+        set(SIGMA_NCCL_C_COMPILER ${CMAKE_C_COMPILER})
+        set(SIGMA_NCCL_CXX_COMPILER ${CMAKE_CXX_COMPILER})
+    endif()
+
     include(ExternalProject)
     ExternalProject_Add(nccl_external
             SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Imports/nccl"
             BINARY_DIR "${CMAKE_BINARY_DIR}/nccl-build"
             CMAKE_ARGS
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-            # -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-            # -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -DCMAKE_C_COMPILER=${SIGMA_NCCL_C_COMPILER}
+            -DCMAKE_CXX_COMPILER=${SIGMA_NCCL_CXX_COMPILER}
             -DCUDA_HOME=${CUDAToolkit_LIBRARY_ROOT}
             -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}
             -DVERBOSE=ON
