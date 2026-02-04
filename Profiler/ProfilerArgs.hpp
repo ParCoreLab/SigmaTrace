@@ -20,7 +20,7 @@ namespace Profiler {
 
         std::filesystem::path ShimDir{};
 
-        bool LoadNvbit{true};
+        bool LoadNvbit{false};
         bool LoadIbtrace{true};
         bool LoadMlx5dv{true};
 
@@ -40,7 +40,7 @@ namespace Profiler {
         [[nodiscard]] static ProfilerArgs from_env() {
             return {
                     .ShimDir{parse_env<std::filesystem::path>("ShimPath", {})},
-                    .LoadNvbit = parse_env("LoadNvbit", true),
+                    .LoadNvbit = parse_env("LoadNvbit", false),
                     .LoadIbtrace = parse_env("LoadIbtrace", true),
                     .LoadMlx5dv = parse_env("LoadMlx5dv", true),
                     .Check = parse_env("Check", 0),
