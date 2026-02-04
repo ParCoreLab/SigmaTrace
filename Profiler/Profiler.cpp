@@ -68,10 +68,17 @@ int main(int argc, char* argv[]) {
         // Handle help
         if (vm.count("help")) {
             std::cout << "Usage: " << argv[0] << " [options] <program> [program-args...]" << std::endl;
+            std::cout << "       " << argv[0] << " [options] -- <program> [program-args...]" << std::endl;
             std::cout << std::endl;
             std::cout << profiler_options << std::endl;
-            std::cout << "Example:" << std::endl;
+            std::cout << std::endl;
+            std::cout << "Examples:" << std::endl;
+            std::cout << "  " << argv[0] << " ./my_program arg1 arg2" << std::endl;
             std::cout << "  " << argv[0] << " --load-nvbit=true ./my_program arg1 arg2" << std::endl;
+            std::cout << "  " << argv[0] << " --load-ibtrace=false -- ./my_program --my-flag" << std::endl;
+            std::cout << std::endl;
+            std::cout << "Note: Use '--' to separate profiler options from program arguments" << std::endl;
+            std::cout << "      if the program takes options that might conflict." << std::endl;
             return 0;
         }
 
@@ -109,15 +116,19 @@ int main(int argc, char* argv[]) {
         // Get program and its arguments
         const std::string program_bin = vm["program"].as<std::string>();
         
-        // Build program_args from parsed options
-        std::vector<const char*> program_args;
-        program_args.push_back(program_bin.c_str());
+        // Build program_args - store strings first to ensure they persist
+        std::vector<std::string> prog_args_storage;
+        prog_args_storage.push_back(program_bin);
         
         if (vm.count("program-args")) {
             const auto& prog_args = vm["program-args"].as<std::vector<std::string>>();
-            for (const auto& arg : prog_args) {
-                program_args.push_back(arg.c_str());
-            }
+            prog_args_storage.insert(prog_args_storage.end(), prog_args.begin(), prog_args.end());
+        }
+        
+        // Now build the pointer vector from the stored strings
+        std::vector<const char*> program_args;
+        for (const auto& arg : prog_args_storage) {
+            program_args.push_back(arg.c_str());
         }
 
         const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, shim_libs, profiler_args_env);
