@@ -199,10 +199,16 @@ struct ProfilerCtx {
 
     static GpuId_T get_addr_gpu_id(uint64_t addr) {
         int cuda_dev;
-        CUDA_CHECK(cudaGetDevice(&cuda_dev));
+        auto cuda_err = CUDA_LOG(cudaGetDevice(&cuda_dev));
+        if (cuda_err != cudaSuccess) {
+            return Profiler::Events::UnknownDeviceId;
+        }
 
         cudaPointerAttributes attrs{};
-        CUDA_CHECK(cudaPointerGetAttributes(&attrs, reinterpret_cast<void*>(addr)));
+        cuda_err = CUDA_LOG(cudaPointerGetAttributes(&attrs, reinterpret_cast<void*>(addr)));
+        if (cuda_err != cudaSuccess) {
+            return Profiler::Events::UnknownDeviceId;
+        }
 
         GpuId_T gpu_id{static_cast<GpuId_T>(attrs.device)};
         if (attrs.type == cudaMemoryTypeUnregistered) {
@@ -825,7 +831,10 @@ struct ProfilerCtx {
 
             constexpr auto page_size{4096};
             void* uar_fake_page_addr;
-            CUDA_CHECK(cudaHostAlloc(&uar_fake_page_addr, page_size, cudaHostAllocMapped));
+            const auto cuda_err = CUDA_LOG(cudaHostAlloc(&uar_fake_page_addr, page_size, cudaHostAllocMapped));
+            if (cuda_err != cudaSuccess) {
+                return;
+            }
             memset(uar_fake_page_addr, 0, page_size);
 
             // TODO: don't do this if buffers can't be set in the first place (no PeerMappingOverride)

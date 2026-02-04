@@ -26,6 +26,15 @@
         }                                                                                                              \
     } while (0)
 
+#define CUDA_LOG(cmd)                                                                                                  \
+    std::invoke([&]() {                                                                                                \
+        cudaError_t err = cmd;                                                                                         \
+        if (err != cudaSuccess) {                                                                                      \
+            std::printf("CUDA error %s:%d '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err));                       \
+        }                                                                                                              \
+        return err;                                                                                                    \
+    })
+
 #ifdef NVML_API_VERSION
 #define NVML_CHECK(cmd)                                                                                                \
     do {                                                                                                               \
