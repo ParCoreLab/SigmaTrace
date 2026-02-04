@@ -16,7 +16,8 @@ namespace Launcher {
 
         // Child
         if (pid == 0) {
-            execve(program_bin.data(), const_cast<char**>(program_args.data()), const_cast<char**>(program_env.data()));
+            execvpe(program_bin.data(), const_cast<char**>(program_args.data()),
+                    const_cast<char**>(program_env.data()));
             perror("[Launcher] execvpe");
             _exit(127);
         }
