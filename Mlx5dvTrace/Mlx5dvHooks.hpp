@@ -2,10 +2,12 @@
 
 #include <variant>
 
-
 #include "infiniband/mlx5dv.h"
 
 #include "HookTrait.hpp"
+
+DEFINE_PRELOAD_HOOK(mlx5dv, open_device, "mlx5dv_open_device", ibv_context*, ibv_device*, mlx5dv_context_attr*);
+DEFINE_PRELOAD_HOOK(mlx5dv, query_device, "mlx5dv_query_device", int, ibv_context*, mlx5dv_context*);
 
 DEFINE_PRELOAD_HOOK(mlx5dv, init_obj, "mlx5dv_init_obj", int, mlx5dv_obj*, uint64_t);
 

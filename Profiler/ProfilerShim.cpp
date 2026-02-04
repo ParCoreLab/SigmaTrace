@@ -313,21 +313,20 @@ struct ProfilerCtx {
 
         m_ibv_profiler->register_post<ibv::open_device_tag>(
                 [this](ibv_context* out_context, ibv_device* device, auto ts_start, auto ts_end) {
-            std::cout << "[Profiler] ibv_open_device received" << std::endl;
+            // std::cout << "[Profiler] ibv_open_device received " << out_context << std::endl;
 
             // Here we disgrace god
             // Just proc it
-            ibv_device_attr attr;
-            ibv_query_device(out_context, &attr);
+            ibv_device_attr attrs{};
+            ibv_query_device(out_context, &attrs);
 
             // We want to save a global id on a device that is actually used.
             // This isn't traced and should precede other ibv events
-            // We record with 0 timestamp to make sure it appears before open_device
             const Profiler::Events::IbvDeviceRegistration registration_event{
                     .context_addr = reinterpret_cast<uint64_t>(out_context),
-                    .node_guid = attr.node_guid,
+                    .node_guid = attrs.node_guid,
             };
-            m_event_recorder->Record(registration_event, 0);
+            m_event_recorder->Record(registration_event, ts_start - 1);
 
             Profiler::Events::IbvOpenDevice event{
                     .context_addr = reinterpret_cast<uint64_t>(out_context),
@@ -345,7 +344,7 @@ struct ProfilerCtx {
 
         m_ibv_profiler->register_post<ibv::close_device_tag>(
                 [this](int, ibv_context* context, auto ts_start, auto ts_end) {
-            std::cout << "[Profiler] ibv_open_device received" << std::endl;
+            // std::cout << "[Profiler] ibv_close_device received " << context << std::endl;
 
             auto event = Profiler::Events::IbvCloseDevice{
                     .context_addr = reinterpret_cast<uint64_t>(context),
@@ -366,15 +365,15 @@ struct ProfilerCtx {
             m_event_recorder->Record(event, ts_start, ts_end);
         });
 
-        m_ibv_profiler->register_post<ibv::destroy_qp_tag>([this](int, ibv_qp* qp, auto ts_start, auto ts_end) {
-            std::cout << "destroy_qp with ctx " << qp->context << std::endl;
+        m_ibv_profiler->register_pre<ibv::destroy_qp_tag>([this](ibv_qp* qp, auto ts_start) {
+            // std::cout << "destroy_qp with ctx " << qp->context << std::endl;
 
             Profiler::Events::IbvDestroyQp event{
                     // WARNING: not qp->context. Why? I have no clue
                     .context_addr = reinterpret_cast<uint64_t>(qp->pd->context),
                     .qp_num = qp->qp_num,
             };
-            m_event_recorder->Record(event, ts_start, ts_end);
+            m_event_recorder->Record(event, ts_start);
         });
 
 
@@ -698,6 +697,34 @@ struct ProfilerCtx {
     void load_mlx5dv(const std::filesystem::path& shim_dir) {
         m_mlx5dv_profiler = get_instance<mlx5dv::Profiler>(shim_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
 
+        m_mlx5dv_profiler->register_post<mlx5dv::open_device_tag>(
+                [this](ibv_context* out_context, ibv_device* device, mlx5dv_context_attr*, auto ts_start, auto ts_end) {
+            // std::cout << "[Profiler] mlx5dv_open_device received " << out_context << std::endl;
+
+            ibv_device_attr attrs{};
+            ibv_query_device(out_context, &attrs);
+
+            const Profiler::Events::IbvDeviceRegistration registration_event{
+                    .context_addr = reinterpret_cast<uint64_t>(out_context),
+                    .node_guid = attrs.node_guid,
+            };
+            m_event_recorder->Record(registration_event, ts_start - 1);
+
+            // Not using Mlx5OpenDevice because it's redundant
+            Profiler::Events::IbvOpenDevice event{
+                    .context_addr = reinterpret_cast<uint64_t>(out_context),
+                    .node_type = device->node_type,
+                    .transport_type = device->transport_type,
+            };
+
+            snprintf(event.name, sizeof device->name, "%s", device->name);
+            snprintf(event.dev_name, sizeof device->dev_name, "%s", device->dev_name);
+            snprintf(event.dev_path, sizeof device->dev_path, "%s", device->dev_path);
+            snprintf(event.ibdev_path, sizeof device->ibdev_path, "%s", device->ibdev_path);
+
+            m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
         m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>(
                 [](auto&&, mlx5dv_obj* obj, uint64_t obj_type, auto&&...) {
             sigma_ignore_unused(obj);
@@ -921,7 +948,7 @@ struct ProfilerCtx {
             auto umem_addr = reinterpret_cast<uint64_t>(addr);
 
             // TODO: extra copy because Record(const T&)
-            m_event_recorder->Record<Profiler::Events::Mlx5MemoryRegistration>(
+            m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
                     {
                             .gpu_id = 0,
                             .nic_id = 0,
@@ -939,7 +966,7 @@ struct ProfilerCtx {
 
         // We can't do register_pre because the pointer will be gone
         m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem* umem, auto ts_start) {
-            m_event_recorder->Record<Profiler::Events::Mlx5MemoryDereg>(
+            m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryDereg>(
                     {
                             .nic_id = 0,
                             .mem_id = umem->umem_id,

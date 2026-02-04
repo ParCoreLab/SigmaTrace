@@ -31,16 +31,16 @@ namespace ibv {
     class IbverbsEventSource
         : public hook::CompositeHookManager<
                   Derived, hook::DefaultHookManagerConfig, ibv_context, post_send_tag, post_recv_tag, poll_cq_tag,
-                  req_notify_cq_tag, post_srq_recv_tag, open_device_tag, close_device_tag, query_device_tag, reg_mr_tag,
-                  dereg_mr_tag, reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag, create_cq_tag, create_qp_tag,
-                  destroy_qp_tag, modify_qp_tag, create_ah_tag> {
+                  req_notify_cq_tag, post_srq_recv_tag, open_device_tag, close_device_tag, query_device_tag,
+                  get_device_guid_tag, reg_mr_tag, dereg_mr_tag, reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag,
+                  create_cq_tag, create_qp_tag, destroy_qp_tag, modify_qp_tag, create_ah_tag> {
 
         // TODO: too verbose
         using Base =
                 hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, ibv_context, post_send_tag,
                                            post_recv_tag, poll_cq_tag, req_notify_cq_tag, post_srq_recv_tag,
-                                           open_device_tag, close_device_tag, query_device_tag, reg_mr_tag,
-                                           dereg_mr_tag, reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag,
+                                           open_device_tag, close_device_tag, query_device_tag, get_device_guid_tag,
+                                           reg_mr_tag, dereg_mr_tag, reg_mr_iova2_tag, reg_dmabuf_mr_tag, alloc_pd_tag,
                                            create_cq_tag, create_qp_tag, destroy_qp_tag, modify_qp_tag, create_ah_tag>;
 
     public:

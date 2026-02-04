@@ -37,7 +37,7 @@ using EnabledEvents =
                          ProfilerEvents::IbvPostSend, ProfilerEvents::IbvPostSendWr, ProfilerEvents::IbvPostSendSg, //
                          ProfilerEvents::IbvPostRecv, ProfilerEvents::IbvPostRecvWr,                                //
                          ProfilerEvents::IbvPollCq, ProfilerEvents::IbvCompletion,                                  //
-                         ProfilerEvents::Mlx5MemoryRegistration, ProfilerEvents::Mlx5MemoryDereg,                   //
+                         ProfilerEvents::Mlx5dvMemoryRegistration, ProfilerEvents::Mlx5dvMemoryDereg,               //
                          ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
                          ProfilerEvents::CUDAKernelExit //
                          >;
@@ -578,7 +578,8 @@ public:
                 local_storage.ibv_context_to_nic_id.try_emplace(event.context_addr, event.node_guid);
 
         if (!inserted) {
-            std::cerr << "Device registration with duplicate context addr at node_guid " << event.node_guid;
+            std::cerr << "Device registration with duplicate context addr " << std::hex << event.context_addr
+                      << std::dec << " at node_guid " << event.node_guid;
             std::cerr << ". Something has gone awry" << std::endl;
             std::abort();
         }
@@ -619,12 +620,16 @@ public:
 
     void visit(EventTrait<ProfilerEvents::IbvCloseDevice>, const EventFileHeader& file_header, EventHeader&& header,
                ProfilerEvents::IbvCloseDevice&& event) {
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
+
         auto& local_storage = process_local_storage(file_header);
+
         // TODO: may not be safe (logic wise)
         const auto flow_id = local_storage.pending_ibv_context_flows.erase(event.context_addr);
-
-        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
         slice->add_terminating_flow_ids(flow_id);
+
+        // Erase after we no longer need it
+        local_storage.ibv_context_to_nic_id.erase(event.context_addr);
     }
 
     void visit(EventTrait<ProfilerEvents::IbvCreateQp>, const EventFileHeader& file_header, EventHeader&& header,
@@ -790,8 +795,8 @@ public:
     }
     // ========================================================================
 
-    void visit(EventTrait<ProfilerEvents::Mlx5MemoryRegistration> T, const EventFileHeader& file_header,
-               EventHeader&& header, ProfilerEvents::Mlx5MemoryRegistration&& event) {
+    void visit(EventTrait<ProfilerEvents::Mlx5dvMemoryRegistration> T, const EventFileHeader& file_header,
+               EventHeader&& header, ProfilerEvents::Mlx5dvMemoryRegistration&& event) {
         using Meta = decltype(T);
 
         const auto node_id = register_node(file_header.hostname);
@@ -817,8 +822,8 @@ public:
         m_builder.add_annotation("Size", event.size);
     }
 
-    void visit(EventTrait<ProfilerEvents::Mlx5MemoryDereg> T, const EventFileHeader& file_header, EventHeader&& header,
-               ProfilerEvents::Mlx5MemoryDereg&& event) {
+    void visit(EventTrait<ProfilerEvents::Mlx5dvMemoryDereg> T, const EventFileHeader& file_header,
+               EventHeader&& header, ProfilerEvents::Mlx5dvMemoryDereg&& event) {
         using Meta = decltype(T);
 
         const auto node_id = register_node(file_header.hostname);
@@ -828,15 +833,18 @@ public:
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
                                                                     static_cast<uint64_t>(nic_id));
 
-        auto& local_storage = process_local_storage(file_header);
-        const auto flow_id = local_storage.pending_mem_flows.at(event.mem_id);
-        local_storage.pending_mem_flows.erase(event.mem_id);
-
         auto* slice = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name, "memory");
         add_header_annotations(slice, file_header);
         m_builder.add_annotation("Memory ID", event.mem_id);
 
-        slice->add_terminating_flow_ids(flow_id);
+        auto& local_storage = process_local_storage(file_header);
+
+        // Sometimes we see duplicate mem deregs
+        const auto& flow_id = local_storage.pending_mem_flows.find(event.mem_id);
+        if (flow_id != local_storage.pending_mem_flows.end()) {
+            slice->add_terminating_flow_ids(flow_id->second);
+            local_storage.pending_mem_flows.erase(flow_id->first);
+        }
     }
 
     void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader& file_header, EventHeader&& header,
@@ -957,6 +965,10 @@ public:
     */
 
 private:
+    // TODO: Set to true when we get the first ibv_open_device
+    // Not used currently
+    [[maybe_unused]] bool m_is_ready{false};
+
     std::filesystem::path m_output_path;
     PerfettoTraceBuilder m_builder;
 

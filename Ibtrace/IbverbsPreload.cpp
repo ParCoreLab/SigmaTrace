@@ -109,6 +109,10 @@ extern "C" int ibv_query_device(ibv_context* context, ibv_device_attr* device_at
     return ibv::Profiler::invoke_preload<ibv::query_device_tag>(context, device_attr);
 }
 
+extern "C" __be64 ibv_get_device_guid(ibv_device* device) {
+    return ibv::Profiler::invoke_preload<ibv::get_device_guid_tag>(device);
+}
+
 #ifdef ibv_reg_mr
 #undef ibv_reg_mr
 #endif

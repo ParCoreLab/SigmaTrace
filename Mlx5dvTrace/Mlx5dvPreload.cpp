@@ -23,6 +23,14 @@ extern "C" mlx5dv::Profiler* sigma_provider_instance() {
 }
 #pragma GCC diagnostic pop
 
+extern "C" ibv_context* mlx5dv_open_device(ibv_device* device, mlx5dv_context_attr* attr) {
+    return mlx5dv::Profiler::invoke_preload<mlx5dv::open_device_tag>(device, attr);
+}
+
+extern "C" int mlx5dv_query_device(ibv_context* ctx_in, mlx5dv_context* attrs_out) {
+    return mlx5dv::Profiler::invoke_preload<mlx5dv::query_device_tag>(ctx_in, attrs_out);
+}
+
 // TODO: this should be in a helper module in HookLib or done automatically
 extern "C" int mlx5dv_init_obj(mlx5dv_obj* obj, uint64_t obj_type) {
     return mlx5dv::Profiler::invoke_preload<mlx5dv::init_obj_tag>(obj, obj_type);

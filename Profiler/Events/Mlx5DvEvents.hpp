@@ -9,7 +9,7 @@
 // TODO: compile these into an .so or something so future readers can reliable read back maybe
 
 namespace Profiler::Events {
-    struct alignas(8) Mlx5MemoryRegistration {
+    struct alignas(8) Mlx5dvMemoryRegistration {
         GpuId_T gpu_id;
         // TODO: should be GpuId_T (or something similar)
         int16_t nic_id;
@@ -18,7 +18,7 @@ namespace Profiler::Events {
         uint64_t size;
     };
 
-    struct alignas(8) Mlx5MemoryDereg {
+    struct alignas(8) Mlx5dvMemoryDereg {
         int16_t nic_id;
         uint32_t mem_id;
     };
@@ -35,8 +35,8 @@ namespace Profiler::Events {
 } // namespace Profiler::Events
 
 // clang-format off
-DEFINE_EVENT_TRAIT(Profiler::Events::Mlx5MemoryRegistration, Events::EventTypeId::Mlx5MemoryRegistration, Events::EventCategory::NIC, "mlx5dv_devx_umem_reg");
+DEFINE_EVENT_TRAIT(Profiler::Events::Mlx5dvMemoryRegistration, Events::EventTypeId::Mlx5dvMemoryRegistration, Events::EventCategory::NIC, "mlx5dv_devx_umem_reg");
+DEFINE_EVENT_TRAIT(Profiler::Events::Mlx5dvMemoryDereg, Events::EventTypeId::Mlx5dvMemoryDereg, Events::EventCategory::NIC, "mlx5dv_devx_umem_dereg");
 
-DEFINE_EVENT_TRAIT(Profiler::Events::Mlx5MemoryDereg, Events::EventTypeId::Mlx5MemoryDereg, Events::EventCategory::NIC, "mlx5dv_devx_umem_dereg");
 DEFINE_EVENT_TRAIT(Profiler::Events::DoorbellRing, Events::EventTypeId::Mlx5dvDoorbellRing, Events::EventCategory::NIC, "Doorbell Ring");
 // clang-format on

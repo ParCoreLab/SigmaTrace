@@ -43,8 +43,8 @@ namespace Events {
 
         // mlx5dv specific events
         Mlx5dvDoorbellRing = 200,
-        Mlx5MemoryRegistration,
-        Mlx5MemoryDereg,
+        Mlx5dvMemoryRegistration,
+        Mlx5dvMemoryDereg,
 
         // CUDA events
         CudaKernelLaunch = 300,
