@@ -230,11 +230,6 @@ struct ProfilerCtx {
     // ================================================
 
     ~ProfilerCtx() {
-        // Flush all event buffers before destruction to ensure data is written to disk
-        if (m_event_recorder) {
-            m_event_recorder->Flush();
-        }
-
         // std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_accesses << std::endl;
         std::cout << "[Profiler] num_nic_accesses: " << std::dec << num_nic_doorbell_accesses << std::endl;
         std::cout << "[Profiler] num_fake_nic_accesses: " << std::dec << num_fake_nic_accesses << std::endl;
