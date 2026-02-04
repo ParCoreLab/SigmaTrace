@@ -3,6 +3,7 @@
 #include <array>
 #include <concepts>
 #include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <string_view>
