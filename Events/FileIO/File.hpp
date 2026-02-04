@@ -177,9 +177,10 @@ namespace FileIO {
         MmapBackedBuffer& operator=(const MmapBackedBuffer&) = delete;
 
         ~MmapBackedBuffer() {
-            const std::size_t used_bytes = m_current_index * ElementSize;
+            const std::size_t used_bytes = FileHeaderSize + m_current_index * ElementSize;
             if (m_base && m_base != MAP_FAILED) {
-                msync(m_base, used_bytes, MS_ASYNC);
+                // Use MS_SYNC to ensure data is written before unmapping
+                msync(m_base, used_bytes, MS_SYNC);
                 munmap(m_base, m_mapped_size);
             }
             if (m_fd >= 0) {
