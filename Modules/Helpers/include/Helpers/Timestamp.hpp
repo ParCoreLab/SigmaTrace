@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ctime>
+
 #include <chrono>
 #include <concepts>
 
@@ -7,7 +9,6 @@ namespace Helpers::TS {
     using Timestamp = uint64_t;
 
     // High-resolution timestamp source concept
-    // Zero-overhead compile-time polymorphism using C++20 concepts
     // TODO: correction mechanism
     template<typename T>
     concept TimestampSource = requires(const T source) {
@@ -16,19 +17,14 @@ namespace Helpers::TS {
 
     // Steady clock-based timestamp source
     // Monotonic, portable timing with nanosecond resolution
-    class ChronoTimestampSource {
+    class SteadyTimestampSource {
     public:
         using Clock = std::chrono::steady_clock;
 
-        ChronoTimestampSource() noexcept : m_epoch(Clock::now()) {}
-
         [[nodiscard]] Timestamp now() const noexcept {
-            const auto duration = Clock::now() - m_epoch;
+            const auto duration = Clock::now().time_since_epoch();
             return static_cast<Timestamp>(std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
         }
-
-    private:
-        Clock::time_point m_epoch;
     };
 
     // RDTSC-based timestamp source for minimal latency
@@ -43,6 +39,30 @@ namespace Helpers::TS {
         }
     };
 
+    // LFENCE + RDTSC: alternative serialization (sometimes lower latency)
+    class RdtscFencedTimestampSource {
+    public:
+        [[nodiscard]] Timestamp now() const noexcept {
+            uint32_t lo, hi;
+            __asm__ __volatile__("lfence\n\t"
+                                 "rdtsc"
+                                 : "=a"(lo), "=d"(hi)
+                                 :
+                                 : "memory");
+            return (static_cast<uint64_t>(hi) << 32) | lo;
+        }
+    };
+
+    // clock_gettime via vDSO — ~20ns on Linux, gives wall-time correlation
+    class GettimeTimestampSource {
+    public:
+        [[nodiscard]] Timestamp now() const noexcept {
+            timespec ts{};
+            clock_gettime(CLOCK_MONOTONIC_RAW, &ts); // or CLOCK_MONOTONIC
+            return static_cast<Timestamp>(ts.tv_sec) * 1'000'000'000ULL + static_cast<unsigned long long>(ts.tv_nsec);
+        }
+    };
+
     // Returns 0 for debugging or ignoring the timestamp
     class FakeTimestampSource {
     public:
@@ -52,7 +72,9 @@ namespace Helpers::TS {
     };
 
     // Verify implementations satisfy the concept
-    static_assert(TimestampSource<ChronoTimestampSource>);
+    static_assert(TimestampSource<SteadyTimestampSource>);
     static_assert(TimestampSource<RdtscTimestampSource>);
+    static_assert(TimestampSource<RdtscFencedTimestampSource>);
+    static_assert(TimestampSource<GettimeTimestampSource>);
     static_assert(TimestampSource<FakeTimestampSource>);
 } // namespace Helpers::TS

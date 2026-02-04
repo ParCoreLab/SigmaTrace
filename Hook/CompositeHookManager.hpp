@@ -23,7 +23,7 @@ namespace hook {
     };
 
     struct DefaultHookManagerConfig {
-        using TimestampSourceType = TS::RdtscTimestampSource;
+        using TimestampSourceType = TS::GettimeTimestampSource;
     };
     static_assert(HookManagerConfig<DefaultHookManagerConfig>);
     // ================================================================
