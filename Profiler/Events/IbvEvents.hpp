@@ -84,6 +84,7 @@ namespace Profiler::Events {
         uint64_t context_addr;
         GpuId_T gpu_id;
         uint32_t qp_num; // Queue pair number
+        uint64_t num_wrs;
     };
 
     struct alignas(8) IbvPostSendWr {
@@ -109,6 +110,7 @@ namespace Profiler::Events {
     struct alignas(8) IbvPostRecv {
         uint64_t context_addr;
         uint32_t qp_num;
+        uint64_t num_wrs;
     };
 
     struct alignas(8) IbvPostRecvWr {

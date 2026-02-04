@@ -490,15 +490,16 @@ struct ProfilerCtx {
 
             const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
 
-            const Profiler::Events::IbvPostSend post_send_event{
+            Profiler::Events::IbvPostSend post_send_event{
                     .context_addr = context_addr,
                     .gpu_id = 0,
                     .qp_num = qp->qp_num,
+                    .num_wrs = 0,
             };
-            m_event_recorder->Record(post_send_event, ts_start, ts_end);
 
             // TODO: probably an ibv lib function for this
             for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
+                post_send_event.num_wrs += 1;
                 const Profiler::Events::IbvPostSendWr wr_event{
                         .context_addr = context_addr,
                         .gpu_id = 0,
@@ -529,6 +530,8 @@ struct ProfilerCtx {
                     m_event_recorder->Record(wr_sg_event, ts_start + 2, ts_end - 2);
                 }
             }
+
+            m_event_recorder->Record(post_send_event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::post_recv_tag>(
@@ -539,15 +542,14 @@ struct ProfilerCtx {
 
             const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
 
-            {
-                const Profiler::Events::IbvPostRecv recv_event{
-                        .context_addr = context_addr,
-                        .qp_num = qp->qp_num,
-                };
-                m_event_recorder->Record(recv_event, ts_start, ts_end);
-            }
+            Profiler::Events::IbvPostRecv recv_event{
+                    .context_addr = context_addr,
+                    .qp_num = qp->qp_num,
+                    .num_wrs = 0,
+            };
 
             for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
+                recv_event.num_wrs += 1;
                 const auto gpu_id = find_gpu_id(reinterpret_cast<uint64_t>(qp->pd));
 
                 const Profiler::Events::IbvPostRecvWr recv_wr_event{
@@ -559,6 +561,8 @@ struct ProfilerCtx {
                 };
                 m_event_recorder->Record(recv_wr_event, ts_start + 1, ts_end - 1);
             }
+
+            m_event_recorder->Record(recv_event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::poll_cq_tag>(

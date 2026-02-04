@@ -708,6 +708,7 @@ public:
         auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
 
         m_builder.add_annotation(slice, "QP Num", event.qp_num);
+        m_builder.add_annotation(slice, "Num WRs", event.num_wrs);
     }
 
     void visit(EventTrait<ProfilerEvents::IbvPostSendWr>, const EventFileHeader& file_header, EventHeader&& header,
@@ -745,6 +746,7 @@ public:
         auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
 
         m_builder.add_annotation(slice, "QP Num", event.qp_num);
+        m_builder.add_annotation(slice, "Num WRs", event.num_wrs);
     }
 
     void visit(EventTrait<ProfilerEvents::IbvPostRecvWr>, const EventFileHeader& file_header, EventHeader&& header,
