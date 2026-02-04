@@ -7,6 +7,7 @@ Sigma_add_executable(Profiler Profiler.cpp ProfilerArgs.hpp ProfilerProviders.hp
 set_target_properties(Profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
 
 target_link_libraries(Profiler PRIVATE Launcher)
+target_link_libraries(Profiler PRIVATE Boost::program_options)
 # ================================================================
 
 # ================================================================
