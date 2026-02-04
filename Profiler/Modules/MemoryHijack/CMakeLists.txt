@@ -1,2 +1,3 @@
 Sigma_add_library(ProfilerMemoryRepeater STATIC MemoryRepeater.cpp MemoryRepeater.hpp)
 target_include_directories(ProfilerMemoryRepeater PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(ProfilerMemoryRepeater PROPERTIES POSITION_INDEPENDENT_CODE ON)

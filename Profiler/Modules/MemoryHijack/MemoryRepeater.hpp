@@ -1,48 +1,12 @@
 #pragma once
 
 #include <atomic>
-#include <limits>
-
-// Intel specific
-#include <immintrin.h>
-
-#include <x86intrin.h>
+#include <functional>
+#include <memory>
+#include <thread>
 
 namespace Profiler::MemoryRepeater {
-    __attribute__((target("mwaitx"))) static void wait_mem(void* addr) noexcept {
-        /*
-#if defined(__INTEL_UMWAIT__?)
-        // TODO: untested
-        _umonitor(addr);
-        _umwait(0, start + timeout_cycles);
-#elif defined(__AMD_MWAITX__)
-        */
-        /*
-         * ECX=0 means no timeout
-         * Using inline asm since intrinsic always sets timeout
-         *
-         * __asm__ __volatile__(
-         * "mwaitx"
-         * :
-         * : "a"(0),    // EAX: hints (0 = default)
-         *   "c"(0),    // ECX: 0 = no timeout
-         *   "b"(0)     // EBX: ignored when ECX=0
-         * :
-         * );
-         *
-         *
-         * Might be pointless in user-space
-         * https://stackoverflow.com/questions/71241346/mwaitx-instruction-not-blocking
-         */
-        _mm_monitorx(addr, 0, 0);
-        _mm_mwaitx(0, 0, std::numeric_limits<unsigned int>::max());
-        /*
-#else
-        // Fallback
-        _mm_pause();
-#endif
-        */
-    }
+    void wait_mem(void* addr) noexcept;
 
     class MemoryRepeaterHandle {
     public:
