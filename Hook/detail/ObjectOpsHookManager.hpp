@@ -144,17 +144,17 @@ namespace hook::detail {
             assert(obj);
 
             auto key = reinterpret_cast<uintptr_t>(obj);
-            if (m_contexts.contains(key)) {
-                return m_contexts[key].get();
+            const auto& ctx_entry = m_contexts.find(key);
+            if (ctx_entry != m_contexts.end()) {
+                return ctx_entry->second.get();
             }
 
             // TODO: shared_ptr?
             auto ctx = std::make_unique<Context>();
             ctx->set_object_ptr(obj);
 
-            auto* ctx_ptr = ctx.get();
-            m_contexts[key] = std::move(ctx);
-            return ctx_ptr;
+            const auto& [new_ctx_entry, _] = m_contexts.emplace(key, std::move(ctx));
+            return new_ctx_entry->second.get();
         }
 
         // TODO
