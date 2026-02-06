@@ -843,8 +843,8 @@ struct ProfilerCtx {
 
             // TODO: don't do this if buffers can't be set in the first place (no PeerMappingOverride)
             // Causes a segfault later
-            auto base_addr_real = out_uar->base_addr;
-            auto reg_addr_real = out_uar->reg_addr;
+            const auto base_addr_real = out_uar->base_addr;
+            const auto reg_addr_real = out_uar->reg_addr;
 
             const ptrdiff_t doorbell_offset = static_cast<char*>(reg_addr_real) - static_cast<char*>(base_addr_real);
             if (doorbell_offset < 64) {
