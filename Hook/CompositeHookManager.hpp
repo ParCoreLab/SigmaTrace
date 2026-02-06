@@ -76,6 +76,9 @@ namespace hook {
         using TimestampSource = Config::TimestampSourceType;
         TimestampSource m_timestamp{};
 
+        // Slot-based context storage ot avoid map find() in every op
+        using ContextSlots = detail::ContextSlots<Context>;
+
         // Singleton
         static Derived& instance() noexcept {
             static Derived mgr;
@@ -215,8 +218,7 @@ namespace hook {
             auto* ctx = m_object_ops_impl.get_context(obj);
 
             // Install object-ops hooks only
-            // TODO: why pointer dereference?
-            install_object_ops_hooks(obj, *ctx, std::make_index_sequence<sizeof...(Tags)>{});
+            install_object_ops_hooks(obj, ctx, std::make_index_sequence<sizeof...(Tags)>{});
 
             return ctx;
         }
@@ -236,28 +238,17 @@ namespace hook {
             }
 
             auto* ctx = m_object_ops_impl.get_context(obj);
-            uninstall_object_ops_hooks(obj, *ctx, std::make_index_sequence<sizeof...(Tags)>{});
+            uninstall_object_ops_hooks(obj, ctx, std::make_index_sequence<sizeof...(Tags)>{});
 
             contexts.erase(it);
         }
-
-        // Context *find(ObjectType *obj) {
-        //     if (!obj) {
-        //         return nullptr;
-        //     }
-        //
-        //     std::lock_guard lock(m_contexts_mutex);
-        //
-        //     auto key = reinterpret_cast<uintptr_t>(obj);
-        //     auto it = m_contexts.find(key);
-        //     return it != m_contexts.end() ? it->second.get() : nullptr;
-        // }
 
         // Static wrapper for object-ops hooks
         // Note: this takes Args... instead of Args&&... because FuncPtr args need to match exactly...
         // See the note in install_if_object_ops
         // Most of these are small value types or pointers. Should be fine.
-        template<ValidCallbackTag Tag, typename... Args>
+        // SlotIndex is a compile-time constant that indexes into ContextSlots::slots
+        template<ValidCallbackTag Tag, size_t CtxSlotIndex, typename... Args>
             requires is_object_ops_hook_v<Tag>
         static auto invoke_object_ops(Args... args) noexcept -> typename HookTrait<Tag>::RetType {
             auto& mgr = instance();
@@ -265,9 +256,8 @@ namespace hook {
             // Start timestamp as soon as the function hook is invoked
             auto ts_start = mgr.m_timestamp.now();
 
-            // We can't std::forward multiple times
-            ObjectType* obj = static_cast<Derived&>(mgr).template get_object_from_args<Tag>(args...);
-            Context* ctx = mgr.m_object_ops_impl.find(obj);
+            // Get context from pre-allocated slot (no runtime lookup!)
+            Context* ctx = ContextSlots::slots[CtxSlotIndex];
 
             if (!ctx) {
                 // Fallback - shouldn't happen in normal operation
@@ -280,7 +270,7 @@ namespace hook {
             }
 
             // Pre-hooks with context
-            mgr.template invoke_pre_with_context<Tag>(*ctx, args..., ts_start);
+            mgr.template invoke_pre_with_context<Tag>(ctx, args..., ts_start);
 
             auto original = ctx->template original<Tag>();
             auto ret = original(args...);
@@ -289,7 +279,7 @@ namespace hook {
             auto ts_end = mgr.m_timestamp.now();
 
             // Post-hooks with context
-            mgr.template invoke_post_with_context<Tag>(*ctx, ret, args..., ts_start, ts_end);
+            mgr.template invoke_post_with_context<Tag>(ctx, ret, args..., ts_start, ts_end);
 
             return ret;
         }
@@ -303,8 +293,8 @@ namespace hook {
 
         // Context-aware invocation for object-ops
         template<ValidCallbackTag Tag, typename... Args>
-        void invoke_pre_with_context(Context& ctx, Args&&... args) noexcept {
-            if constexpr (requires(Derived& d, Tag t, Context& c, Args&&... a) {
+        void invoke_pre_with_context(Context* ctx, Args&&... args) noexcept {
+            if constexpr (requires(Derived& d, Tag t, Context* c, Args&&... a) {
                               d.pre(t, c, std::forward<Args>(a)...);
                           }) {
                 static_cast<Derived&>(*this).pre(Tag{}, ctx, args...);
@@ -313,8 +303,8 @@ namespace hook {
         }
 
         template<ValidCallbackTag Tag, typename Ret, typename... Args>
-        void invoke_post_with_context(Context& ctx, Ret ret, Args&&... args) noexcept {
-            if constexpr (requires(Derived& d, Tag t, Context& c, Ret r, Args&&... a) {
+        void invoke_post_with_context(Context* ctx, Ret ret, Args&&... args) noexcept {
+            if constexpr (requires(Derived& d, Tag t, Context* c, Ret r, Args&&... a) {
                               d.post(t, c, r, std::forward<Args>(a)...);
                           }) {
                 static_cast<Derived&>(*this).post(Tag{}, ctx, ret, args...);
@@ -326,34 +316,42 @@ namespace hook {
         // TODO: this is ugly and should be in ObjectOpsHookManager
         // but since we really need Derived, it's here for now
         template<size_t... Is>
-        void install_object_ops_hooks(ObjectType* obj, Context& ctx, std::index_sequence<Is...>) noexcept {
+        void install_object_ops_hooks(ObjectType* obj, Context* ctx, std::index_sequence<Is...>) noexcept {
             (install_if_object_ops<std::tuple_element_t<Is, std::tuple<Tags...>>>(obj, ctx), ...);
         }
 
+        // Alias for the function pointer table
+        template<typename Tag, typename FuncPtr>
+        using InvokeObjectOpsTable = detail::InvokeObjectOpsTable<detail::MAX_OBJECT_OPS_SLOTS, Derived, Tag, FuncPtr>;
+
         template<ValidCallbackTag Tag>
-        void install_if_object_ops(ObjectType* obj, Context& ctx) noexcept {
+        void install_if_object_ops(ObjectType* obj, Context* ctx) noexcept {
             if constexpr (is_object_ops_hook_v<Tag>) {
                 static_assert(has_get_op_for<Derived, Tag, ObjectType>,
                               "Derived must provide: `template <...> get_op<Tag>(ObjectType*)` for object-ops hooks");
 
                 auto& op = static_cast<Derived&>(*this).template get_op<Tag>(obj);
-                ctx.template original<Tag>() = op;
+                ctx->template original<Tag>() = op;
 
-                // Note: we assign to a function pointer and call it later. Can't use Args&& because of it
-                op = &Derived::template invoke_object_ops<Tag>;
+                // Allocate a slot and store context there
+                size_t slot = ContextSlots::allocate(ctx);
+
+                // Get the pre-instantiated function pointer for this slot
+                using FuncPtr = typename HookTrait<Tag>::FuncPtr;
+                op = InvokeObjectOpsTable<Tag, FuncPtr>::table[slot];
             }
         }
 
         template<size_t... Is>
-        void uninstall_object_ops_hooks(ObjectType* obj, Context& ctx, std::index_sequence<Is...>) noexcept {
+        void uninstall_object_ops_hooks(ObjectType* obj, Context* ctx, std::index_sequence<Is...>) noexcept {
             (uninstall_if_object_ops<std::tuple_element_t<Is, std::tuple<Tags...>>>(obj, ctx), ...);
         }
 
         template<ValidCallbackTag Tag>
-        void uninstall_if_object_ops(ObjectType* obj, Context& ctx) noexcept {
+        void uninstall_if_object_ops(ObjectType* obj, Context* ctx) noexcept {
             if constexpr (is_object_ops_hook_v<Tag>) {
                 auto& op = static_cast<Derived&>(*this).template get_op<Tag>(obj);
-                op = ctx.template original<Tag>();
+                op = ctx->template original<Tag>();
             }
         }
 

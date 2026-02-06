@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <cassert>
 
 #include <iostream>
@@ -9,6 +11,67 @@
 #include "HookTrait.hpp"
 
 namespace hook::detail {
+    // ================================================================
+    // Maximum number of object-ops contexts we can track per Tag
+    static constexpr size_t MAX_OBJECT_OPS_SLOTS = 256;
+
+    // ================================================================
+    // Slot-based storage for context pointers to avoid find() for each op
+    // Each Tag gets its own set of slots to store Context pointers
+    // This is a very stupid hack but there are no available pointers in
+    // ibv objects that I can shove my own data into.
+    // ================================================================
+    template<typename Context>
+    struct ContextSlots {
+        static inline std::array<Context*, MAX_OBJECT_OPS_SLOTS> slots{};
+        static inline std::atomic<size_t> next_slot{0};
+
+        static size_t allocate(Context* ctx) {
+            auto slot = next_slot.fetch_add(1, std::memory_order_relaxed);
+
+            // Hopefully no one has 257 NICs in one node...
+            if (slot >= MAX_OBJECT_OPS_SLOTS) {
+                std::cerr << "Too many object-ops contexts. This shouldn't happen!" << std::endl;
+                std::abort();
+            }
+
+            slots[slot] = ctx;
+            return slot;
+        }
+
+        static void deallocate(size_t slot) {
+            slots[slot] = nullptr;
+        }
+    };
+
+    // ================================================================
+    // Helper to generate a table of function pointers for each slot
+    // This allows picking the right invoke function instantiation at runtime
+    // ================================================================
+    template<size_t MaxSlots, typename Derived, typename Tag, typename FuncPtr>
+    struct InvokeObjectOpsTable;
+
+    // TODO: noexcept...
+    template<size_t MaxSlots, typename Derived, typename Tag, typename Ret, typename... Args>
+    struct InvokeObjectOpsTable<MaxSlots, Derived, Tag, Ret (*)(Args...) noexcept> {
+        template<size_t... Is>
+        static constexpr auto make_table(std::index_sequence<Is...>) noexcept {
+            return std::array<Ret (*)(Args...) noexcept, sizeof...(Is)>{
+                    &Derived::template invoke_object_ops<Tag, Is, Args...>...};
+        }
+        static constexpr auto table = make_table(std::make_index_sequence<MaxSlots>{});
+    };
+
+    template<size_t MaxSlots, typename Derived, typename Tag, typename Ret, typename... Args>
+    struct InvokeObjectOpsTable<MaxSlots, Derived, Tag, Ret (*)(Args...)> {
+        template<size_t... Is>
+        static constexpr auto make_table(std::index_sequence<Is...>) noexcept {
+            return std::array<Ret (*)(Args...), sizeof...(Is)>{
+                    &Derived::template invoke_object_ops<Tag, Is, Args...>...};
+        }
+        static constexpr auto table = make_table(std::make_index_sequence<MaxSlots>{});
+    };
+
     // ================================================================
     // Per-object context storage for object-ops hooks
     // Stores original function pointers and per-object state
