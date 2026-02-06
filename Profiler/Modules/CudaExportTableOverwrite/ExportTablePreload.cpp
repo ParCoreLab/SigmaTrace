@@ -11,8 +11,11 @@
 #include "ExportTableOverwrite.hpp"
 
 using CuGetExportTable_t = CUresult (*)(const void** ppExportTable, const CUuuid* pExportTableId);
+using CuGetProcAddress_v2_t = CUresult (*)(const char* symbol, void** pfn, int cudaVersion, cuuint64_t flags,
+                                           CUdriverProcAddressQueryResult* symbolStatus);
 
 CuGetExportTable_t real_cuGetExportTable = nullptr;
+CuGetProcAddress_v2_t real_cuGetProcAddress_v2 = nullptr;
 
 namespace Profiler::CudaExportTable {
     struct OverwriteEntry {
@@ -22,6 +25,7 @@ namespace Profiler::CudaExportTable {
 
     // If you see an undebuggable floating point exception it's this
     // Use init_priority(101) to ensure it's constructed before other static objects
+    // TODO: should probably be std::string_view
     __attribute__((init_priority(101))) std::unordered_map<std::string, OverwriteEntry> RegisteredOverwrites{};
 
     void* get_real_cu_func(const std::string& cu_func_name) {
@@ -51,6 +55,11 @@ extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* p
     if (!real_cuGetExportTable) {
         real_cuGetExportTable = reinterpret_cast<CuGetExportTable_t>(
                 smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_NEXT, "cuGetExportTable"));
+
+        if (!real_cuGetExportTable) {
+            std::cerr << "Could not find cuGetProcAddress_v2" << std::endl;
+            std::abort();
+        }
     }
 
     const CUresult res = real_cuGetExportTable(ppExportTable, pExportTableId);
@@ -117,10 +126,54 @@ extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* p
     return res;
 }
 
+extern "C" CUresult cuGetProcAddress_v2(const char* symbol, void** pfn, int cudaVersion, cuuint64_t flags,
+                                        CUdriverProcAddressQueryResult* symbolStatus) {
+    if (!real_cuGetProcAddress_v2) {
+        real_cuGetProcAddress_v2 = reinterpret_cast<CuGetProcAddress_v2_t>(
+                smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_NEXT, "cuGetProcAddress_v2"));
+
+        if (!real_cuGetProcAddress_v2) {
+            std::cerr << "Could not find cuGetProcAddress_v2" << std::endl;
+            std::abort();
+        }
+    }
+
+    const auto res = real_cuGetProcAddress_v2(symbol, pfn, cudaVersion, flags, symbolStatus);
+
+    const std::string symbol_str{symbol};
+
+    // Note[proc_address_v2]: Special case. Should probably not route non-v2 back here but it's fine for now.
+    // God knows why nvidia made two identical versions
+    if (symbol_str == "cuGetProcAddress") {
+        *pfn = reinterpret_cast<void*>(cuGetProcAddress_v2);
+    }
+
+    const auto& overwrite_entry = RegisteredOverwrites.find(symbol_str);
+    if (overwrite_entry != RegisteredOverwrites.end()) {
+        overwrite_entry->second.real_cu_func = *pfn;
+        *pfn = overwrite_entry->second.overwrite_callback;
+    }
+
+    return res;
+}
+
 static void __attribute__((constructor)) init() {
     smart_dlsym::register_symbol("cuGetExportTable", [](void* real_func, auto&&...) -> void* {
         real_cuGetExportTable = reinterpret_cast<CuGetExportTable_t>(real_func);
 
         return reinterpret_cast<void*>(cuGetExportTable);
+    });
+
+    // See Note[proc_address_v2]
+    smart_dlsym::register_symbol("cuGetProcAddress", [](void* real_func, auto&&...) -> void* {
+        real_cuGetProcAddress_v2 = reinterpret_cast<CuGetProcAddress_v2_t>(real_func);
+
+        return reinterpret_cast<void*>(cuGetProcAddress_v2);
+    });
+
+    smart_dlsym::register_symbol("cuGetProcAddress_v2", [](void* real_func, auto&&...) -> void* {
+        real_cuGetProcAddress_v2 = reinterpret_cast<CuGetProcAddress_v2_t>(real_func);
+
+        return reinterpret_cast<void*>(cuGetProcAddress_v2);
     });
 }

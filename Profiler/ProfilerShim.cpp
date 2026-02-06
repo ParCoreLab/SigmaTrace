@@ -55,11 +55,8 @@ namespace Profiler::hack {
     // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1gf0a9fe11544326dabd743b7aa6b54223
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-declarations"
-    CUresult Fake_cuMemHostRegister_v2(void* p, size_t bytesize, unsigned int Flags) {
-        static auto* real_cuMemHostRegister = reinterpret_cast<decltype(cuMemHostRegister_v2)*>(
-                CudaExportTable::get_real_cu_func("cuMemHostRegister_v2"));
-
-        if (!real_cuMemHostRegister) {
+    decltype(auto) CuMemHostRegisterOverwrite(auto* real_func, void* p, size_t bytesize, unsigned int Flags) {
+        if (!real_func) {
             std::cerr << "No real_cuMemHostRegister" << std::endl;
             std::abort();
         }
@@ -70,9 +67,23 @@ namespace Profiler::hack {
             return CUDA_SUCCESS;
         }
 
-        return real_cuMemHostRegister(p, bytesize, Flags);
+        return real_func(p, bytesize, Flags);
     }
-    static_assert(std::is_same_v<decltype(cuMemHostRegister), decltype(Fake_cuMemHostRegister_v2)>);
+
+    CUresult Fake_cuMemHostRegister(void* p, size_t bytesize, unsigned int Flags) {
+        static auto* real_cuMemHostRegister =
+                reinterpret_cast<decltype(cuMemHostRegister)*>(CudaExportTable::get_real_cu_func("cuMemHostRegister"));
+
+        return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);
+    }
+    static_assert(std::is_same_v<decltype(cuMemHostRegister), decltype(Fake_cuMemHostRegister)>);
+
+    CUresult Fake_cuMemHostRegister_v2(void* p, size_t bytesize, unsigned int Flags) {
+        static auto* real_cuMemHostRegister = reinterpret_cast<decltype(cuMemHostRegister_v2)*>(
+                CudaExportTable::get_real_cu_func("cuMemHostRegister_v2"));
+
+        return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);
+    }
     static_assert(std::is_same_v<decltype(cuMemHostRegister_v2), decltype(Fake_cuMemHostRegister_v2)>);
 
     // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g63f450c8125359be87b7623b1c0b2a14
@@ -250,6 +261,9 @@ struct ProfilerCtx {
     // WARNING: Some calls are unsafe in this function, such as std::cout. We need to wait until __libc_start_main
     // See LateLoad
     ProfilerCtx() {
+        Profiler::CudaExportTable::register_overwrite("cuMemHostRegister",
+                                                      reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostRegister));
+
         Profiler::CudaExportTable::register_overwrite(
                 "cuMemHostRegister_v2", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostRegister_v2));
 
