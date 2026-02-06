@@ -539,6 +539,9 @@ public:
         // const auto thread_id = file_header.thread_id;
 
         auto& local_storage = process_local_storage(file_header);
+
+        // std::cout << Meta::name << " " << std::hex << event.context_addr << std::dec << std::endl;
+
         const auto nic_id = local_storage.ibv_context_to_nic_id.at(event.context_addr);
 
         const uint64_t cpu_track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);

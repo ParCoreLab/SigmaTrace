@@ -7,6 +7,9 @@ set(ABSEIL_ROOT "" CACHE PATH "Prefix where system Abseil is installed")
 # after the initial configure step and fails because the dependencies
 # from the ExternalProject_add don't exist :(
 if (BUILD_ABSEIL)
+    # WHY ABSEIL WHY
+    # We need this to use in shared libs (because of -fPIC)
+    # set(BUILD_SHARED_LIBS ON)
     set(ABSL_BUILD_TESTING OFF)
     set(ABSL_USE_GOOGLETEST_HEAD OFF)
     set(ABSL_PROPAGATE_CXX_STD ON)

@@ -52,8 +52,6 @@ int main(int argc, char* argv[]) {
     const std::string program_bin = argv[1];
     std::vector<const char*> program_args(argv + 1, argv + argc);
 
-    const auto ibv_lib = binary_dir / "providers/libibverbs_trace.so";
-
     const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, shim_libs, profiler_args_env);
     return ret;
 }

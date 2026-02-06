@@ -16,8 +16,8 @@ if (BUILD_NVSHMEM)
             # Release build also kills compile time.
             # Debug is too slow to run, Release takes too long to compile with ...DEVICE_INLINING=ON
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-            # -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-            # -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+            -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
             -DCUDA_HOME=${CUDAToolkit_LIBRARY_ROOT}
             -DCMAKE_VERBOSE_MAKEFILE=ON
             -DNVSHMEM_DEBUG=OFF

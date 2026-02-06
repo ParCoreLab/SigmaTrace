@@ -251,6 +251,7 @@ struct ProfilerCtx {
     // Event module will interface with the filesystem and may print to stderr
     void LateLoad() {
         m_event_recorder = &Events::EventRecorder<>::instance(std::move(m_event_recorder_config));
+        std::cout << "[Profiler] Initialized!" << std::endl;
     }
 
     /*
@@ -552,7 +553,9 @@ struct ProfilerCtx {
                 [this]<typename TS>(auto&&, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr** bad_wr, TS ts_start, TS ts_end) {
             sigma_ignore_unused(bad_wr);
 
-            assert(wr->num_sge <= 1 && "TODO: More than 1 SGE found");
+            if (wr->num_sge > 1) {
+                std::cerr << "TODO: More than 1 SGE found" << std::endl;
+            }
 
             const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
 
@@ -754,11 +757,11 @@ struct ProfilerCtx {
             sigma_ignore_unused(obj);
 
             if (obj_type & MLX5DV_OBJ_QP) {
-                std::cout << "TODO: QP created" << std::endl;
+                // std::cout << "TODO: QP created" << std::endl;
             }
 
             if (obj_type & MLX5DV_OBJ_CQ) {
-                std::cout << "TODO: CQ created" << std::endl;
+                // std::cout << "TODO: CQ created" << std::endl;
             }
         });
 
@@ -1018,6 +1021,10 @@ struct ProfilerCtx {
 // See Note[late_load]
 static void __attribute__((constructor)) init() {
     ProfilerCtx::instance();
+}
+
+static void __attribute__((destructor)) finalize() {
+    std::cout << "[Profiler] Exited Normally!" << std::endl;
 }
 
 /*
