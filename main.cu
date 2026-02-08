@@ -132,5 +132,7 @@ int main(int argc, char* argv[]) {
         ncclCommDestroy(nccl_comm);
     }
 
+    std::cout << "Finished" << std::endl;
+
     return 0;
 }

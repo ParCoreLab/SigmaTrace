@@ -338,6 +338,8 @@ struct ProfilerCtx {
 
             // Here we disgrace god
             // Just proc it
+            // TODO: it makes more sense to do this when the Profiler starts.
+            // No need for the profiled application to call it.
             ibv_device_attr attrs{};
             ibv_query_device(out_context, &attrs);
 
@@ -387,8 +389,6 @@ struct ProfilerCtx {
         });
 
         m_ibv_profiler->register_pre<ibv::destroy_qp_tag>([this](ibv_qp* qp, auto ts_start) {
-            // std::cout << "destroy_qp with ctx " << qp->context << std::endl;
-
             Profiler::Events::IbvDestroyQp event{
                     // WARNING: not qp->context. Why? I have no clue
                     .context_addr = reinterpret_cast<uint64_t>(qp->pd->context),
@@ -397,38 +397,11 @@ struct ProfilerCtx {
             m_event_recorder->Record(event, ts_start);
         });
 
-
         m_ibv_profiler->register_post<ibv::modify_qp_tag>(
                 [this](int, ibv_qp* qp, ibv_qp_attr* attr, int attr_mask, auto ts_start, auto ts_end) {
-            // std::cout << "[Profiler] We modifying qps" << std::endl;
-
             if (!(attr_mask & IBV_QP_DEST_QPN)) {
                 return;
             }
-
-            // const auto dest_qp_num = attr->dest_qp_num;
-            // const auto dlid = attr->ah_attr.dlid;
-            // const auto& grh = attr->ah_attr.grh;
-            //
-            // const auto a = attr->ah_attr.grh.dgid.raw;
-            //
-            // static std::mutex mutex{};
-            // std::scoped_lock lock(mutex);
-            //
-            // const thread_local auto thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
-            //
-            // std::cout << static_cast<uint8_t>(thread_id) << " [QP] " << qp->qp_num << " -> " << " " << dest_qp_num
-            //           << " " << dlid << std::endl;
-
-            /*
-            Profiler::Events::IbvModifyQp event{
-                .context_addr = reinterpret_cast<uint64_t>(qp->context),
-                .qp_num = qp->qp_num,
-                .dest_qp_num = attr->dest_qp_num,
-                .dgid = attr->ah_attr.grh.dgid,
-                .dlid = attr->ah_attr.dlid
-            };
-            */
 
             Profiler::Events::IbvModifyQp event{
                     .context_addr = reinterpret_cast<uint64_t>(qp->context),
@@ -450,19 +423,20 @@ struct ProfilerCtx {
 
             const auto alloc_addr = reinterpret_cast<uint64_t>(addr);
 
+            /*
             const auto gpu_id = get_addr_gpu_id(alloc_addr);
             if (gpu_id != Profiler::Events::UnknownDeviceId) {
                 const auto [_, inserted] = m_ibv_memory_registrations.insert({alloc_addr, {length, gpu_id}});
                 if (!inserted) {
-                    std::cerr << "reg_mr_tag addr " << addr << " already registered" << std::endl;
+                    // std::cerr << "reg_mr_tag addr " << addr << " already registered" << std::endl;
                     // std::abort();
                     return;
                 }
             }
+            */
 
             const Profiler::Events::IbvMemoryReg event{
                     .context_addr = reinterpret_cast<uint64_t>(pd->context),
-                    .gpu_id = gpu_id,
                     .addr = alloc_addr,
                     .size = length,
                     .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
@@ -480,18 +454,8 @@ struct ProfilerCtx {
 
             const auto alloc_addr = reinterpret_cast<uint64_t>(addr);
 
-            const auto gpu_id = get_addr_gpu_id(alloc_addr);
-            if (gpu_id != Profiler::Events::UnknownDeviceId) {
-                const auto [_, inserted] = m_ibv_memory_registrations.insert({alloc_addr, {length, gpu_id}});
-                if (!inserted) {
-                    std::cerr << "reg_mr_iova2_tag addr " << addr << " already registered" << std::endl;
-                    std::abort();
-                }
-            }
-
             const Profiler::Events::IbvMemoryReg event{
                     .context_addr = reinterpret_cast<uint64_t>(pd->context),
-                    .gpu_id = gpu_id,
                     .addr = alloc_addr,
                     .size = length,
                     .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
@@ -507,7 +471,6 @@ struct ProfilerCtx {
 
             Profiler::Events::IbvPostSend post_send_event{
                     .context_addr = context_addr,
-                    .gpu_id = 0,
                     .qp_num = qp->qp_num,
                     .num_wrs = 0,
             };
@@ -517,7 +480,6 @@ struct ProfilerCtx {
                 post_send_event.num_wrs += 1;
                 const Profiler::Events::IbvPostSendWr wr_event{
                         .context_addr = context_addr,
-                        .gpu_id = 0,
                         .qp_num = qp->qp_num,
                         .wr_id = wr_it->wr_id,
                         .num_sge = wr_it->num_sge,
@@ -526,16 +488,16 @@ struct ProfilerCtx {
                 };
                 m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
 
+                // TODO: sg stuff isn't really needed...
+                /*
                 for (auto sg_idx = 0; sg_idx < wr_it->num_sge; sg_idx++) {
                     const auto& sg = wr_it->sg_list[sg_idx];
 
                     const auto sg_addr = sg.addr;
-                    const auto gpu_idx = find_gpu_id(sg_addr);
                     const auto sg_length = static_cast<size_t>(sg.length);
 
                     const Profiler::Events::IbvPostSendSg wr_sg_event{
                             .context_addr = context_addr,
-                            .gpu_id = gpu_idx,
                             .qp_num = qp->qp_num,
                             .wr_id = wr_it->wr_id,
                             .addr = sg_addr,
@@ -544,6 +506,7 @@ struct ProfilerCtx {
                     };
                     m_event_recorder->Record(wr_sg_event, ts_start + 2, ts_end - 2);
                 }
+                */
             }
 
             m_event_recorder->Record(post_send_event, ts_start, ts_end);
@@ -567,11 +530,9 @@ struct ProfilerCtx {
 
             for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
                 recv_event.num_wrs += 1;
-                const auto gpu_id = find_gpu_id(reinterpret_cast<uint64_t>(qp->pd));
 
                 const Profiler::Events::IbvPostRecvWr recv_wr_event{
                         .context_addr = context_addr,
-                        .gpu_id = gpu_id,
                         .qp_num = qp->qp_num,
                         .wr_id = wr_it->wr_id,
                         .num_sge = wr_it->num_sge,
@@ -588,16 +549,17 @@ struct ProfilerCtx {
 
             const auto context_addr = reinterpret_cast<uint64_t>(cq->context);
 
-            {
-                const Profiler::Events::IbvPollCq poll_cq_event{
-                        .context_addr = context_addr,
-                        .cq_addr = reinterpret_cast<uint64_t>(cq),
-                        // TODO: might be wrong. Look at cq->
-                        .num_requested = num_entries,
-                        .num_completed = out_ret,
-                };
-                m_event_recorder->Record(poll_cq_event, ts_start, ts_end);
-            }
+            // This is too expensive to log every time
+            // {
+            //     const Profiler::Events::IbvPollCq poll_cq_event{
+            //             .context_addr = context_addr,
+            //             .cq_addr = reinterpret_cast<uint64_t>(cq),
+            //             // TODO: might be wrong. Look at cq->
+            //             .num_requested = num_entries,
+            //             .num_completed = out_ret,
+            //     };
+            //     m_event_recorder->Record(poll_cq_event, ts_start, ts_end);
+            // }
 
             // Most polls won't have anything
             if (out_ret == 0) [[likely]] {
@@ -980,7 +942,6 @@ struct ProfilerCtx {
             // TODO: extra copy because Record(const T&)
             m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
                     {
-                            .gpu_id = 0,
                             .nic_id = 0,
                             // TODO
                             .mem_id = out_umem->umem_id,
@@ -990,7 +951,6 @@ struct ProfilerCtx {
                     ts_start, ts_end);
 
             std::scoped_lock lock(m_ibv_allocations_mutex);
-
             m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
         });
 

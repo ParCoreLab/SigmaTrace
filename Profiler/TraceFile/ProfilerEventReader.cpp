@@ -703,7 +703,7 @@ public:
         m_builder.add_annotation(slice, "Addr", event.addr);
         m_builder.add_annotation(slice, "Size", event.size);
         m_builder.add_annotation(slice, "Type", event.type);
-        m_builder.add_annotation(slice, "GPU ID", event.gpu_id);
+        // m_builder.add_annotation(slice, "GPU ID", event.gpu_id);
     }
 
     void visit(EventTrait<ProfilerEvents::IbvPostSend>, const EventFileHeader& file_header, EventHeader&& header,

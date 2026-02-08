@@ -5,6 +5,7 @@
 #include "Helpers/Timestamp.hpp"
 
 #include "CallbackManager.hpp"
+#include "Helpers/Utilities.hpp"
 #include "HookTrait.hpp"
 
 #include "detail/ObjectOpsHookManager.hpp"
@@ -101,6 +102,14 @@ namespace hook {
         template<typename Callback>
         void register_all_pre(Callback&& callback) noexcept {
             (register_pre_for_tag<Tags>(std::forward<Callback>(callback)), ...);
+        }
+
+        // TODO
+        template<typename Callback>
+        [[deprecated]] void register_pre_default(Callback&& callback) noexcept {
+            // Not deprecated, just not implemented yet
+            sigma_ignore_unused(callback);
+            std::abort();
         }
 
     private:
@@ -254,6 +263,7 @@ namespace hook {
             auto& mgr = instance();
 
             // Start timestamp as soon as the function hook is invoked
+            // TODO: don't get timestamp if no hooks registered
             auto ts_start = mgr.m_timestamp.now();
 
             // Get context from pre-allocated slot (no runtime lookup!)
@@ -272,13 +282,19 @@ namespace hook {
             // Pre-hooks with context
             mgr.template invoke_pre_with_context<Tag>(ctx, args..., ts_start);
 
-            auto original = ctx->template original<Tag>();
-            auto ret = original(args...);
+            const auto& original = ctx->template original<Tag>();
+            decltype(auto) ret = original(args...);
 
             // End timestamp
             auto ts_end = mgr.m_timestamp.now();
 
             // Post-hooks with context
+            /* TODO: don't call if no hooks
+             * For some reason just calling this function is expensive
+             * even if no hooks are registered. Maybe because of arg copies?
+             * Need more optimizations.
+             * Pack args into a reference-able tuple and don't call if no hooks
+             */
             mgr.template invoke_post_with_context<Tag>(ctx, ret, args..., ts_start, ts_end);
 
             return ret;

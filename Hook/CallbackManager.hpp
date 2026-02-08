@@ -139,14 +139,14 @@ namespace hook {
         void invoke_pre_callbacks(Args&&... args) noexcept {
             // Note: no lock here
             // We assume no callbacks will be registered after the first is called
-            for (auto& cb: m_callbacks.template pre_callbacks<Tag>()) {
+            for (const auto& cb: m_callbacks.template pre_callbacks<Tag>()) {
                 cb(args...);
             }
         }
 
         template<ValidCallbackTag Tag, typename Ret, typename... Args>
         void invoke_post_callbacks(Ret ret, Args&&... args) noexcept {
-            for (auto& cb: m_callbacks.template post_callbacks<Tag>()) {
+            for (const auto& cb: m_callbacks.template post_callbacks<Tag>()) {
                 cb(ret, args...);
             }
         }

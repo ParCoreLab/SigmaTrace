@@ -74,7 +74,6 @@ namespace Profiler::Events {
 
     struct alignas(8) IbvMemoryReg {
         uint64_t context_addr;
-        GpuId_T gpu_id;
         uint64_t addr;
         uint64_t size;
         IbvMemoryRegType type;
@@ -82,14 +81,12 @@ namespace Profiler::Events {
 
     struct alignas(8) IbvPostSend {
         uint64_t context_addr;
-        GpuId_T gpu_id;
         uint32_t qp_num; // Queue pair number
         uint64_t num_wrs;
     };
 
     struct alignas(8) IbvPostSendWr {
         uint64_t context_addr;
-        GpuId_T gpu_id;
         uint32_t qp_num;
         uint64_t wr_id;
         int32_t num_sge;
@@ -99,7 +96,6 @@ namespace Profiler::Events {
 
     struct alignas(8) IbvPostSendSg {
         uint64_t context_addr;
-        GpuId_T gpu_id;
         uint32_t qp_num;
         uint64_t wr_id;
         uint64_t addr;
@@ -115,7 +111,6 @@ namespace Profiler::Events {
 
     struct alignas(8) IbvPostRecvWr {
         uint64_t context_addr;
-        GpuId_T gpu_id;
         uint32_t qp_num;
         uint64_t wr_id;
         int32_t num_sge;

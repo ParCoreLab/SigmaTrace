@@ -72,13 +72,6 @@ namespace ibv {
                 LogDebug("Hooks installed");
             }
         });
-
-        this->register_post<close_device_tag>([this](int, ibv_context* ctx, auto&&...) {
-            if (ctx) {
-                this->uninstall(ctx);
-                LogDebug("Hooks uninstalled");
-            }
-        });
     }
 } // namespace ibv
 

@@ -101,7 +101,7 @@ set(SIGMA_CUDA_WARNINGS
 # ================================================================
 # Host compiler
 set(SIGMA_CXX_FLAGS_DEBUG -O0 -g3 -fno-omit-frame-pointer)
-set(SIGMA_CXX_FLAGS_RELEASE -Werror -O3 -march=native -ffast-math)
+set(SIGMA_CXX_FLAGS_RELEASE -O3 -march=native -ffast-math)
 set(SIGMA_CXX_FLAGS_RELWITHDEB -O2 -g -fno-omit-frame-pointer)
 
 # CUDA
