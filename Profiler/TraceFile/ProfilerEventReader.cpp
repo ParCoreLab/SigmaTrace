@@ -30,10 +30,10 @@ using ThreadId = std::uint64_t;
 using NicId = std::uint64_t;
 
 using EnabledEvents =
-        Events::TypeList<ProfilerEvents::IbvDeviceRegistration,                                                     //
+        Events::TypeList<ProfilerEvents::IbvDeviceRegistration, // ProfilerEvents::IbvPortRegistration, //
                          ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,                             //
                          ProfilerEvents::IbvCreateQp, ProfilerEvents::IbvDestroyQp, ProfilerEvents::IbvModifyQp,    //
-                         ProfilerEvents::IbvMemoryReg,                                                              //
+                         ProfilerEvents::IbvMemoryReg, ProfilerEvents::IbvMemoryDereg,                              //
                          ProfilerEvents::IbvPostSend, ProfilerEvents::IbvPostSendWr, ProfilerEvents::IbvPostSendSg, //
                          ProfilerEvents::IbvPostRecv, ProfilerEvents::IbvPostRecvWr,                                //
                          ProfilerEvents::IbvPollCq, ProfilerEvents::IbvCompletion,                                  //
@@ -388,13 +388,22 @@ struct ProcessLocalStorage {
     // context_addr, qp_num -> flow_id
     absl::flat_hash_map<std::pair<uint64_t, uint32_t>, uint64_t> ibv_qp_create_destroy_flows;
 
-    // mem id -> flow id
-    absl::flat_hash_map<uint64_t, uint64_t> pending_mem_flows;
-
     absl::flat_hash_map<uint64_t, uint64_t> pending_ibv_context_flows;
 
     // (qp_num, wr_id) -> flow id
     absl::flat_hash_map<std::tuple<uint64_t, uint32_t>, uint64_t> pending_ibv_completions;
+
+    // ============================================================================
+    // mlx5dv
+    // umem addr / page id -> context addr
+    absl::flat_hash_map<uint64_t, uint64_t> mlx5dv_umem_addr_to_ctx;
+    absl::flat_hash_map<uint64_t, uint64_t> mlx5dv_uar_addr_to_ctx;
+
+    // TODO: Insane. Rewrite this
+    // (context_addr, mem addr / page id) -> flow id
+    absl::flat_hash_map<std::pair<uint64_t, uint64_t>, uint64_t> mlx5dv_pending_umem_flows;
+    absl::flat_hash_map<std::pair<uint64_t, uint64_t>, uint64_t> mlx5dv_pending_uar_flows;
+    // ============================================================================};
 };
 
 // Local to one Node
@@ -563,7 +572,6 @@ public:
 
         auto* slice = m_builder.add_slice(track_uuid, ts_start, ts_end, Meta::name, "ibv");
         add_header_annotations(slice, file_header);
-        add_header_annotations(slice, file_header);
 
         m_builder.add_annotation(slice, "Context Addr", event.context_addr);
 
@@ -573,10 +581,32 @@ public:
     // Non-trace, for bookkeeping only
     void visit(EventTrait<ProfilerEvents::IbvDeviceRegistration>, const EventFileHeader& file_header, EventHeader&&,
                ProfilerEvents::IbvDeviceRegistration&& event) {
-        // This visitor sets up the NIC ID mapping
-        register_node(file_header.hostname);
+        // This visitor sets up the node hostname
+        const auto node_id = register_node(file_header.hostname);
+        const auto nic_id = event.node_guid;
 
+        // This visitor also sets up the NIC ID mapping
+        const std::string nic_name{event.name};
+
+        // Ensure NIC track with name exists
+        // We do it here explicitly because only this visitor gets the name (not really)
+        m_builder.register_device_track(TrackType::NIC, node_id, nic_id, nic_name);
+    }
+
+    // Non-trace, for bookkeeping only
+    void visit(EventTrait<ProfilerEvents::IbvPortRegistration>, const EventFileHeader& file_header, EventHeader&&,
+               ProfilerEvents::IbvPortRegistration&& event) {
+        sigma_ignore_unused(file_header);
+        sigma_ignore_unused(event);
+    }
+
+    void visit(EventTrait<ProfilerEvents::IbvOpenDevice>, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::IbvOpenDevice&& event) {
         auto& local_storage = process_local_storage(file_header);
+
+        // Ensure context_addr is registered
+        // We do it here because multiple subsequent ibv_open_device + ibv_close_device
+        // calls can reopen a given context_addr with a different device. Great stuff.
         const auto& [_, inserted] =
                 local_storage.ibv_context_to_nic_id.try_emplace(event.context_addr, event.node_guid);
 
@@ -586,22 +616,6 @@ public:
             std::cerr << ". Something has gone awry" << std::endl;
             std::abort();
         }
-    }
-
-    void visit(EventTrait<ProfilerEvents::IbvOpenDevice>, const EventFileHeader& file_header, EventHeader&& header,
-               ProfilerEvents::IbvOpenDevice&& event) {
-        // This visitor sets up the NIC ID mapping
-        const std::string nic_name{event.name};
-
-        const auto node_id = register_node(file_header.hostname);
-        // const auto nic_id = register_nic(nic_name);
-
-        auto& local_storage = process_local_storage(file_header);
-        const auto nic_id = local_storage.ibv_context_to_nic_id.at(event.context_addr);
-
-        // Ensure NIC track with name exists
-        // We do it here explicitly because only this visitor gets the name (not really)
-        m_builder.register_device_track(TrackType::NIC, node_id, nic_id, nic_name);
 
         const auto flow_id = m_builder.new_flow_id();
         local_storage.pending_ibv_context_flows[event.context_addr] = flow_id;
@@ -609,16 +623,8 @@ public:
         auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
         slice->add_flow_ids(flow_id);
 
-        m_builder.add_annotation(slice, "name", nic_name);
-        m_builder.add_annotation(slice, "name", event.dev_name);
-        m_builder.add_annotation(slice, "dev_path", event.dev_path);
-        m_builder.add_annotation(slice, "ibdev_path", event.ibdev_path);
-
-        // Should be enums
-        m_builder.add_annotation(slice, "node_type", event.node_type);
-        m_builder.add_annotation(slice, "transport_type", event.transport_type);
-
         m_builder.add_annotation(slice, "Context addr", event.context_addr);
+        m_builder.add_annotation(slice, "Node GUID", event.node_guid);
     }
 
     void visit(EventTrait<ProfilerEvents::IbvCloseDevice>, const EventFileHeader& file_header, EventHeader&& header,
@@ -800,26 +806,18 @@ public:
     }
     // ========================================================================
 
-    void visit(EventTrait<ProfilerEvents::Mlx5dvMemoryRegistration> T, const EventFileHeader& file_header,
+    void visit(EventTrait<ProfilerEvents::Mlx5dvMemoryRegistration>, const EventFileHeader& file_header,
                EventHeader&& header, ProfilerEvents::Mlx5dvMemoryRegistration&& event) {
-        using Meta = decltype(T);
+        auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
 
-        const auto node_id = register_node(file_header.hostname);
-        const auto nic_id = event.nic_id;
-
-        const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
-                                                                    static_cast<uint64_t>(nic_id));
+        // Save ctx for correlation on dereg
+        auto& local_storage = process_local_storage(file_header);
+        local_storage.mlx5dv_umem_addr_to_ctx.insert_or_assign(event.umem_addr, event.context_addr);
 
         // TODO: not checking if exists...
         const auto flow_id = m_builder.new_flow_id();
-        auto& local_storage = process_local_storage(file_header);
-        local_storage.pending_mem_flows[event.mem_id] = flow_id;
-
-        auto* slice =
-                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "memory");
-
+        local_storage.mlx5dv_pending_umem_flows[{event.context_addr, event.mem_id}] = flow_id;
         slice->add_flow_ids(flow_id);
-        add_header_annotations(slice, file_header);
 
         m_builder.add_annotation("Memory ID", event.mem_id);
         m_builder.add_annotation("Flow ID", flow_id);
@@ -832,24 +830,22 @@ public:
         using Meta = decltype(T);
 
         const auto node_id = register_node(file_header.hostname);
-        const auto nic_id = event.nic_id;
+        const auto cpu_id = file_header.cpu_id;
 
-        // Ensure GPU track exists
-        const uint64_t track_uuid = m_builder.register_device_track(TrackType::NIC, static_cast<uint64_t>(node_id),
-                                                                    static_cast<uint64_t>(nic_id));
-
-        auto* slice = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name, "memory");
-        add_header_annotations(slice, file_header);
-        m_builder.add_annotation("Memory ID", event.mem_id);
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
 
         auto& local_storage = process_local_storage(file_header);
 
         // Sometimes we see duplicate mem deregs
-        const auto& flow_id = local_storage.pending_mem_flows.find(event.mem_id);
-        if (flow_id != local_storage.pending_mem_flows.end()) {
-            slice->add_terminating_flow_ids(flow_id->second);
-            local_storage.pending_mem_flows.erase(flow_id->first);
-        }
+        const auto context_addr = local_storage.mlx5dv_umem_addr_to_ctx.at(event.umem_addr);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "mlx5dv");
+        add_header_annotations(slice, file_header);
+
+        const auto flow_id = local_storage.mlx5dv_pending_umem_flows.at({context_addr, event.mem_id});
+        slice->add_terminating_flow_ids(flow_id);
+        local_storage.mlx5dv_pending_umem_flows.erase({context_addr, event.mem_id});
     }
 
     void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader& file_header, EventHeader&& header,
@@ -900,75 +896,6 @@ public:
         m_builder.end_slice(track_uuid, header.timestamp_start);
     }
 
-    // ========================================================================
-    // Example visit handlers for future events (uncomment and adapt as needed)
-    // ========================================================================
-
-    /*
-    // RDMA Send operation - creates a slice with flow
-    void visit(EventTag<RdmaSend>, const EventFileHeader &file_header, EventHeader &&header, RdmaSend &&event) {
-        const uint64_t track = m_builder.register_gpu_track(event.node_id, event.gpu_id);
-
-        // Start a flow for this send
-        uint64_t flow_id = m_builder.new_flow_id();
-        m_pending_flows[event.request_id] = flow_id;
-
-        m_builder.begin_slice(track, header.timestamp, "RDMA Send");
-        m_builder.add_annotation("dest_node", event.dest_node);
-        m_builder.add_annotation("size", event.size);
-        m_builder.begin_flow(track, header.timestamp, flow_id, "Data Transfer");
-    }
-
-    // RDMA Receive completion - ends the flow
-    void visit(EventTag<RdmaRecv>, const EventFileHeader &file_header, EventHeader &&header, RdmaRecv &&event) {
-        const uint64_t track = m_builder.register_gpu_track(event.node_id, event.gpu_id);
-
-        // End the flow if we have the matching request
-        if (auto it = m_pending_flows.find(event.request_id); it != m_pending_flows.end()) {
-            m_builder.end_flow(track, header.timestamp, it->second, "Data Received");
-            m_pending_flows.erase(it);
-        }
-
-        m_builder.instant_event(track, header.timestamp, "RDMA Recv Complete");
-        m_builder.add_annotation("size", event.size);
-    }
-
-    // Kernel launch - hierarchical slice example
-    void visit(EventTag<KernelLaunch>, const EventFileHeader &file_header, EventHeader &&header, KernelLaunch &&event) {
-        const uint64_t track = m_builder.register_gpu_track(event.node_id, event.gpu_id);
-
-        m_builder.begin_slice(track, header.timestamp, event.kernel_name, "cuda");
-        m_builder.add_annotation("grid_dim", event.grid_dim);
-        m_builder.add_annotation("block_dim", event.block_dim);
-
-        // Track for hierarchical slice completion
-        m_pending_kernels[event.correlation_id] = {track, event.kernel_name};
-    }
-
-    // Kernel completion
-    void visit(EventTag<KernelComplete>, const EventFileHeader &file_header, EventHeader &&header, KernelComplete
-    &&event) { if (auto it = m_pending_kernels.find(event.correlation_id); it != m_pending_kernels.end()) {
-            m_builder.end_slice(it->second.track_uuid, header.timestamp);
-            m_pending_kernels.erase(it);
-        }
-    }
-
-    // NVSHMEM Put - demonstrates nested slices and flows
-    void visit(EventTag<NvshmemPut>, const EventFileHeader &file_header, EventHeader &&header, NvshmemPut &&event) {
-        const uint64_t track = m_builder.register_gpu_track(event.node_id, event.gpu_id);
-
-        // Outer slice for the whole operation
-        m_builder.begin_slice(track, header.timestamp, "nvshmem_put", "nvshmem");
-        m_builder.add_annotation("dest_pe", event.dest_pe);
-        m_builder.add_annotation("size", event.size);
-
-        // Create flow to destination
-        uint64_t flow_id = m_builder.new_flow_id();
-        m_pending_flows[event.op_id] = flow_id;
-        m_builder.begin_flow(track, header.timestamp, flow_id, "NVSHMEM Transfer");
-    }
-    */
-
 private:
     // TODO: Set to true when we get the first ibv_open_device
     // Not used currently
@@ -993,20 +920,9 @@ private:
         return entry->second;
     }
 
-    // template<typename T>
-    // uint32_t register_nic(T&& key) {
-    //     const auto& [entry, inserted] = m_global_nic_ids.try_emplace(std::forward<T>(key), m_current_nic_id);
-    //     if (!inserted) {
-    //         return entry->second;
-    //     }
-    //
-    //     ++m_current_nic_id;
-    //     return entry->second;
-    // }
-
     // TODO: This gives First-come, first-serve IDs
     uint32_t m_current_node_id{0};
-    absl::flat_hash_map<std::string, decltype(m_current_node_id)> m_global_node_ids;
+    absl::flat_hash_map<std::string, decltype(m_current_node_id)> m_global_node_ids{};
 
     // Maps globally unique (hopefully) ibv ids to our local enumeration
     // uint32_t m_current_nic_id{0};
@@ -1027,10 +943,6 @@ private:
     // Node ID, Process ID, Thread ID
     // absl::flat_hash_map<std::tuple<GpuId_T, GpuId_T, GpuId_T>, LocalStorage> m_thread_local_storage;
     // ================================================================
-
-    // Track pending operations for flow/slice matching
-    // std::unordered_map<uint64_t, uint64_t> m_pending_flows;  // request_id -> flow_id
-    // std::unordered_map<uint64_t, PendingKernel> m_pending_kernels;
 };
 
 int main(int argc, char* argv[]) {

@@ -108,6 +108,7 @@ namespace Profiler::hack {
 } // namespace Profiler::hack
 
 // Convenience
+using Helpers::PtrToUint;
 using Profiler::Events::GpuId_T;
 
 enum class QueueType {
@@ -150,7 +151,7 @@ struct ProfilerCtx {
     std::mutex m_ibv_allocations_mutex;
 
     // ================================================
-    // GPU memory allocaations
+    // GPU memory allocations
     // addr -> { size, gpu_id }
     // TODO: Make the value a proper struct so we don't have to do std::get<whatever->second>
     std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations{};
@@ -172,12 +173,10 @@ struct ProfilerCtx {
     std::map<UarPageIdType, std::tuple<UarAllocationType, QueueType>> m_uar_id_to_type;
 
     // <addr, length, umem ID>
-    std::vector<std::tuple<AddrType, size_t, UmemIdType>> m_mlx5_umem_allocations;
+    // std::vector<std::tuple<AddrType, size_t, UmemIdType>> m_mlx5_umem_allocations;
     // TODO: boost multimap
-    std::map<AddrType, UarPageIdType> m_mlx5_uar_allocations;
-    std::map<UarPageIdType, AddrType> m_mlx5_uar_page_id_to_addr;
-
-    std::map<UarPageIdType, std::shared_ptr<bool>> m_mlx5_fake_uar_runner_signals;
+    // std::map<AddrType, UarPageIdType> m_mlx5_uar_allocations;
+    // std::map<UarPageIdType, AddrType> m_mlx5_uar_page_id_to_addr;
 
     using MemoryRepeaterHandle = Profiler::MemoryRepeater::MemoryRepeaterHandle;
     std::unordered_map<UarPageIdType, std::vector<MemoryRepeaterHandle>> m_mlx5_uar_hijack_handles;
@@ -271,21 +270,21 @@ struct ProfilerCtx {
         Profiler::CudaExportTable::register_overwrite(
                 "cuMemHostUnregister", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostUnregister));
 
-        const auto profiler_args = Profiler::ProfilerArgs::from_env();
+        m_args = Profiler::ProfilerArgs::from_env();
 
         // Will be populated with things from profiler_args in the future
         m_event_recorder_config = {};
 
-        if (profiler_args.LoadNvbit) {
-            load_nvbit(profiler_args.ShimDir);
+        if (m_args.LoadNvbit) {
+            load_nvbit(m_args.ShimDir);
         }
 
-        if (profiler_args.LoadIbtrace) {
-            load_ibv(profiler_args.ShimDir);
+        if (m_args.LoadIbtrace) {
+            load_ibv(m_args.ShimDir);
         }
 
-        if (profiler_args.LoadMlx5dv) {
-            load_mlx5dv(profiler_args.ShimDir);
+        if (m_args.LoadMlx5dv) {
+            load_mlx5dv(m_args.ShimDir);
         }
     }
 
@@ -293,6 +292,8 @@ struct ProfilerCtx {
         static ProfilerCtx instance;
         return instance;
     }
+
+    Profiler::ProfilerArgs m_args;
 
     Events::RuntimeConfig m_event_recorder_config;
     Events::EventRecorder<>* m_event_recorder{nullptr};
@@ -329,6 +330,137 @@ struct ProfilerCtx {
         return get_instance();
     }
 
+    /*
+     * Query NIC info and record on a device open
+     *
+     * We use context addr + node_guid to uniquely identify NICs in a given node
+     * This function is meant to be called on ibv_device_open or mx5dv_device_open
+     *
+     * It first calls ibv_query_device to get node_guid alongside other attributes
+     * If NIC data is already saved, it constructs the IbvOpenDevice event nd returns early
+     * Otherwise, it queries each port and saves info.
+     *
+     * It turns out some applications call ibv_open_device a lot... so we don't want to
+     * fetch and record all the data here unnecessarily
+     *
+     * Note the dynamic symbol resolution: we want this function to be callable from
+     * both ibv and mx5dv contexts with any combination of providers loaded. It's possible
+     * that the user disables ibv but enables mlx5dv to get a reduced set of events, meaning
+     * ibv symbols won't be loaded globally. That being said, the current implementation is jank
+     * and should be in a symbol table in a helper module, not this mega function.
+     *
+     * node_guid is unique per HCA in the node
+     *
+     * Node (server)
+     * ├── HCA 0 (mlx5_0)
+     * │   ├── node_guid: 0x1234...      (per-HCA)
+     * │   ├── sys_image_guid: 0xABCD... (can span HCAs)
+     * │   ├── Port 1
+     * │   │   ├── LID: 15               (assigned by SM)
+     * │   │   ├── GID[0]: fe80::1234    (link-local, derived from port_guid)
+     * │   │   ├── GID[1]: ff02::5678    (if RoCE: IP-based)
+     * │   │   └── state: ACTIVE
+     * │   └── Port 2
+     * │       ├── LID: 16               (different LID)
+     * │       ├── GID[0]: fe80::1235
+     * │       └── state: ACTIVE
+     * └── HCA 1 (mlx5_1)
+     *     ├── node_guid: 0x5678...      (different HCA)
+     *     ├── sys_image_guid: 0xABCD... (same system)
+     *     └── Port 1
+     *     ├── LID: 23
+     *     └── GID[0]: fe80::5678
+     */
+    Profiler::Events::IbvOpenDevice register_nic(ibv_context* ctx, ibv_device* device) const {
+        using fn_query_port_t = int (*)(ibv_context* context, uint8_t port_num, ibv_port_attr* port_attr);
+
+        static auto* libibverbs_handle = smart_dlsym::real_dlopen("libibverbs.so", smart_dlsym::DL_RTLD_NOW);
+        if (!libibverbs_handle) {
+            std::cerr << "Could not find dlopen libibverbs.so" << std::endl;
+            std::abort();
+        }
+
+        static auto* fn_query_device = reinterpret_cast<decltype(ibv_query_device)*>(
+                smart_dlsym::real_dlsym(libibverbs_handle, "ibv_query_device"));
+
+        static auto* fn_query_port = reinterpret_cast<fn_query_port_t>(
+                smart_dlsym::real_dlvsym(libibverbs_handle, "ibv_query_port", "IBVERBS_1.1"));
+
+        static auto* fn_query_gid =
+                reinterpret_cast<decltype(ibv_query_gid)*>(smart_dlsym::real_dlsym(libibverbs_handle, "ibv_query_gid"));
+
+        if (!fn_query_device || !fn_query_port || !fn_query_gid) {
+            std::cerr << "Could not find ibv_query function symbols" << std::endl;
+            std::abort();
+        }
+
+        ibv_device_attr attrs{};
+        const auto res_device = fn_query_device(ctx, &attrs);
+        if (res_device != 0) {
+            std::cerr << "Failed to query device of ctx " << ctx << std::endl;
+            std::abort();
+        }
+
+        const Profiler::Events::IbvOpenDevice event{
+                .context_addr = PtrToUint(ctx),
+                .node_guid = attrs.node_guid,
+        };
+
+        // TODO: this is probably not a good way to check.
+        // A better approach is waiting for the user to call the functions below
+        // And only query ourselves before Profiler exit if not all NICs get queried
+        static std::unordered_set<uint64_t> fetched_nics{};
+        if (fetched_nics.contains(attrs.node_guid)) {
+            return event;
+        }
+        fetched_nics.emplace(attrs.node_guid);
+
+        const uint8_t num_ports{attrs.phys_port_cnt};
+        for (uint8_t p = 1; p <= num_ports; p++) {
+            ibv_port_attr port_attrs{};
+            const auto res_port = fn_query_port(ctx, p, &port_attrs);
+            if (res_port != 0) {
+                std::cerr << "Failed to query port " << p << " of ctx " << ctx << std::endl;
+                std::abort();
+            }
+
+            Profiler::Events::IbvPortRegistration port_event{
+                    .port_num = p,
+                    .lid = port_attrs.lid,
+                    .state = port_attrs.state,
+                    .link_layer = port_attrs.link_layer,
+                    .gid = {},
+            };
+
+            // GID index 0 is typically the default (RoCEv2: index 1+ may be different)
+            const auto res_gid = fn_query_gid(ctx, p, 0, &port_event.gid);
+            if (res_gid != 0) {
+                std::cerr << "Failed to query gid of port " << p << " of ctx " << ctx << std::endl;
+                std::abort();
+            }
+
+            m_event_recorder->Record(port_event, 1);
+        }
+
+        // This isn't traced and should precede other ibv events
+        Profiler::Events::IbvDeviceRegistration device_registration_event{
+                .context_addr = PtrToUint(ctx),
+                .node_guid = attrs.node_guid,
+                .sys_image_guid = attrs.sys_image_guid,
+                .node_type = device->node_type,
+                .transport_type = device->transport_type,
+        };
+
+        snprintf(device_registration_event.name, sizeof device->name, "%s", device->name);
+        snprintf(device_registration_event.dev_name, sizeof device->dev_name, "%s", device->dev_name);
+        snprintf(device_registration_event.dev_path, sizeof device->dev_path, "%s", device->dev_path);
+        snprintf(device_registration_event.ibdev_path, sizeof device->ibdev_path, "%s", device->ibdev_path);
+
+        m_event_recorder->Record(device_registration_event, 0);
+
+        return event;
+    }
+
     void load_ibv(const std::filesystem::path& shim_dir) noexcept {
         m_ibv_profiler = get_instance<ibv::Profiler>(shim_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
 
@@ -336,32 +468,7 @@ struct ProfilerCtx {
                 [this](ibv_context* out_context, ibv_device* device, auto ts_start, auto ts_end) {
             // std::cout << "[Profiler] ibv_open_device received " << out_context << std::endl;
 
-            // Here we disgrace god
-            // Just proc it
-            // TODO: it makes more sense to do this when the Profiler starts.
-            // No need for the profiled application to call it.
-            ibv_device_attr attrs{};
-            ibv_query_device(out_context, &attrs);
-
-            // We want to save a global id on a device that is actually used.
-            // This isn't traced and should precede other ibv events
-            const Profiler::Events::IbvDeviceRegistration registration_event{
-                    .context_addr = reinterpret_cast<uint64_t>(out_context),
-                    .node_guid = attrs.node_guid,
-            };
-            m_event_recorder->Record(registration_event, ts_start - 1);
-
-            Profiler::Events::IbvOpenDevice event{
-                    .context_addr = reinterpret_cast<uint64_t>(out_context),
-                    .node_type = device->node_type,
-                    .transport_type = device->transport_type,
-            };
-
-            snprintf(event.name, sizeof device->name, "%s", device->name);
-            snprintf(event.dev_name, sizeof device->dev_name, "%s", device->dev_name);
-            snprintf(event.dev_path, sizeof device->dev_path, "%s", device->dev_path);
-            snprintf(event.ibdev_path, sizeof device->ibdev_path, "%s", device->ibdev_path);
-
+            const auto event = register_nic(out_context, device);
             m_event_recorder->Record(event, ts_start, ts_end);
         });
 
@@ -467,7 +574,7 @@ struct ProfilerCtx {
                 [this]<typename TS>(auto&&, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr, TS ts_start, TS ts_end) {
             sigma_ignore_unused(bad_wr);
 
-            const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
+            const auto context_addr = PtrToUint(qp->context);
 
             Profiler::Events::IbvPostSend post_send_event{
                     .context_addr = context_addr,
@@ -623,6 +730,7 @@ struct ProfilerCtx {
             m_event_recorder->Record(kernel_exit_data);
         });
 
+        /*
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
                 [this](int gpu_id, uint64_t addr, [[maybe_unused]] std::string_view sass_str, auto&&...) {
             // ================================================
@@ -681,6 +789,7 @@ struct ProfilerCtx {
             }
             // ================================================
         });
+        */
     }
 
     void load_mlx5dv(const std::filesystem::path& shim_dir) {
@@ -690,27 +799,7 @@ struct ProfilerCtx {
                 [this](ibv_context* out_context, ibv_device* device, mlx5dv_context_attr*, auto ts_start, auto ts_end) {
             // std::cout << "[Profiler] mlx5dv_open_device received " << out_context << std::endl;
 
-            ibv_device_attr attrs{};
-            ibv_query_device(out_context, &attrs);
-
-            const Profiler::Events::IbvDeviceRegistration registration_event{
-                    .context_addr = reinterpret_cast<uint64_t>(out_context),
-                    .node_guid = attrs.node_guid,
-            };
-            m_event_recorder->Record(registration_event, ts_start - 1);
-
-            // Not using Mlx5OpenDevice because it's redundant
-            Profiler::Events::IbvOpenDevice event{
-                    .context_addr = reinterpret_cast<uint64_t>(out_context),
-                    .node_type = device->node_type,
-                    .transport_type = device->transport_type,
-            };
-
-            snprintf(event.name, sizeof device->name, "%s", device->name);
-            snprintf(event.dev_name, sizeof device->dev_name, "%s", device->dev_name);
-            snprintf(event.dev_path, sizeof device->dev_path, "%s", device->dev_path);
-            snprintf(event.ibdev_path, sizeof device->ibdev_path, "%s", device->ibdev_path);
-
+            const auto event = register_nic(out_context, device);
             m_event_recorder->Record(event, ts_start, ts_end);
         });
 
@@ -848,7 +937,6 @@ struct ProfilerCtx {
 
                 const Profiler::Events::DoorbellRing event{
                         .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
-                        .nic_id = 1,
                         .addr = reinterpret_cast<uint64_t>(reg_addr_real),
                         .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
                         .wqe_index = 0, // TODO
@@ -867,33 +955,18 @@ struct ProfilerCtx {
 
         // 2. Memory tracking
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
-                [this](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto&&...) {
+                [this](mlx5dv_devx_uar* out_uar, ibv_context* ctx, uint32_t flags, auto ts_start, auto ts_end) {
+            Profiler::Events::Mlx5dvUarAlloc event{
+                    .context_addr = PtrToUint(ctx),
+                    .uar_addr = PtrToUint(out_uar),
+                    .page_id = out_uar->page_id,
+                    .base_addr = PtrToUint(out_uar->base_addr),
+                    .reg_addr = PtrToUint(out_uar->reg_addr),
+                    .flags = flags,
+            };
+            m_event_recorder->Record(event, ts_start, ts_end);
+
             std::scoped_lock lock(m_ibv_allocations_mutex);
-
-            if (m_mlx5_uar_page_id_to_addr.contains(out_uar->page_id)) {
-                // TODO :(*
-                // std::cerr << "WARNING: Duplicate page id in mlx5dv_devx_alloc_uar " << out_uar->page_id << std::endl;
-                return;
-            }
-
-            const auto uar_reg_addr = reinterpret_cast<uint64_t>(out_uar->reg_addr);
-            // auto uar_base_addr = reinterpret_cast<uint64_t>(out_uar->base_addr);
-
-            // TODO: not checking existence
-            m_mlx5_uar_allocations[uar_reg_addr] = out_uar->page_id;
-            m_mlx5_uar_page_id_to_addr[out_uar->page_id] = uar_reg_addr;
-
-            /*
-             * flags -> https://man7.org/linux/man-pages/man3/mlx5dv_devx_alloc_uar.3.html
-             *       Allocation flags for the UAR.
-             *       MLX5DV_UAR_ALLOC_TYPE_BF: Allocate UAR with Blueflame properties.
-             *       MLX5DV_UAR_ALLOC_TYPE_NC: Allocate UAR with non-cache properties.
-             *       MLX5DV_UAR_ALLOC_TYPE_NC_DEDICATED: Allocate a dedicated UAR with non-cache properties.
-             */
-
-            if (!(flags & MLX5DV_UAR_ALLOC_TYPE_BF)) {
-                // std::cerr << "[Profiler] mlx5dv_devx_alloc_uar with non-BlueField flag" << std::endl;
-            }
         });
 
         // 1. For hijack
@@ -913,67 +986,36 @@ struct ProfilerCtx {
         });
 
         // 2. For memory tracking
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto&&...) {
-            std::scoped_lock lock(m_ibv_allocations_mutex);
-
-            // Signal our runner thread to stop
-            // We can erase here because it's a shared_ptr
-            if (m_mlx5_fake_uar_runner_signals.contains(devx_uar->page_id)) {
-                *m_mlx5_fake_uar_runner_signals[devx_uar->page_id].get() = false;
-                m_mlx5_fake_uar_runner_signals.erase(devx_uar->page_id);
-            }
-
-            const auto& uar_alloc = m_mlx5_uar_allocations.find(devx_uar->page_id);
-            if (uar_alloc == m_mlx5_uar_allocations.end()) {
-                // std::cerr << "[Profiler] mlx5dv_devx_free_uar called with nonexistent page_id (" << devx_uar->page_id
-                // << ")" << std::endl;
-                return;
-            }
-
-            m_mlx5_uar_allocations.erase(uar_alloc);
-            m_mlx5_uar_page_id_to_addr.erase(devx_uar->page_id);
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto ts_start) {
+            Profiler::Events::Mlx5dvUarFree event{
+                    .uar_addr = PtrToUint(devx_uar),
+                    .page_id = devx_uar->page_id,
+            };
+            m_event_recorder->Record(event, ts_start);
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
                 [this]<typename TS>(mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr,
                                     size_t size, [[maybe_unused]] uint32_t access, TS ts_start, TS ts_end) {
-            auto umem_addr = reinterpret_cast<uint64_t>(addr);
-
-            // TODO: extra copy because Record(const T&)
             m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
                     {
-                            .nic_id = 0,
-                            // TODO
+                            .context_addr = PtrToUint(ctx),
+                            .umem_addr = PtrToUint(out_umem),
                             .mem_id = out_umem->umem_id,
-                            .addr = umem_addr,
+                            .addr = PtrToUint(addr),
                             .size = size,
                     },
                     ts_start, ts_end);
-
-            std::scoped_lock lock(m_ibv_allocations_mutex);
-            m_mlx5_umem_allocations.emplace_back(umem_addr, size, out_umem->umem_id);
         });
 
         // We can't do register_pre because the pointer will be gone
         m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem* umem, auto ts_start) {
             m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryDereg>(
                     {
-                            .nic_id = 0,
+                            .umem_addr = PtrToUint(umem),
                             .mem_id = umem->umem_id,
                     },
                     ts_start);
-
-            std::scoped_lock lock(m_ibv_allocations_mutex);
-
-            for (auto it = m_mlx5_umem_allocations.begin(); it != m_mlx5_umem_allocations.end(); ++it) {
-                if (std::get<2>(*it) == umem->umem_id) {
-                    m_mlx5_umem_allocations.erase(it);
-                    return;
-                }
-            }
-
-            std::cerr << "[Profiler] mlx5dv_devx_umem_dereg called with nonexistent umem_id (" << umem->umem_id << ")"
-                      << std::endl;
         });
     }
 };

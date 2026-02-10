@@ -17,10 +17,13 @@ namespace Events {
 
         // IBVerbs events (100-199)
         IbvDeviceRegistration = 100,
+        IbvPortRegistration,
+        // ================================================================
         IbvOpenDevice,
         IbvCloseDevice,
         // ================================================================
         IbvMemoryReg,
+        IbvMemoryDereg,
         // ================================================================
         IbvCreateQp,
         IbvDestroyQp,
@@ -45,6 +48,8 @@ namespace Events {
         Mlx5dvDoorbellRing = 200,
         Mlx5dvMemoryRegistration,
         Mlx5dvMemoryDereg,
+        Mlx5dvUarAlloc,
+        Mlx5dvUarFree,
 
         // CUDA events
         CudaKernelLaunch = 300,
