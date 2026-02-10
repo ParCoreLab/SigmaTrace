@@ -800,9 +800,9 @@ public:
 
         m_builder.add_annotation("QP Num", event.qp_num);
         m_builder.add_annotation("WR ID", event.wr_id);
-        m_builder.add_annotation("Opcode", event.opcode);
-        m_builder.add_annotation("Status", event.status);
-        m_builder.add_annotation("Byte len", event.pkey_index);
+        // m_builder.add_annotation("Opcode", event.opcode);
+        // m_builder.add_annotation("Status", event.status);
+        // m_builder.add_annotation("Byte len", event.pkey_index);
     }
     // ========================================================================
 

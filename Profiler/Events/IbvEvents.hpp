@@ -140,16 +140,16 @@ namespace Profiler::Events {
         int32_t num_completed;
     };
 
-    struct IbvCompletion {
+    struct alignas(8) IbvCompletion {
         // uint64_t timestamp_tsc;
         // imm_data
         uint64_t context_addr;
         uint32_t qp_num;
         uint64_t wr_id;
-        ibv_wc_opcode opcode;
-        ibv_wc_status status;
-        uint32_t byte_len;
-        uint16_t pkey_index;
+        // ibv_wc_opcode opcode;
+        // ibv_wc_status status;
+        // uint32_t byte_len;
+        // uint16_t pkey_index;
     };
 
 } // namespace Profiler::Events

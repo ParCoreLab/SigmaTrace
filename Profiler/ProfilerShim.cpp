@@ -677,13 +677,11 @@ struct ProfilerCtx {
                 const auto& wc_entry = wc[i];
 
                 const Profiler::Events::IbvCompletion completion_event{
-                        .context_addr = context_addr,
-                        .qp_num = wc_entry.qp_num,
-                        .wr_id = wc_entry.wr_id,
-                        .opcode = wc_entry.opcode,
-                        .status = wc_entry.status,
-                        .byte_len = wc_entry.byte_len,
-                        .pkey_index = wc_entry.pkey_index,
+                        .context_addr = context_addr, .qp_num = wc_entry.qp_num, .wr_id = wc_entry.wr_id,
+                        // .opcode = wc_entry.opcode,
+                        // .status = wc_entry.status,
+                        // .byte_len = wc_entry.byte_len,
+                        // .pkey_index = wc_entry.pkey_index,
                 };
                 m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
             }
