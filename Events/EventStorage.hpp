@@ -6,6 +6,7 @@
 
 #include "Helpers/Timestamp.hpp"
 
+#include "EventTrait.hpp"
 #include "Events.hpp"
 
 namespace Events {
@@ -14,7 +15,7 @@ namespace Events {
     static_assert(std::convertible_to<Timestamp, std::uint64_t>);
 
     // Common header for all events
-    struct alignas(8) EventHeader {
+    EVENT_STRUCT EventHeader {
         Timestamp timestamp_start;
         Timestamp timestamp_end;
         // TODO: Might be too big...
@@ -29,11 +30,11 @@ namespace Events {
     // Storage wrapper that combines header + event data
     // Aligned to 8 bytes for cache-friendly access
     template<typename EventT>
-    struct alignas(8) StoredEvent {
+    EVENT_STRUCT StoredEvent {
         EventHeader header{0, 0};
         EventT data;
 
         // Calculate padded size to ensure 8-byte alignment for next event
-        static constexpr size_t padded_size = ((sizeof(EventHeader) + sizeof(EventT) + 7) / 8) * 8;
+        // static constexpr size_t padded_size = ((sizeof(EventHeader) + sizeof(EventT) + 7) / 8) * 8;
     };
 } // namespace Events

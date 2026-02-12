@@ -45,9 +45,8 @@ namespace Events {
         template<HasEventTrait EventT>
         void Record(const EventT& event, Timestamp ts_start, Timestamp ts_end = {}) {
             using BareT = BareType_t<EventT>;
-            auto& thread_buffers = ThreadBufferRegistry::instance().get_thread_buffers();
-            auto& buffer = thread_buffers.get_or_create<BareT>(m_runtime_config);
-            buffer.buffer().record(event, ts_start, ts_end);
+            auto& event_thread_buffer = ThreadBufferRegistry::get_or_create<BareT>(m_runtime_config);
+            event_thread_buffer.record(event, ts_start, ts_end);
         }
 
         // Records a one-off with only start timestamp
@@ -62,9 +61,8 @@ namespace Events {
         auto GetSlot() {
             using BareT = BareType_t<EventT>;
             const Timestamp ts = m_timestamp_source.now();
-            auto& thread_buffers = ThreadBufferRegistry::instance().get_thread_buffers();
-            auto& buffer = thread_buffers.get_or_create<BareT>(m_runtime_config);
-            return buffer.buffer().get_wrapped_slot(ts);
+            auto& event_thread_buffer = ThreadBufferRegistry::get_or_create<BareT>(m_runtime_config);
+            return event_thread_buffer.get_wrapped_slot(ts);
         }
 
         // Convenience: Record with in-place construction
@@ -77,65 +75,14 @@ namespace Events {
         }
 
         // Force writes to file. TODO: may not be thread safe even though there's a buffer inside
-        void Flush() {
-            ThreadBufferRegistry::instance().for_each_thread([](const ThreadBuffers& buffers) {
-                buffers.for_each_buffer([](EventTypeId, IEventBuffer& buf) {
-                    buf.flush();
-                });
-            });
-        }
+        // void Flush() {
+        //     ThreadBufferRegistry::instance().for_each_thread([](const ThreadBuffers& buffers) {
+        //         buffers.for_each_buffer([](EventTypeId, IEventBuffer& buf) {
+        //             buf.flush();
+        //         });
+        //     });
+        // }
         // ================================================================
-
-        // ================================================================
-        // Statistics
-        // ================================================================
-        // Aggregate statistics
-        struct Stats {
-            size_t total_buffered; // Events currently in buffers
-            size_t total_dropped;  // Events dropped due to full buffers
-            size_t active_threads; // Threads with event buffers
-        };
-
-        static Stats get_stats() {
-            Stats stats{0, 0, 0};
-            ThreadBufferRegistry::instance().for_each_thread([&stats](const ThreadBuffers& buffers) {
-                ++stats.active_threads;
-                buffers.for_each_buffer([&stats](EventTypeId, const IEventBuffer& buf) {
-                    // stats.total_buffered += buf.size();
-                    stats.total_dropped += buf.dropped_count();
-                });
-            });
-            return stats;
-        }
-
-        // Per-event-type statistics
-        struct EventTypeStats {
-            EventTypeId id;
-            const char* name;
-            size_t buffered;
-            size_t dropped;
-            size_t capacity;
-        };
-
-        // Collect stats for a specific event type across all threads
-        // TODO: remove
-        template<HasEventTrait EventT>
-        [[nodiscard]] EventTypeStats get_event_stats() const {
-            using BareT = BareType_t<EventT>;
-            EventTypeStats stats{EventTrait<BareT>::id, EventTrait<BareT>::name, 0, 0, 0};
-
-            const auto target_id = EventTrait<BareT>::id;
-            ThreadBufferRegistry::instance().for_each_thread([&stats, target_id](const ThreadBuffers& buffers) {
-                buffers.for_each_buffer([&stats, target_id](EventTypeId id, const IEventBuffer& buf) {
-                    if (id == target_id) {
-                        // stats.buffered += buf.size();
-                        stats.dropped += buf.dropped_count();
-                        stats.capacity += buf.capacity();
-                    }
-                });
-            });
-            return stats;
-        }
         // ================================================================
         // Accessors
         [[nodiscard]] const TS& timestamp_source() const {

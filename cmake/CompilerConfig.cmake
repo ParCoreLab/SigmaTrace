@@ -154,8 +154,8 @@ function(Sigma_apply_compile_options target)
 
     # Compile definitions
     target_compile_definitions(${target} PRIVATE
-            $<$<CONFIG:Debug>:DEBUG>
-            $<$<CONFIG:Release>:NDEBUG>
+            $<$<CONFIG:Debug>:DEBUG;SIGMA_DEBUG>
+            $<$<CONFIG:Release>:NDEBUG;SIGMA_RELEASE>
             $<$<CONFIG:RelWithDebInfo>:NDEBUG>
     )
 

@@ -19,8 +19,6 @@ namespace Events {
     // - Will automatically overwrite without warning when full
     //
     // THIS IS NOT THREAD SAFE !!!!!!!
-    //
-    // TODO: IMPLEMENT DOUBLE BUFFERING FOR FLUSHING WITHOUT OVERWRITE
     template<size_t ElementSize, size_t Capacity>
     class ThreadLocalRingBuffer {
         static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2 for efficient masking");
@@ -126,7 +124,7 @@ namespace Events {
         static_assert(HasEventTrait<EventT>, "EventT must have EventTrait specialization");
 
         // Element size includes header + event data, padded to 8 bytes
-        static constexpr size_t ElementSize = StoredEvent<EventT>::padded_size;
+        static constexpr size_t ElementSize = sizeof(StoredEvent<EventT>);
 
         using Buffer = ThreadLocalRingBuffer<ElementSize, Capacity>;
 

@@ -820,7 +820,7 @@ struct ProfilerCtx {
             sigma_ignore_unused(outlen);
 
             if (!out_obj) {
-                std::cerr << "mlx5dv::obj_create_tag resulted in null" << std::endl;
+                // std::cerr << "mlx5dv::obj_create_tag resulted in null" << std::endl;
                 return;
             }
 

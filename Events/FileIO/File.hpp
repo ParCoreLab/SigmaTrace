@@ -54,9 +54,11 @@ namespace FileIO {
 
     public:
         explicit StreamBackedBuffer(const FileHeader& header, const std::filesystem::path& file_path) {
+#if defined(SIGMA_DEBUG)
             if (std::filesystem::exists(file_path)) {
                 throw std::runtime_error("Trying to write into an existing file: " + file_path.string());
             }
+#endif
 
             m_stream = std::ofstream(file_path, std::ios::out | std::ios::binary);
             m_stream.write(reinterpret_cast<const char*>(&header), sizeof(header));
@@ -137,9 +139,11 @@ namespace FileIO {
 
     public:
         explicit MmapBackedBuffer(const FileHeader& header, const std::filesystem::path& file_path) {
+#if defined(SIGMA_DEBUG)
             if (std::filesystem::exists(file_path)) {
                 throw std::runtime_error("Trying to write into an existing file: " + file_path.string());
             }
+#endif
 
             m_fd = open(file_path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0644);
             if (m_fd < 0) {
@@ -200,8 +204,6 @@ namespace FileIO {
             if (required_bytes <= m_mapped_size) [[likely]] {
                 return;
             }
-
-            std::cout << "Resizing" << std::endl;
 
             // Grow file first
             const std::size_t new_size = m_mapped_size + ChunkBytes;
