@@ -21,6 +21,8 @@ namespace Events {
     struct EventIdTracker {};
 } // namespace Events
 
+#define EVENT_STRUCT struct alignas(8)
+
 // Macro to simplify trait definition
 // Must be used at global scope or in Events namespace
 // Usage: DEFINE_EVENT_TRAIT(namespace::CustomEvent, Events::EventTypeId::CustomEventID, "custom_event")

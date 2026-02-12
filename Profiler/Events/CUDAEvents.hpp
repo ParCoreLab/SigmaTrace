@@ -7,12 +7,12 @@
 namespace Profiler::Events {
     // TODO: check if no pointers (const char *)
     // TODO: string table instead of copying 1024 bytes every time
-    struct alignas(8) CUDAKernelLaunch {
+    EVENT_STRUCT CUDAKernelLaunch {
         GpuId_T gpu_id{-1};
         char kernel_name[1024]{};
     };
 
-    struct alignas(8) CUDAKernelExit {
+    EVENT_STRUCT CUDAKernelExit {
         GpuId_T gpu_id{-1};
         char kernel_name[1024]{};
     };

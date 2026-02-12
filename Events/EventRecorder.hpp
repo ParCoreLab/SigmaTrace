@@ -52,9 +52,9 @@ namespace Events {
 
         // Records a one-off with only start timestamp
         template<HasEventTrait EventT>
-        void Record(EventT&& event) {
+        void Record(const EventT& event) {
             const Timestamp ts = m_timestamp_source.now();
-            return Record(std::forward<EventT>(event), ts);
+            return Record(event, ts);
         }
 
         // TODO: repetition

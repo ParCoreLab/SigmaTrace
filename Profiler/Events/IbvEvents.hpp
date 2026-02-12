@@ -11,7 +11,7 @@
 
 namespace Profiler::Events {
     // Non trace
-    struct alignas(8) IbvDeviceRegistration {
+    EVENT_STRUCT IbvDeviceRegistration {
         uint64_t context_addr;
         uint64_t node_guid;
         uint64_t sys_image_guid;
@@ -26,7 +26,7 @@ namespace Profiler::Events {
     };
 
     // Non trace
-    struct alignas(8) IbvPortRegistration {
+    EVENT_STRUCT IbvPortRegistration {
         uint8_t port_num;
         uint16_t lid;
         ibv_port_state state;
@@ -34,28 +34,28 @@ namespace Profiler::Events {
         ibv_gid gid;
     };
 
-    struct alignas(8) IbvOpenDevice {
+    EVENT_STRUCT IbvOpenDevice {
         uint64_t context_addr;
         uint64_t node_guid;
     };
 
-    struct alignas(8) IbvCloseDevice {
+    EVENT_STRUCT IbvCloseDevice {
         uint64_t context_addr;
     };
 
-    struct alignas(8) IbvCreateQp {
+    EVENT_STRUCT IbvCreateQp {
         uint64_t context_addr;
         uint32_t qp_num;
         // ibv_qp_init_attr qp_init_attr
     };
 
-    struct alignas(8) IbvDestroyQp {
+    EVENT_STRUCT IbvDestroyQp {
         uint64_t context_addr;
         uint32_t qp_num;
     };
 
     // verbs.h
-    struct alignas(8) IbvModifyQp {
+    EVENT_STRUCT IbvModifyQp {
         uint64_t context_addr;
         uint32_t qp_num;
 
@@ -82,36 +82,36 @@ namespace Profiler::Events {
         ibv_reg_mr_iova2
     };
 
-    struct alignas(8) IbvMemoryReg {
+    EVENT_STRUCT IbvMemoryReg {
         uint64_t context_addr;
         uint64_t addr;
         uint64_t size;
         IbvMemoryRegType type;
     };
 
-    struct alignas(8) IbvMemoryDereg {
+    EVENT_STRUCT IbvMemoryDereg {
         uint64_t context_addr;
         uint64_t addr;
         uint64_t size;
         IbvMemoryRegType type;
     };
 
-    struct alignas(8) IbvPostSend {
+    EVENT_STRUCT IbvPostSend {
         uint64_t context_addr;
-        uint32_t qp_num; // Queue pair number
         uint64_t num_wrs;
+        uint32_t qp_num; // Queue pair number
     };
 
-    struct alignas(8) IbvPostSendWr {
+    EVENT_STRUCT IbvPostSendWr {
         uint64_t context_addr;
-        uint32_t qp_num;
         uint64_t wr_id;
+        uint32_t qp_num;
         int32_t num_sge;
-        ibv_wr_opcode opcode;
         uint32_t send_flags;
+        ibv_wr_opcode opcode;
     };
 
-    struct alignas(8) IbvPostSendSg {
+    EVENT_STRUCT IbvPostSendSg {
         uint64_t context_addr;
         uint32_t qp_num;
         uint64_t wr_id;
@@ -120,32 +120,32 @@ namespace Profiler::Events {
         uint32_t lkey;
     };
 
-    struct alignas(8) IbvPostRecv {
+    EVENT_STRUCT IbvPostRecv {
         uint64_t context_addr;
         uint32_t qp_num;
         uint64_t num_wrs;
     };
 
-    struct alignas(8) IbvPostRecvWr {
+    EVENT_STRUCT IbvPostRecvWr {
         uint64_t context_addr;
         uint32_t qp_num;
         uint64_t wr_id;
         int32_t num_sge;
     };
 
-    struct alignas(8) IbvPollCq {
+    EVENT_STRUCT IbvPollCq {
         uint64_t context_addr;
         uint64_t cq_addr;
         int32_t num_requested;
         int32_t num_completed;
     };
 
-    struct alignas(8) IbvCompletion {
+    EVENT_STRUCT IbvCompletion {
         // uint64_t timestamp_tsc;
         // imm_data
         uint64_t context_addr;
-        uint32_t qp_num;
         uint64_t wr_id;
+        uint32_t qp_num;
         // ibv_wc_opcode opcode;
         // ibv_wc_status status;
         // uint32_t byte_len;

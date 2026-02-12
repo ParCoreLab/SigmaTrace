@@ -120,14 +120,14 @@ namespace Events {
 
                 EventHeader header(0, 0);
                 stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-                if (header._check != MAGIC_VALUE) {
-                    std::cerr << "Magic value check fail in " << path << " (" << header._check << ")" << std::endl;
-                    std::cerr << "File is corrupted or recorded with an older version. Closing stream... " << std::endl;
-
-                    // A little extreme
-                    stream.close();
-                    return;
-                }
+                // if (header._check != MAGIC_VALUE) {
+                //     std::cerr << "Magic value check fail in " << path << " (" << header._check << ")" << std::endl;
+                //     std::cerr << "File is corrupted or recorded with an older version. Closing stream... " << std::endl;
+                //
+                //     // A little extreme
+                //     stream.close();
+                //     return;
+                // }
 
                 if (stream.gcount() == sizeof(header)) {
                     next_timestamp = header.timestamp_start;

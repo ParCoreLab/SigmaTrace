@@ -21,7 +21,7 @@
 #include "FileIO/SerializableTrait.hpp"
 
 namespace Events {
-    struct alignas(8) EventFileHeader {
+    EVENT_STRUCT EventFileHeader {
         EventTypeId event_id;
         EventCategory event_category{EventCategory::Unknown};
         char hostname[HOST_NAME_MAX];

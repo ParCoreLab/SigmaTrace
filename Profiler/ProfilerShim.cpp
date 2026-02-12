@@ -578,8 +578,8 @@ struct ProfilerCtx {
 
             Profiler::Events::IbvPostSend post_send_event{
                     .context_addr = context_addr,
-                    .qp_num = qp->qp_num,
                     .num_wrs = 0,
+                    .qp_num = qp->qp_num,
             };
 
             // TODO: probably an ibv lib function for this
@@ -587,11 +587,11 @@ struct ProfilerCtx {
                 post_send_event.num_wrs += 1;
                 const Profiler::Events::IbvPostSendWr wr_event{
                         .context_addr = context_addr,
-                        .qp_num = qp->qp_num,
                         .wr_id = wr_it->wr_id,
+                        .qp_num = qp->qp_num,
                         .num_sge = wr_it->num_sge,
-                        .opcode = wr_it->opcode,
                         .send_flags = wr_it->send_flags,
+                        .opcode = wr_it->opcode,
                 };
                 m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
 
@@ -654,8 +654,6 @@ struct ProfilerCtx {
                 [this]<typename TS>(int out_ret, ibv_cq* cq, int num_entries, ibv_wc* wc, TS ts_start, TS ts_end) {
             sigma_ignore_unused(num_entries);
 
-            const auto context_addr = reinterpret_cast<uint64_t>(cq->context);
-
             // This is too expensive to log every time
             // {
             //     const Profiler::Events::IbvPollCq poll_cq_event{
@@ -677,11 +675,9 @@ struct ProfilerCtx {
                 const auto& wc_entry = wc[i];
 
                 const Profiler::Events::IbvCompletion completion_event{
-                        .context_addr = context_addr, .qp_num = wc_entry.qp_num, .wr_id = wc_entry.wr_id,
-                        // .opcode = wc_entry.opcode,
-                        // .status = wc_entry.status,
-                        // .byte_len = wc_entry.byte_len,
-                        // .pkey_index = wc_entry.pkey_index,
+                        .context_addr = PtrToUint(cq->context),
+                        .wr_id = wc_entry.wr_id,
+                        .qp_num = wc_entry.qp_num,
                 };
                 m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
             }
@@ -934,11 +930,11 @@ struct ProfilerCtx {
                 sigma_ignore_unused(new_val);
 
                 const Profiler::Events::DoorbellRing event{
-                        .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
                         .addr = reinterpret_cast<uint64_t>(reg_addr_real),
                         .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
                         .wqe_index = 0, // TODO
                         .qp_num = 0,    // TODO
+                        .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
                         .is_cpu_hijack = true,
                 };
                 m_event_recorder->Record(event);
@@ -957,9 +953,9 @@ struct ProfilerCtx {
             Profiler::Events::Mlx5dvUarAlloc event{
                     .context_addr = PtrToUint(ctx),
                     .uar_addr = PtrToUint(out_uar),
-                    .page_id = out_uar->page_id,
                     .base_addr = PtrToUint(out_uar->base_addr),
                     .reg_addr = PtrToUint(out_uar->reg_addr),
+                    .page_id = out_uar->page_id,
                     .flags = flags,
             };
             m_event_recorder->Record(event, ts_start, ts_end);
@@ -999,9 +995,9 @@ struct ProfilerCtx {
                     {
                             .context_addr = PtrToUint(ctx),
                             .umem_addr = PtrToUint(out_umem),
-                            .mem_id = out_umem->umem_id,
                             .addr = PtrToUint(addr),
                             .size = size,
+                            .mem_id = out_umem->umem_id,
                     },
                     ts_start, ts_end);
         });
