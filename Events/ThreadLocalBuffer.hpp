@@ -17,7 +17,7 @@ namespace Events {
     static constexpr size_t DefaultCapacity = 128;
 
     // Per-thread collection of event buffers (one per event type)
-1    class ThreadBufferRegistry {
+    class ThreadBufferRegistry {
     public:
         ThreadBufferRegistry() = delete;
 

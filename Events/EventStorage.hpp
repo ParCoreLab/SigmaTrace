@@ -19,7 +19,7 @@ namespace Events {
         Timestamp timestamp_start;
         Timestamp timestamp_end;
         // TODO: Might be too big...
-        uint64_t _check{MAGIC_VALUE}; // Always at the end
+        // uint64_t _check{MAGIC_VALUE}; // Always at the end
 
         // Constructor is here to ensure we don't accidentally initialize a partial header
         EventHeader() = delete;
