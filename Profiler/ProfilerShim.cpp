@@ -1,5 +1,4 @@
 #include <atomic>
-#include <limits>
 #include <map>
 #include <tuple>
 #include <type_traits>
@@ -12,7 +11,6 @@
 
 #include "Helpers/Utilities.hpp"
 
-// smart_dlsym
 #include "Dlsym.hpp"
 
 #include "EventRecorder.hpp"
@@ -276,7 +274,7 @@ struct ProfilerCtx {
         m_event_recorder_config = {};
 
         if (m_args.LoadNvbit) {
-            load_nvbit(m_args.ShimDir);
+            // load_nvbit(m_args.ShimDir);
         }
 
         if (m_args.LoadIbtrace) {
@@ -465,26 +463,25 @@ struct ProfilerCtx {
         m_ibv_profiler = get_instance<ibv::Profiler>(shim_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
 
         m_ibv_profiler->register_post<ibv::open_device_tag>(
-                [this](ibv_context* out_context, ibv_device* device, auto ts_start, auto ts_end) {
+                [](ibv_context* out_context, ibv_device* device, const auto ts_start, const auto ts_end) {
             // std::cout << "[Profiler] ibv_open_device received " << out_context << std::endl;
 
-            const auto event = register_nic(out_context, device);
-            m_event_recorder->Record(event, ts_start, ts_end);
+            const auto event = instance().register_nic(out_context, device);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::close_device_tag>(
-                [this](int, ibv_context* context, auto ts_start, auto ts_end) {
+                [](int, ibv_context* context, const auto ts_start, const auto ts_end) {
             // std::cout << "[Profiler] ibv_close_device received " << context << std::endl;
 
             auto event = Profiler::Events::IbvCloseDevice{
                     .context_addr = reinterpret_cast<uint64_t>(context),
             };
-
-            m_event_recorder->Record(event, ts_start, ts_end);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::create_qp_tag>(
-                [this](ibv_qp* out_qp, ibv_pd* pd, ibv_qp_init_attr* qp_init_attr, auto ts_start, auto ts_end) {
+                [](ibv_qp* out_qp, ibv_pd* pd, ibv_qp_init_attr* qp_init_attr, const auto ts_start, const auto ts_end) {
             sigma_ignore_unused(pd);
             sigma_ignore_unused(qp_init_attr);
 
@@ -492,20 +489,20 @@ struct ProfilerCtx {
                     .context_addr = reinterpret_cast<uint64_t>(out_qp->context),
                     .qp_num = out_qp->qp_num,
             };
-            m_event_recorder->Record(event, ts_start, ts_end);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
-        m_ibv_profiler->register_pre<ibv::destroy_qp_tag>([this](ibv_qp* qp, auto ts_start) {
+        m_ibv_profiler->register_pre<ibv::destroy_qp_tag>([](ibv_qp* qp, const auto ts_start) {
             Profiler::Events::IbvDestroyQp event{
                     // WARNING: not qp->context. Why? I have no clue
                     .context_addr = reinterpret_cast<uint64_t>(qp->pd->context),
                     .qp_num = qp->qp_num,
             };
-            m_event_recorder->Record(event, ts_start);
+            instance().m_event_recorder->Record(event, ts_start);
         });
 
         m_ibv_profiler->register_post<ibv::modify_qp_tag>(
-                [this](int, ibv_qp* qp, ibv_qp_attr* attr, int attr_mask, auto ts_start, auto ts_end) {
+                [](int, ibv_qp* qp, ibv_qp_attr* attr, int attr_mask, const auto ts_start, const auto ts_end) {
             if (!(attr_mask & IBV_QP_DEST_QPN)) {
                 return;
             }
@@ -515,15 +512,14 @@ struct ProfilerCtx {
                     .qp_num = qp->qp_num,
                     .attr = *attr,
             };
-            m_event_recorder->Record(event, ts_start, ts_end);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
         // ================================================
         // Memory registration
         // TODO: this can be done automatically/declaratively by declaring which arg is addr, which one is length, etc.
-        m_ibv_profiler->register_post<ibv::reg_mr_tag>([this]<typename TS>(ibv_mr* out_mr, ibv_pd* pd, void* addr,
-                                                                           size_t length, int access, TS ts_start,
-                                                                           TS ts_end) {
+        m_ibv_profiler->register_post<ibv::reg_mr_tag>([](ibv_mr* out_mr, ibv_pd* pd, void* addr, size_t length,
+                                                          int access, const auto ts_start, const auto ts_end) {
             sigma_ignore_unused(out_mr);
             sigma_ignore_unused(pd);
             sigma_ignore_unused(access);
@@ -548,12 +544,12 @@ struct ProfilerCtx {
                     .size = length,
                     .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
             };
-            m_event_recorder->Record(event, ts_start, ts_end);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
-        m_ibv_profiler->register_post<ibv::reg_mr_iova2_tag>(
-                [this]<typename TS>(ibv_mr* out_mr, ibv_pd* pd, void* addr, size_t length, uint64_t iova,
-                                    unsigned int access, TS ts_start, TS ts_end) {
+        m_ibv_profiler->register_post<ibv::reg_mr_iova2_tag>([](ibv_mr* out_mr, ibv_pd* pd, void* addr, size_t length,
+                                                                uint64_t iova, unsigned int access, const auto ts_start,
+                                                                const auto ts_end) {
             sigma_ignore_unused(out_mr);
             sigma_ignore_unused(pd);
             sigma_ignore_unused(iova);
@@ -567,11 +563,11 @@ struct ProfilerCtx {
                     .size = length,
                     .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
             };
-            m_event_recorder->Record(event, ts_start, ts_end);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::post_send_tag>(
-                [this]<typename TS>(auto&&, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr, TS ts_start, TS ts_end) {
+                [](int, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr, const auto ts_start, const auto ts_end) {
             sigma_ignore_unused(bad_wr);
 
             const auto context_addr = PtrToUint(qp->context);
@@ -593,7 +589,7 @@ struct ProfilerCtx {
                         .send_flags = wr_it->send_flags,
                         .opcode = wr_it->opcode,
                 };
-                m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
+                instance().m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
 
                 // TODO: sg stuff isn't really needed...
                 /*
@@ -616,11 +612,11 @@ struct ProfilerCtx {
                 */
             }
 
-            m_event_recorder->Record(post_send_event, ts_start, ts_end);
+            instance().m_event_recorder->Record(post_send_event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::post_recv_tag>(
-                [this]<typename TS>(auto&&, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr** bad_wr, TS ts_start, TS ts_end) {
+                [](int, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr** bad_wr, const auto ts_start, const auto ts_end) {
             sigma_ignore_unused(bad_wr);
 
             if (wr->num_sge > 1) {
@@ -644,14 +640,14 @@ struct ProfilerCtx {
                         .wr_id = wr_it->wr_id,
                         .num_sge = wr_it->num_sge,
                 };
-                m_event_recorder->Record(recv_wr_event, ts_start + 1, ts_end - 1);
+                instance().m_event_recorder->Record(recv_wr_event, ts_start + 1, ts_end - 1);
             }
 
-            m_event_recorder->Record(recv_event, ts_start, ts_end);
+            instance().m_event_recorder->Record(recv_event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::poll_cq_tag>(
-                [this]<typename TS>(int out_ret, ibv_cq* cq, int num_entries, ibv_wc* wc, TS ts_start, TS ts_end) {
+                [](int out_ret, ibv_cq* cq, int num_entries, ibv_wc* wc, const auto ts_start, const auto ts_end) {
             sigma_ignore_unused(num_entries);
 
             // This is too expensive to log every time
@@ -667,7 +663,7 @@ struct ProfilerCtx {
             // }
 
             // Most polls won't have anything
-            if (out_ret == 0) [[likely]] {
+            if (out_ret < 1) [[likely]] {
                 return;
             }
 
@@ -679,52 +675,59 @@ struct ProfilerCtx {
                         .wr_id = wc_entry.wr_id,
                         .qp_num = wc_entry.qp_num,
                 };
-                m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
+                instance().m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
+
+                /*
+                auto handle = m_event_recorder->GetSlot<Profiler::Events::IbvCompletion>(ts_start + 1, ts_end - 1);
+                auto* completion_event = handle.get();
+
+                completion_event->context_addr = PtrToUint(cq->context);
+                completion_event->wr_id = wc_entry.wr_id;
+                completion_event->qp_num = wc_entry.qp_num;
+                */
             }
         });
     }
 
+    /*
     void load_nvbit(const std::filesystem::path& shim_dir) noexcept {
         m_cuda_profiler = get_instance<cuda_trace::NvbitProfiler>(shim_dir / Profiler::SIGMA_NVBIT_PROVIDER_PATH);
         // m_cuda_profiler->enable_memop();
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>(
-                [this](uint64_t addr, std::size_t size, auto&&...) {
-            sigma_ignore_unused(this);
+                [](std::uint64_t addr, std::size_t size) {
             sigma_ignore_unused(addr);
             sigma_ignore_unused(size);
         });
 
         // TODO: pass this along
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_register_tag>(
-                [this](uint64_t addr, std::size_t size, [[maybe_unused]] unsigned int flags, auto&&...) {
-            sigma_ignore_unused(this);
+                [](uint64_t addr, std::size_t size, [[maybe_unused]] unsigned int flags) {
             sigma_ignore_unused(addr);
             sigma_ignore_unused(size);
         });
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
-                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
+                [](GpuId_T gpu_id, const char* kernel_name, auto...) {
             // TODO: :(
             Profiler::Events::CUDAKernelLaunch kernel_launch_data{gpu_id};
             snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
 
-            m_event_recorder->Record(kernel_launch_data);
+            instance().m_event_recorder->Record(kernel_launch_data);
 
-            num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
+            instance().num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
         });
 
         m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
-                [this](GpuId_T gpu_id, const char* kernel_name, auto&&...) {
+                [](GpuId_T gpu_id, const char* kernel_name, auto...) {
             // TODO: :(
             Profiler::Events::CUDAKernelExit kernel_exit_data{gpu_id};
             snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
 
-            m_event_recorder->Record(kernel_exit_data);
+            instance().m_event_recorder->Record(kernel_exit_data);
         });
 
-        /*
         m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
                 [this](int gpu_id, uint64_t addr, [[maybe_unused]] std::string_view sass_str, auto&&...) {
             // ================================================
@@ -783,22 +786,22 @@ struct ProfilerCtx {
             }
             // ================================================
         });
-        */
     }
+    */
 
     void load_mlx5dv(const std::filesystem::path& shim_dir) {
         m_mlx5dv_profiler = get_instance<mlx5dv::Profiler>(shim_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
 
-        m_mlx5dv_profiler->register_post<mlx5dv::open_device_tag>(
-                [this](ibv_context* out_context, ibv_device* device, mlx5dv_context_attr*, auto ts_start, auto ts_end) {
+        m_mlx5dv_profiler->register_post<mlx5dv::open_device_tag>([](ibv_context* out_context, ibv_device* device,
+                                                                     mlx5dv_context_attr*, const auto ts_start,
+                                                                     const auto ts_end) {
             // std::cout << "[Profiler] mlx5dv_open_device received " << out_context << std::endl;
 
-            const auto event = register_nic(out_context, device);
-            m_event_recorder->Record(event, ts_start, ts_end);
+            const auto event = instance().register_nic(out_context, device);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
-        m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>(
-                [](auto&&, mlx5dv_obj* obj, uint64_t obj_type, auto&&...) {
+        m_mlx5dv_profiler->register_post<mlx5dv::init_obj_tag>([](int, mlx5dv_obj* obj, uint64_t obj_type, auto...) {
             sigma_ignore_unused(obj);
 
             if (obj_type & MLX5DV_OBJ_QP) {
@@ -810,9 +813,9 @@ struct ProfilerCtx {
             }
         });
 
-        m_mlx5dv_profiler->register_post<mlx5dv::obj_create_tag>([this](mlx5dv_devx_obj* out_obj, ibv_context* context,
-                                                                        const void* cmd_in, size_t inlen, void* out,
-                                                                        size_t outlen, auto&&...) {
+        m_mlx5dv_profiler->register_post<mlx5dv::obj_create_tag>([](mlx5dv_devx_obj* out_obj, ibv_context* context,
+                                                                    const void* cmd_in, size_t inlen, void* out,
+                                                                    size_t outlen, auto...) {
             sigma_ignore_unused(out_obj);
             sigma_ignore_unused(context);
             sigma_ignore_unused(inlen);
@@ -835,7 +838,7 @@ struct ProfilerCtx {
 
                 // WQ buffer
                 auto wg_umem_id = DEVX_GET(create_qp_in, cmd_in, wq_umem_id);
-                m_umem_id_to_type[wg_umem_id] = {UmemAllocationType::WQE, queue_type};
+                instance().m_umem_id_to_type[wg_umem_id] = {UmemAllocationType::WQE, queue_type};
 
                 // TODO: what is this
                 auto* qp_context = DEVX_ADDR_OF(create_qp_in, const_cast<void*>(cmd_in), qpc);
@@ -843,11 +846,11 @@ struct ProfilerCtx {
                 // BlueField register. TODO: what is BlueField?
                 // TODO: We get this from mlx5dv_devx_alloc_uar too
                 auto bf_register_uar_id = DEVX_GET(qpc, qp_context, uar_page);
-                m_uar_id_to_type[bf_register_uar_id] = {UarAllocationType::BlueField, queue_type};
+                instance().m_uar_id_to_type[bf_register_uar_id] = {UarAllocationType::BlueField, queue_type};
 
                 // Doorbell register
                 auto doorbell_register_umem_id = DEVX_GET(qpc, qp_context, dbr_umem_id);
-                m_umem_id_to_type[doorbell_register_umem_id] = {UmemAllocationType::Doorbell, queue_type};
+                instance().m_umem_id_to_type[doorbell_register_umem_id] = {UmemAllocationType::Doorbell, queue_type};
 
                 // TODO: Doorbell Offset
                 auto wq_doorbell_offset = DEVX_GET64(qpc, qp_context, dbr_addr);
@@ -862,18 +865,18 @@ struct ProfilerCtx {
 
                 // CQ buffer
                 const auto cq_umem_id = DEVX_GET(create_cq_in, cmd_in, cq_umem_id);
-                m_umem_id_to_type[cq_umem_id] = {UmemAllocationType::WQE, queue_type};
+                instance().m_umem_id_to_type[cq_umem_id] = {UmemAllocationType::WQE, queue_type};
 
                 // Context
                 const auto* cq_context = DEVX_ADDR_OF(create_cq_in, const_cast<void*>(cmd_in), cq_context);
 
                 // BlueFlame
                 const auto bf_register_uar_id = DEVX_GET(cqc, cq_context, uar_page);
-                m_uar_id_to_type[bf_register_uar_id] = {UarAllocationType::BlueField, queue_type};
+                instance().m_uar_id_to_type[bf_register_uar_id] = {UarAllocationType::BlueField, queue_type};
 
                 // Doorbell
                 const auto doorbell_register_umem_id = DEVX_GET(cqc, cq_context, dbr_umem_id);
-                m_umem_id_to_type[doorbell_register_umem_id] = {UmemAllocationType::Doorbell, queue_type};
+                instance().m_umem_id_to_type[doorbell_register_umem_id] = {UmemAllocationType::Doorbell, queue_type};
 
                 // TODO: Doorbell Offset
                 const auto cq_doorbell_offset = DEVX_GET64(cqc, cq_context, dbr_addr);
@@ -884,10 +887,10 @@ struct ProfilerCtx {
 
         // 1. Fake UAR hijack
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
-                [this](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto&&...) {
+                [](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto...) {
             sigma_ignore_unused(flags);
 
-            std::scoped_lock lock(m_ibv_allocations_mutex);
+            std::scoped_lock lock(instance().m_ibv_allocations_mutex);
 
             // TODO: why are there duplicate allocations?
             // returning here breaks things...
@@ -926,30 +929,30 @@ struct ProfilerCtx {
             Profiler::hack::CuMemHostRegisterIgnoredAddrs.insert(out_uar->reg_addr);
 
             MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real,
-                                        [this, reg_addr_real, fake_reg_addr](const uint64_t new_val) {
+                                        [reg_addr_real, fake_reg_addr](const uint64_t new_val) {
                 sigma_ignore_unused(new_val);
 
                 const Profiler::Events::DoorbellRing event{
                         .addr = reinterpret_cast<uint64_t>(reg_addr_real),
                         .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
-                        .wqe_index = 0, // TODO
-                        .qp_num = 0,    // TODO
+                        .wqe_index = 0,                    // TODO
+                        .qp_num = 0,                       // TODO
                         .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
                         .is_cpu_hijack = true,
                 };
-                m_event_recorder->Record(event);
+                instance().m_event_recorder->Record(event);
 
-                num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+                instance().num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
             }};
 
-            auto& hijack_handles = m_mlx5_uar_hijack_handles[out_uar->page_id];
+            auto& hijack_handles = instance().m_mlx5_uar_hijack_handles[out_uar->page_id];
             auto& inserted_handle = hijack_handles.emplace_back(std::move(handle));
             inserted_handle.start();
         });
 
         // 2. Memory tracking
         m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
-                [this](mlx5dv_devx_uar* out_uar, ibv_context* ctx, uint32_t flags, auto ts_start, auto ts_end) {
+                [](mlx5dv_devx_uar* out_uar, ibv_context* ctx, uint32_t flags, const auto ts_start, const auto ts_end) {
             Profiler::Events::Mlx5dvUarAlloc event{
                     .context_addr = PtrToUint(ctx),
                     .uar_addr = PtrToUint(out_uar),
@@ -958,17 +961,15 @@ struct ProfilerCtx {
                     .page_id = out_uar->page_id,
                     .flags = flags,
             };
-            m_event_recorder->Record(event, ts_start, ts_end);
-
-            std::scoped_lock lock(m_ibv_allocations_mutex);
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
         // 1. For hijack
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto&&...) {
-            std::scoped_lock lock(m_ibv_allocations_mutex);
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([](mlx5dv_devx_uar* devx_uar, auto...) {
+            std::scoped_lock lock(instance().m_ibv_allocations_mutex);
 
-            const auto& handles = m_mlx5_uar_hijack_handles.find(devx_uar->page_id);
-            if (handles == m_mlx5_uar_hijack_handles.end()) {
+            const auto& handles = instance().m_mlx5_uar_hijack_handles.find(devx_uar->page_id);
+            if (handles == instance().m_mlx5_uar_hijack_handles.end()) {
                 return;
             }
 
@@ -976,22 +977,22 @@ struct ProfilerCtx {
                 h.signal_finish();
             }
 
-            m_mlx5_uar_hijack_handles.erase(handles);
+            instance().m_mlx5_uar_hijack_handles.erase(handles);
         });
 
         // 2. For memory tracking
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([this](mlx5dv_devx_uar* devx_uar, auto ts_start) {
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([](mlx5dv_devx_uar* devx_uar, const auto ts_start) {
             Profiler::Events::Mlx5dvUarFree event{
                     .uar_addr = PtrToUint(devx_uar),
                     .page_id = devx_uar->page_id,
             };
-            m_event_recorder->Record(event, ts_start);
+            instance().m_event_recorder->Record(event, ts_start);
         });
 
         m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
-                [this]<typename TS>(mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr,
-                                    size_t size, [[maybe_unused]] uint32_t access, TS ts_start, TS ts_end) {
-            m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
+                [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, size_t size,
+                   [[maybe_unused]] uint32_t access, const auto ts_start, const auto ts_end) {
+            instance().m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
                     {
                             .context_addr = PtrToUint(ctx),
                             .umem_addr = PtrToUint(out_umem),
@@ -1003,8 +1004,8 @@ struct ProfilerCtx {
         });
 
         // We can't do register_pre because the pointer will be gone
-        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([this](mlx5dv_devx_umem* umem, auto ts_start) {
-            m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryDereg>(
+        m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([](mlx5dv_devx_umem* umem, const auto ts_start) {
+            instance().m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryDereg>(
                     {
                             .umem_addr = PtrToUint(umem),
                             .mem_id = umem->umem_id,

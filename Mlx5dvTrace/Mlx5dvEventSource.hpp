@@ -5,6 +5,8 @@
 #include "CompositeHookManager.hpp"
 
 namespace mlx5dv {
+    constexpr std::string_view LibPath{"libmlx5.so"};
+
     template<typename Derived>
     class Mlx5dvEventSource
         : public hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, open_device_tag,
@@ -17,6 +19,11 @@ namespace mlx5dv {
                                                 obj_create_tag, devx_alloc_uar_tag, devx_free_uar_tag>;
 
         using Context = Base::Context;
+
+        static void* GetLibHandle() noexcept {
+            static auto* handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
+            return handle;
+        }
 
     protected:
         Mlx5dvEventSource() = default;

@@ -12,6 +12,8 @@
 #include "detail/PreloadHookManager.hpp"
 
 namespace hook {
+    static constexpr bool DebugPrint{false};
+
     // ================================================================
     namespace TS = Helpers::TS;
 
@@ -30,11 +32,24 @@ namespace hook {
     // ================================================================
 
     // ================================================================
+    // Dealing with Tags
+    template<typename Tag>
+    struct TaggedBool {
+        bool value{false};
+    };
+    // ================================================================
+
+    // ================================================================
     // Concepts for better error messages
 
     // Check if Derived implements get_op
     template<typename D, typename Tag, typename Obj>
     concept has_get_op_for = requires(D& d, Obj* obj) { d.template get_op<Tag>(obj); };
+
+    template<typename D>
+    concept has_get_lib_handle = requires {
+        { D::GetLibHandle() } -> std::same_as<void*>;
+    };
     // ===============================================================
 
     // ================================================================
@@ -92,8 +107,43 @@ namespace hook {
         // ================================================================
         using Base::clear_all_callbacks;
         using Base::clear_callbacks;
-        using Base::register_post;
-        using Base::register_pre;
+
+        template<ValidCallbackTag Tag>
+        void internal_register() noexcept {
+            if constexpr (is_preload_hook_v<Tag>) {
+                static_assert(has_get_lib_handle<Derived>, "Derived must provide: `void* GetLibHandle()`");
+
+                static bool is_tag_registered{false};
+                if (!is_tag_registered) {
+                    if constexpr (DebugPrint) {
+                        std::cout << "Registering " << HookTrait<Tag>::name << std::endl;
+                    }
+                    auto* handle = Derived::GetLibHandle();
+                    resolve_one_preload<Tag>(handle);
+                }
+                is_tag_registered = true;
+            }
+        }
+
+        template<ValidCallbackTag Tag>
+        void register_pre(auto&&... args) noexcept {
+            std::get<TaggedBool<Tag>>(m_registered_tags).value = true;
+            {
+                std::scoped_lock lock(m_registration_mutex);
+                internal_register<Tag>();
+            }
+            return Base::template register_pre<Tag>(std::forward<decltype(args)>(args)...);
+        }
+
+        template<ValidCallbackTag Tag>
+        void register_post(auto&&... args) noexcept {
+            std::get<TaggedBool<Tag>>(m_registered_tags).value = true;
+            {
+                std::scoped_lock lock(m_registration_mutex);
+                internal_register<Tag>();
+            }
+            return Base::template register_post<Tag>(std::forward<decltype(args)>(args)...);
+        }
 
         // ================================================================
         // Helper to register pre-callbacks for all tags automatically
@@ -184,12 +234,26 @@ namespace hook {
         static auto invoke_preload(Args&&... args) noexcept -> HookTrait<Tag>::RetType {
             auto& mgr = instance();
 
+            // No hooks registered, don't do all the stuff below
+            if (!std::get<TaggedBool<Tag>>(mgr.m_registered_tags).value) {
+                const auto& real = mgr.template real_func<Tag>();
+
+                // If we're here, the injected function is called but no hooks are registered
+                // Late load the real function and call it
+                if (!real) {
+                    std::scoped_lock lock(mgr.m_registration_mutex);
+                    mgr.template internal_register<Tag>();
+                }
+
+                return real(std::forward<Args>(args)...);
+            }
+
             // Start timestamp as soon as the function hook is invoked
             auto ts_start = mgr.m_timestamp.now();
 
             mgr.template invoke_all_pre<Tag>(args..., ts_start);
 
-            auto real = mgr.template real_func<Tag>();
+            const auto& real = mgr.template real_func<Tag>();
 
             // It can die silently otherwise
             if (!real) {
@@ -214,7 +278,7 @@ namespace hook {
         Context* install(ObjectType* obj) noexcept {
             assert(obj && "HookManager ctx obj install called with null obj");
 
-            std::lock_guard lock(m_contexts_mutex);
+            std::lock_guard lock(m_registration_mutex);
 
             // auto key = reinterpret_cast<uintptr_t>(obj);
             // if (m_contexts.contains(key)) {
@@ -236,7 +300,7 @@ namespace hook {
             // TODO: maybe it's fine if it's null
             assert(obj && "HookManager ctx obj uninstalled called with null obj");
 
-            std::lock_guard lock(m_contexts_mutex);
+            std::lock_guard lock(m_registration_mutex);
 
             auto& contexts = m_object_ops_impl.m_contexts;
 
@@ -346,6 +410,13 @@ namespace hook {
                 static_assert(has_get_op_for<Derived, Tag, ObjectType>,
                               "Derived must provide: `template <...> get_op<Tag>(ObjectType*)` for object-ops hooks");
 
+                if (!std::get<TaggedBool<Tag>>(m_registered_tags).value) {
+                    if constexpr (DebugPrint) {
+                        std::cout << "Skipping " << HookTrait<Tag>::name << std::endl;
+                    }
+                    return;
+                }
+
                 auto& op = static_cast<Derived&>(*this).template get_op<Tag>(obj);
                 ctx->template original<Tag>() = op;
 
@@ -397,9 +468,11 @@ namespace hook {
             }
         };
 
+        mutable std::mutex m_registration_mutex;
+        std::tuple<TaggedBool<Tags>...> m_registered_tags;
+
         // Implementations
         PreloadBase m_preload_impl;
-        mutable std::mutex m_contexts_mutex;
         ObjectOpsBase m_object_ops_impl;
     };
 

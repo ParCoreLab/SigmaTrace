@@ -1,10 +1,9 @@
 #pragma once
 
-#include "Helpers/Timestamp.hpp"
-
-#include <functional>
 #include <tuple>
 #include <type_traits>
+
+#include "Helpers/Timestamp.hpp"
 
 // TODO
 #define STR(x) #x
@@ -109,8 +108,8 @@ namespace hook {
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__) noexcept;                                                            \
         using RetType = ret_type;                                                                                      \
-        using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
-        using PostCallback = std::function<void(ret_type, __VA_ARGS__, Timestamp, Timestamp)>;                         \
+        using PreCallback = void (*)(__VA_ARGS__, const Timestamp);                                                    \
+        using PostCallback = void (*)(ret_type, __VA_ARGS__, const Timestamp, const Timestamp);                        \
         static constexpr hook::HookType type = hook::HookType::Preload;                                                \
         static constexpr const char* name = #hook_name;                                                                \
         static constexpr const char* symbol_name = sym_name;                                                           \
@@ -135,8 +134,8 @@ namespace hook {
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__) /* noexcept */;                                                      \
         using RetType = ret_type;                                                                                      \
-        using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
-        using PostCallback = std::function<void(ret_type, __VA_ARGS__, Timestamp, Timestamp)>;                         \
+        using PreCallback = void (*)(__VA_ARGS__, const Timestamp);                                                    \
+        using PostCallback = void (*)(ret_type, __VA_ARGS__, const Timestamp, const Timestamp);                        \
         static constexpr hook::HookType type = hook::HookType::ObjectOps;                                              \
         static constexpr const char* name = #hook_name;                                                                \
         static constexpr const char* symbol_name = sym_name;                                                           \
@@ -153,9 +152,9 @@ namespace hook {
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = void (*)(__VA_ARGS__) noexcept;                                                                \
         using RetType = void;                                                                                          \
-        using Callback = std::function<void(__VA_ARGS__)>;                                                             \
-        using PreCallback = std::function<void(__VA_ARGS__, Timestamp)>;                                               \
-        using PostCallback = std::function<void(__VA_ARGS__, Timestamp, Timestamp)>;                                   \
+        using Callback = void (*)(__VA_ARGS__);                                                                        \
+        using PreCallback = void (*)(__VA_ARGS__, const Timestamp);                                                    \
+        using PostCallback = void (*)(__VA_ARGS__, const Timestamp, const Timestamp);                                  \
         static constexpr hook::HookType type = hook::HookType::Custom;                                                 \
         static constexpr const char* name = #hook_name;                                                                \
         static constexpr auto arg_names = VA_ARGS_TO_STRING_TUPLE(__VA_ARGS__);                                        \

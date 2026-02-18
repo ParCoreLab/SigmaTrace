@@ -83,7 +83,7 @@ namespace Profiler::MemoryRepeater {
         void* m_real_addr;
         CallbackType m_on_change;
 
-        std::shared_ptr<std::atomic<bool>> m_signal;
+        std::shared_ptr<std::atomic<bool>> m_signal{nullptr};
         std::unique_ptr<std::jthread> m_thread{nullptr};
     };
 } // namespace Profiler::MemoryRepeater

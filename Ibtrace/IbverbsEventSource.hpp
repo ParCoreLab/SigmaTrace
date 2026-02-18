@@ -1,10 +1,13 @@
 #pragma once
 
-#include "IbverbsHooks.hpp"
+#include <string_view>
 
 #include "CompositeHookManager.hpp"
 
+#include "IbverbsHooks.hpp"
+
 namespace ibv {
+    constexpr std::string_view LibPath{"libibverbs.so"};
 
     // ================================================================
     // IbverbsEventSource - Unified hook manager for ibverbs
@@ -50,6 +53,11 @@ namespace ibv {
         // Object-ops hook support: get_op and get_object_from_args
         // These are required by CompositeHookManager for object-ops hooks
         // ================================================================
+
+        static void* GetLibHandle() noexcept {
+            static auto* handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
+            return handle;
+        }
 
         // TODO: the two functions below might need rework
         template<hook::ValidCallbackTag Tag>

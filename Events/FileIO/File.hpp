@@ -6,8 +6,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <filesystem>
 #include <fstream>
-#include <mutex>
 #include <string>
 #include <type_traits>
 
@@ -91,7 +91,6 @@ namespace FileIO {
              * for a real world application that's more sensitive to latency
              */
             {
-                std::lock_guard lock(m_stream_mutex);
                 m_stream.write(reinterpret_cast<const char*>(m_buffers[m_current_buffer_index]), BufferSize);
             }
 
@@ -100,8 +99,6 @@ namespace FileIO {
         }
 
         void flush() noexcept {
-            std::lock_guard lock(m_stream_mutex);
-
             m_stream.write(reinterpret_cast<const char*>(m_buffers[m_current_buffer_index]),
                            static_cast<std::streamsize>(m_current_buffer_size));
 
@@ -122,7 +119,6 @@ namespace FileIO {
         std::size_t m_current_buffer_size{0};
 
         std::ofstream m_stream;
-        std::mutex m_stream_mutex;
 
         void advance_buffer() {
             m_current_buffer_index = (m_current_buffer_index + 1) % NumBuffers;
@@ -164,7 +160,7 @@ namespace FileIO {
             }
 
             m_base = static_cast<uint8_t*>(mmap(nullptr, m_mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
-            std::memcpy(m_base, header, FileHeaderSize);
+            // std::memcpy(m_base, header, FileHeaderSize);
 
             if (m_base == MAP_FAILED) {
                 close(m_fd);

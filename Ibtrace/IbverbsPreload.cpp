@@ -1,60 +1,53 @@
-#include <deque>
 #include <iostream>
 #include <sstream>
-#include <string_view>
-
-#include "Dlsym.hpp"
 
 #include "IbverbsEventSource.hpp"
 
-constexpr bool DebugPrint = false;
+namespace ibv {
+    static constexpr bool DebugPrint = false;
 
-// TODO: odd implementation
-static void LogDebug(auto&& ss) {
-    if constexpr (DebugPrint) {
-        std::cout << "=== [ibv_hook] " << ss << std::endl;
+    // TODO: odd implementation
+    static void LogDebug(auto&& ss) {
+        if constexpr (DebugPrint) {
+            std::cout << "=== [ibv_hook] " << ss << std::endl;
+        }
     }
-}
 
-template<typename Tag, typename Tuple, std::size_t... Is>
-static void LogCallImpl(Tuple&& args, std::index_sequence<Is...>) {
-    std::stringstream ss;
-    // clang-format off
-    ss << "=== [ibv_hook] Called "
-              << hook::HookTrait<Tag>::symbol_name
-              << " (";
+    template<typename Tag, typename Tuple, std::size_t... Is>
+    static void LogCallImpl(Tuple&& args, std::index_sequence<Is...>) {
+        std::stringstream ss;
+        // clang-format off
+        ss << "=== [ibv_hook] Called "
+                  << hook::HookTrait<Tag>::symbol_name
+                  << " (";
 
-    ((ss
-          << (Is == 0 ? "" : ", ")
-          << std::get<Is>(hook::HookTrait<Tag>::arg_names)
-          << ": "
-          << std::get<Is>(args)), ...);
-    // clang-format on
+        ((ss
+              << (Is == 0 ? "" : ", ")
+              << std::get<Is>(hook::HookTrait<Tag>::arg_names)
+              << ": "
+              << std::get<Is>(args)), ...);
+        // clang-format on
 
-    ss << ')';
+        ss << ')';
 
-    LogDebug(ss.str());
-}
+        LogDebug(ss.str());
+    }
 
-template<typename Tag, typename... Args>
-static void LogCall(Args&&... args) {
-    static_assert(sizeof...(Args) == std::tuple_size_v<decltype(hook::HookTrait<Tag>::arg_names)>,
-                  "Argument count does not match arg_names");
+    template<typename Tag, typename... Args>
+    static void LogCall(Args&&... args) {
+        static_assert(sizeof...(Args) == std::tuple_size_v<decltype(hook::HookTrait<Tag>::arg_names)>,
+                      "Argument count does not match arg_names");
 
-    LogCallImpl<Tag>(std::forward_as_tuple(std::forward<Args>(args)...), std::index_sequence_for<Args...>{});
-}
+        LogCallImpl<Tag>(std::forward_as_tuple(std::forward<Args>(args)...), std::index_sequence_for<Args...>{});
+    }
+} // namespace ibv
 
 // ================================================================
 // Ibv profiler class with the hooks we care about
 // ================================================================
 namespace ibv {
-    constexpr std::string_view LibPath{"libibverbs.so"};
-
     Profiler::Profiler() {
         LogDebug("Profiler Initialized");
-
-        auto* libibverbs_handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
-        resolve_all_preload(libibverbs_handle);
 
         // ================================================================
         // DEBUG: Log al calls
@@ -66,9 +59,9 @@ namespace ibv {
         }
 
         // Set up for installing hooks into ctx
-        this->register_post<open_device_tag>([this](ibv_context* ctx, ibv_device*, auto&&...) {
+        this->register_post<open_device_tag>([](ibv_context* ctx, ibv_device*, auto...) {
             if (ctx) {
-                this->install(ctx);
+                instance().install(ctx);
                 LogDebug("Hooks installed");
             }
         });
@@ -79,7 +72,7 @@ namespace ibv {
 template class ibv::IbverbsEventSource<ibv::Profiler>;
 
 static void __attribute__((destructor)) finalize() {
-    LogDebug("Unloaded");
+    ibv::LogDebug("Unloaded");
 }
 
 // Accessor for late-loaded libraries to get the singleton instance via dlsym
@@ -154,6 +147,6 @@ extern "C" ibv_ah* ibv_create_ah(ibv_pd* pd, ibv_ah_attr* attr) {
 static void __attribute__((constructor /* (201) */)) init() {
     ibv::Profiler::instance();
 
-    LogDebug("Loaded");
+    ibv::LogDebug("Loaded");
 }
 // ================================================================

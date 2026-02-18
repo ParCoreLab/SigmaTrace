@@ -43,7 +43,7 @@ namespace Events {
         // to initialize directly instead of doing a memcpy later
         // TODO: this might be suboptimal if upstream user creates a new tread every time
         template<HasEventTrait EventT>
-        void Record(const EventT& event, Timestamp ts_start, Timestamp ts_end = {}) {
+        void Record(const EventT& event, const Timestamp ts_start, const Timestamp ts_end = {}) {
             using BareT = BareType_t<EventT>;
             auto& event_thread_buffer = ThreadBufferRegistry::get_or_create<BareT>(m_runtime_config);
             event_thread_buffer.record(event, ts_start, ts_end);
@@ -58,11 +58,10 @@ namespace Events {
 
         // TODO: repetition
         template<HasEventTrait EventT>
-        auto GetSlot() {
+        auto GetSlot(const Timestamp ts_start, const Timestamp ts_end = {}) {
             using BareT = BareType_t<EventT>;
-            const Timestamp ts = m_timestamp_source.now();
             auto& event_thread_buffer = ThreadBufferRegistry::get_or_create<BareT>(m_runtime_config);
-            return event_thread_buffer.get_wrapped_slot(ts);
+            return event_thread_buffer.get_wrapped_slot(ts_start, ts_end);
         }
 
         // Convenience: Record with in-place construction

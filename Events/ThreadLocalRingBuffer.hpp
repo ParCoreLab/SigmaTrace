@@ -113,7 +113,7 @@ namespace Events {
         alignas(CACHE_LINE_SIZE) uint64_t m_current;
 
         // Stream is faster in most cases
-        // FileIO::MmapBuffer<ElementSize, Capacity> m_file_buffer;
+        // FileIO::MmapBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
         FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
     };
 
