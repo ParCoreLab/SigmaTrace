@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -25,6 +26,18 @@
             std::exit(EXIT_FAILURE);                                                                                   \
         }                                                                                                              \
     } while (0)
+
+
+#define CU_LOG(cmd)                                                                                                    \
+    std::invoke([&]() {                                                                                                \
+        CUresult err = cmd;                                                                                            \
+        if (err != CUDA_SUCCESS) {                                                                                     \
+            const char* str;                                                                                           \
+            cuGetErrorString(err, &str);                                                                               \
+            std::printf("CU error %s:%d '%s'\n", __FILE__, __LINE__, str);                                             \
+        }                                                                                                              \
+        return err;                                                                                                    \
+    })
 
 #define CUDA_LOG(cmd)                                                                                                  \
     std::invoke([&]() {                                                                                                \

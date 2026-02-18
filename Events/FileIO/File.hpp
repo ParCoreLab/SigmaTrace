@@ -160,7 +160,7 @@ namespace FileIO {
             }
 
             m_base = static_cast<uint8_t*>(mmap(nullptr, m_mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
-            // std::memcpy(m_base, header, FileHeaderSize);
+            std::memcpy(m_base, header, FileHeaderSize);
 
             if (m_base == MAP_FAILED) {
                 close(m_fd);

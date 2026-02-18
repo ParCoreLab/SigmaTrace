@@ -42,68 +42,52 @@
 #include "ProfilerArgs.hpp"
 #include "ProfilerProviders.hpp"
 
-namespace Profiler::hack {
-    // Addresses upstream asked to register. Filled in below functions
-    // Accesses to this *shouldn't* need synchronization
+// ================================================
+using AddrType = uint64_t;
+// see mlx5_ifc.h
+// using UmemIdType = std::remove_extent_t<decltype(mlx5_ifc_create_qp_in_bits::wq_umem_id)>;
+// static_assert(sizeof(UmemIdType) == sizeof(uint8_t));
+using UmemIdType = uint32_t;
+using UarPageIdType = std::remove_extent_t<decltype(mlx5dv_devx_uar::page_id)>;
+static_assert(sizeof(UarPageIdType) == sizeof(uint32_t));
+using MemoryRepeaterHandle = Profiler::MemoryRepeater::MemoryRepeaterHandle;
+// ================================================
+
+// Forward declarations here
+namespace Profiler::hijack {
+    std::mutex m_profiler_hijack_mutex;
+
+    // ================================================
+    // NIC UAR regaddresses allocated with mlx5dv_devx_alloc_uar
+    // uar->reg_addr -> uar->page_id
+    std::unordered_map<void*, UarPageIdType> Mlx5UarAllocations{};
+
+    // Host addresses registered with cuMemHostRegister with CU_MEMHOSTREGISTER_DEVICEMAP
+    // These are the uar->reg_addr from above
     std::unordered_set<void*> CuMemHostRegisterAddrs{};
 
-    // Fake addresses we ignore. Filled in mlx5dv hooks
-    std::unordered_set<void*> CuMemHostRegisterIgnoredAddrs{};
+    // Fake host pointers we create with repeaters
+    // Real UAR address (uar->reg_addr) -> Fake UAR address (cudaHostAlloc-ed page)
+    std::unordered_map<void*, void*> CuFakeUarPtrs{};
+    // ================================================
 
-    // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1gf0a9fe11544326dabd743b7aa6b54223
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmissing-declarations"
-    decltype(auto) CuMemHostRegisterOverwrite(auto* real_func, void* p, size_t bytesize, unsigned int Flags) {
-        if (!real_func) {
-            std::cerr << "No real_cuMemHostRegister" << std::endl;
-            std::abort();
-        }
+    // ================================================
+    CUresult Fake_cuMemHostGetDevicePointer(CUdeviceptr* pdptr, void* p, unsigned int Flags);
+    static_assert(std::is_same_v<decltype(cuMemHostGetDevicePointer), decltype(Fake_cuMemHostGetDevicePointer)>);
 
-        // massive hack
-        if (CuMemHostRegisterIgnoredAddrs.contains(p)) {
-            CuMemHostRegisterAddrs.emplace(p);
-            return CUDA_SUCCESS;
-        }
+    decltype(auto) CuMemHostRegisterOverwrite(auto* real_func, void* p, size_t bytesize, unsigned int Flags);
 
-        return real_func(p, bytesize, Flags);
-    }
-
-    CUresult Fake_cuMemHostRegister(void* p, size_t bytesize, unsigned int Flags) {
-        static auto* real_cuMemHostRegister =
-                reinterpret_cast<decltype(cuMemHostRegister)*>(CudaExportTable::get_real_cu_func("cuMemHostRegister"));
-
-        return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);
-    }
+    CUresult Fake_cuMemHostRegister(void* p, size_t bytesize, unsigned int Flags);
     static_assert(std::is_same_v<decltype(cuMemHostRegister), decltype(Fake_cuMemHostRegister)>);
 
-    CUresult Fake_cuMemHostRegister_v2(void* p, size_t bytesize, unsigned int Flags) {
-        static auto* real_cuMemHostRegister = reinterpret_cast<decltype(cuMemHostRegister_v2)*>(
-                CudaExportTable::get_real_cu_func("cuMemHostRegister_v2"));
-
-        return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);
-    }
+    CUresult Fake_cuMemHostRegister_v2(void* p, size_t bytesize, unsigned int Flags);
     static_assert(std::is_same_v<decltype(cuMemHostRegister_v2), decltype(Fake_cuMemHostRegister_v2)>);
 
     // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g63f450c8125359be87b7623b1c0b2a14
-    CUresult Fake_cuMemHostUnregister(void* p) {
-        static auto* real_cuMemHostUnregister = reinterpret_cast<decltype(cuMemHostUnregister)*>(
-                CudaExportTable::get_real_cu_func("cuMemHostUnregister"));
-
-        if (!real_cuMemHostUnregister) {
-            std::cerr << "No real_cuMemHostUnregister" << std::endl;
-            std::abort();
-        }
-
-        // massive hack
-        if (CuMemHostRegisterIgnoredAddrs.contains(p)) {
-            return CUDA_SUCCESS;
-        }
-
-        return cuMemHostUnregister(p);
-    }
+    CUresult Fake_cuMemHostUnregister(void* p);
     static_assert(std::is_same_v<decltype(cuMemHostUnregister), decltype(Fake_cuMemHostUnregister)>);
-#pragma GCC diagnostic pop
-} // namespace Profiler::hack
+    // ================================================
+} // namespace Profiler::hijack
 
 // Convenience
 using Helpers::PtrToUint;
@@ -146,7 +130,7 @@ template<typename EnumT>
 
 struct ProfilerCtx {
     // TODO: rename
-    std::mutex m_ibv_allocations_mutex;
+    // std::mutex m_ibv_allocations_mutex;
 
     // ================================================
     // GPU memory allocations
@@ -156,16 +140,6 @@ struct ProfilerCtx {
     // ================================================
 
     // ================================================
-    using AddrType = uint64_t;
-
-    // see mlx5_ifc.h
-    // using UmemIdType = std::remove_extent_t<decltype(mlx5_ifc_create_qp_in_bits::wq_umem_id)>;
-    // static_assert(sizeof(UmemIdType) == sizeof(uint8_t));
-    using UmemIdType = uint32_t;
-
-    using UarPageIdType = std::remove_extent_t<decltype(mlx5dv_devx_uar::page_id)>;
-    static_assert(sizeof(UarPageIdType) == sizeof(uint32_t));
-
     // Registered umem and uar IDs to its buffer type
     std::map<UmemIdType, std::tuple<UmemAllocationType, QueueType>> m_umem_id_to_type;
     std::map<UarPageIdType, std::tuple<UarAllocationType, QueueType>> m_uar_id_to_type;
@@ -259,15 +233,17 @@ struct ProfilerCtx {
     // WARNING: Some calls are unsafe in this function, such as std::cout. We need to wait until __libc_start_main
     // See LateLoad
     ProfilerCtx() {
-        Profiler::CudaExportTable::register_overwrite("cuMemHostRegister",
-                                                      reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostRegister));
+        Profiler::CudaExportTable::register_overwrite(
+                "cuMemHostRegister", reinterpret_cast<void*>(Profiler::hijack::Fake_cuMemHostRegister));
 
         Profiler::CudaExportTable::register_overwrite(
-                "cuMemHostRegister_v2", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostRegister_v2));
+                "cuMemHostRegister_v2", reinterpret_cast<void*>(Profiler::hijack::Fake_cuMemHostRegister_v2));
 
         Profiler::CudaExportTable::register_overwrite(
-                "cuMemHostUnregister", reinterpret_cast<void*>(Profiler::hack::Fake_cuMemHostUnregister));
+                "cuMemHostUnregister", reinterpret_cast<void*>(Profiler::hijack::Fake_cuMemHostUnregister));
 
+        Profiler::CudaExportTable::register_overwrite(
+                "cuMemHostGetDevicePointer", reinterpret_cast<void*>(Profiler::hijack::Fake_cuMemHostGetDevicePointer));
         m_args = Profiler::ProfilerArgs::from_env();
 
         // Will be populated with things from profiler_args in the future
@@ -890,64 +866,11 @@ struct ProfilerCtx {
                 [](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t flags, auto...) {
             sigma_ignore_unused(flags);
 
-            std::scoped_lock lock(instance().m_ibv_allocations_mutex);
+            // return;
 
-            // TODO: why are there duplicate allocations?
-            // returning here breaks things...
-            // if (m_mlx5_uar_page_id_to_addr.contains(out_uar->page_id)) {
-            //     return;
-            // }
+            std::scoped_lock lock(Profiler::hijack::m_profiler_hijack_mutex);
 
-            constexpr auto page_size{4096};
-            void* uar_fake_page_addr;
-            const auto cuda_err = CUDA_LOG(cudaHostAlloc(&uar_fake_page_addr, page_size, cudaHostAllocMapped));
-            if (cuda_err != cudaSuccess) {
-                return;
-            }
-            memset(uar_fake_page_addr, 0, page_size);
-
-            // TODO: don't do this if buffers can't be set in the first place (no PeerMappingOverride)
-            // Causes a segfault later
-            const auto base_addr_real = out_uar->base_addr;
-            const auto reg_addr_real = out_uar->reg_addr;
-
-            const ptrdiff_t doorbell_offset = static_cast<char*>(reg_addr_real) - static_cast<char*>(base_addr_real);
-            if (doorbell_offset < 64) {
-                std::cerr << "doorbell_offset (" << doorbell_offset << ") should not be smaller than 64 bytes"
-                          << std::endl;
-                std::abort();
-            }
-
-            // Not fully sure if this is really necessarily the doorbell addr
-            void* fake_reg_addr = static_cast<char*>(uar_fake_page_addr) + doorbell_offset;
-
-            // We really only need reg_addr but not setting both causes issues later. See doorbell_offset
-            out_uar->base_addr = uar_fake_page_addr;
-            out_uar->reg_addr = fake_reg_addr;
-
-            // This shouldn't need synchronization but it'll grow infinitely
-            Profiler::hack::CuMemHostRegisterIgnoredAddrs.insert(out_uar->reg_addr);
-
-            MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real,
-                                        [reg_addr_real, fake_reg_addr](const uint64_t new_val) {
-                sigma_ignore_unused(new_val);
-
-                const Profiler::Events::DoorbellRing event{
-                        .addr = reinterpret_cast<uint64_t>(reg_addr_real),
-                        .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
-                        .wqe_index = 0,                    // TODO
-                        .qp_num = 0,                       // TODO
-                        .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
-                        .is_cpu_hijack = true,
-                };
-                instance().m_event_recorder->Record(event);
-
-                instance().num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-            }};
-
-            auto& hijack_handles = instance().m_mlx5_uar_hijack_handles[out_uar->page_id];
-            auto& inserted_handle = hijack_handles.emplace_back(std::move(handle));
-            inserted_handle.start();
+            Profiler::hijack::Mlx5UarAllocations.emplace(out_uar->reg_addr, out_uar->page_id);
         });
 
         // 2. Memory tracking
@@ -966,7 +889,7 @@ struct ProfilerCtx {
 
         // 1. For hijack
         m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([](mlx5dv_devx_uar* devx_uar, auto...) {
-            std::scoped_lock lock(instance().m_ibv_allocations_mutex);
+            std::scoped_lock lock(Profiler::hijack::m_profiler_hijack_mutex);
 
             const auto& handles = instance().m_mlx5_uar_hijack_handles.find(devx_uar->page_id);
             if (handles == instance().m_mlx5_uar_hijack_handles.end()) {
@@ -978,6 +901,8 @@ struct ProfilerCtx {
             }
 
             instance().m_mlx5_uar_hijack_handles.erase(handles);
+
+            Profiler::hijack::Mlx5UarAllocations.erase(devx_uar->reg_addr);
         });
 
         // 2. For memory tracking
@@ -1014,6 +939,129 @@ struct ProfilerCtx {
         });
     }
 };
+
+namespace Profiler::hijack {
+    /*
+     * What happens here:
+     * 0. User registers a UAR address with `mlx5dv_devx_alloc_uar`. We save it to `Mlx5UarAllocations`
+     * 1. User registers the address with `cuMemHostRegister` + `CU_MEMHOSTREGISTER_DEVICEMAP`. We save it to
+     * `CuMemHostRegisterAddrs`
+     * 2. User calls `cuMemHostGetDevicePointer(device_ptr**, host_ptr, Flags)`.
+     *      We check if host_ptr is saved from steps 0 and 1
+     *      We allocate a fake HOST page and register a repeater for it. The page is allocated with cudaHostAlloc
+     *      We call the original cuMemHostGetDevicePointer with the fake host page
+     */
+    CUresult Fake_cuMemHostGetDevicePointer(CUdeviceptr* pdptr, void* p, unsigned int Flags) {
+        static auto* real_cuMemHostGetDevicePointer = reinterpret_cast<decltype(cuMemHostGetDevicePointer)*>(
+                CudaExportTable::get_real_cu_func("cuMemHostGetDevicePointer"));
+
+        if (!real_cuMemHostGetDevicePointer) {
+            std::cerr << "No real_cuMemHostGetDevicePointer" << std::endl;
+            std::abort();
+        }
+
+        std::scoped_lock lock(m_profiler_hijack_mutex);
+
+        if (!CuMemHostRegisterAddrs.contains(p)) {
+            return real_cuMemHostGetDevicePointer(pdptr, p, Flags);
+        }
+
+        // We already registered a repeater for it. Get the fake host addr and call real func
+        {
+            const auto& fake_device_ptr_entry = CuFakeUarPtrs.find(p);
+            if (fake_device_ptr_entry != CuFakeUarPtrs.end()) {
+                void* fake_addr = fake_device_ptr_entry->second;
+                return real_cuMemHostGetDevicePointer(pdptr, fake_addr, Flags);
+            }
+        }
+
+        // First time the function is called on this address
+        constexpr auto page_size{4096};
+        void* uar_fake_page_addr;
+        const auto cu_err = CU_LOG(
+                cuMemHostAlloc(&uar_fake_page_addr, page_size, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP));
+        if (cu_err != CUDA_SUCCESS) {
+            return cu_err;
+        }
+        memset(uar_fake_page_addr, 0, page_size);
+
+        const auto reg_addr_real = reinterpret_cast<void*>(p);
+        void* fake_reg_addr = static_cast<void*>(uar_fake_page_addr);
+
+        MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real,
+                                    [reg_addr_real, fake_reg_addr](const uint64_t new_val) {
+            sigma_ignore_unused(new_val);
+
+            const Profiler::Events::DoorbellRing event{
+                    .addr = reinterpret_cast<uint64_t>(reg_addr_real),
+                    .fake_addr = reinterpret_cast<uint64_t>(fake_reg_addr),
+                    .wqe_index = 0,                    // TODO
+                    .qp_num = 0,                       // TODO
+                    .gpu_id = static_cast<int16_t>(0), // TODO: track per-UAR
+                    .is_cpu_hijack = true,
+            };
+            ProfilerCtx::instance().m_event_recorder->Record(event);
+            ProfilerCtx::instance().num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
+        }};
+
+        // TODO: not clean
+        const auto page_id = Mlx5UarAllocations.at(p);
+        auto& hijack_handles = ProfilerCtx::instance().m_mlx5_uar_hijack_handles[page_id];
+        auto& inserted_handle = hijack_handles.emplace_back(std::move(handle));
+        inserted_handle.start();
+
+        const auto& [fake_ptr_entry, _] = CuFakeUarPtrs.emplace(p, fake_reg_addr);
+        return real_cuMemHostGetDevicePointer(pdptr, fake_ptr_entry->second, Flags);
+    }
+
+    decltype(auto) CuMemHostRegisterOverwrite(auto* real_func, void* p, size_t bytesize, unsigned int Flags) {
+        if (!real_func) {
+            std::cerr << "No real_cuMemHostRegister" << std::endl;
+            std::abort();
+        }
+
+        // UAR registered and IO memory
+        if (Mlx5UarAllocations.contains(p) && (Flags & CU_MEMHOSTREGISTER_DEVICEMAP)) {
+            std::scoped_lock lock(m_profiler_hijack_mutex);
+            CuMemHostRegisterAddrs.emplace(p);
+            return CUDA_SUCCESS;
+        }
+
+        return real_func(p, bytesize, Flags);
+    }
+
+    CUresult Fake_cuMemHostRegister(void* p, size_t bytesize, unsigned int Flags) {
+        static auto* real_cuMemHostRegister =
+                reinterpret_cast<decltype(cuMemHostRegister)*>(CudaExportTable::get_real_cu_func("cuMemHostRegister"));
+
+        return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);
+    }
+
+    CUresult Fake_cuMemHostRegister_v2(void* p, size_t bytesize, unsigned int Flags) {
+        static auto* real_cuMemHostRegister = reinterpret_cast<decltype(cuMemHostRegister_v2)*>(
+                CudaExportTable::get_real_cu_func("cuMemHostRegister_v2"));
+
+        return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);
+    }
+
+    // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__MEM.html#group__CUDA__MEM_1g63f450c8125359be87b7623b1c0b2a14
+    CUresult Fake_cuMemHostUnregister(void* p) {
+        static auto* real_cuMemHostUnregister = reinterpret_cast<decltype(cuMemHostUnregister)*>(
+                CudaExportTable::get_real_cu_func("cuMemHostUnregister"));
+
+        if (!real_cuMemHostUnregister) {
+            std::cerr << "No real_cuMemHostUnregister" << std::endl;
+            std::abort();
+        }
+
+        // massive hack
+        if (Mlx5UarAllocations.contains(p)) {
+            return CUDA_SUCCESS;
+        }
+
+        return cuMemHostUnregister(p);
+    }
+} // namespace Profiler::hijack
 
 // See Note[late_load]
 static void __attribute__((constructor)) init() {
