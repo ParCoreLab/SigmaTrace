@@ -31,6 +31,7 @@ __global__ void set_and_shift_kernel(float* send_data, float* recv_data, int num
     // asm volatile("st.release.gpu.global.L1::no_allocate.b32 [%0], %1;" : : "l"((uint32_t*)0), "r"(0));
     // asm volatile("st.release.gpu.global.L1::no_allocate.b64 [%0], %1;" : : "l"((uint64_t*)0), "l"((uint64_t)0));
 
+    // for (int i = 0; i < 100000; i++) {
     int peer = (mype + 1) % npes;
     /* Every thread in block 0 calls nvshmemx_float_put_block. Alternatively,
        every thread can call shmem_float_p, but shmem_float_p has a disadvantage
@@ -45,6 +46,7 @@ __global__ void set_and_shift_kernel(float* send_data, float* recv_data, int num
     auto* dest = recv_data + block_offset;
     const auto* src = send_data + block_offset;
     nvshmemx_float_put_block(dest, src, min(blockDim.x, num_elems - block_offset), peer);
+    // }
 }
 
 __global__ void simple_shift(int* destination) {
@@ -87,19 +89,24 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
     nvshmem_barrier_all();
     // ================================================================
 
-    /*
+    // /*
     // ================================================================
     // Kernel prep and launch
     // ================================================================
-    auto *send_data = static_cast<float *>(nvshmem_malloc(sizeof(float) * NumElements));
-    auto *recv_data = static_cast<float *>(nvshmem_malloc(sizeof(float) * NumElements));
+    auto* send_data = static_cast<float*>(nvshmem_malloc(sizeof(float) * NumElements));
+    auto* recv_data = static_cast<float*>(nvshmem_malloc(sizeof(float) * NumElements));
     assert(send_data != nullptr && recv_data != nullptr);
 
     // Warmup
-    set_and_shift_kernel<<<NumBlocks, ThreadsPerBlock>>>(send_data, recv_data, NumElements, my_pe, n_pes);
+    for (auto _ = 0; _ < NumRepeats; ++_) {
+        set_and_shift_kernel<<<NumBlocks, ThreadsPerBlock>>>(send_data, recv_data, NumElements, my_pe, n_pes);
+    }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
+    nvshmem_barrier_all();
 
     const auto start = std::chrono::high_resolution_clock::now();
-    for (auto _ = 0; _ < NumRepeats; _++) {
+    for (auto _ = 0; _ < NumRepeats; ++_) {
         set_and_shift_kernel<<<NumBlocks, ThreadsPerBlock>>>(send_data, recv_data, NumElements, my_pe, n_pes);
     }
     CUDA_CHECK(cudaDeviceSynchronize());
