@@ -48,6 +48,13 @@
         return err;                                                                                                    \
     })
 
+#define CU_LOG_ERROR(err)                                                                                              \
+    do {                                                                                                               \
+        const char* str;                                                                                               \
+        cuGetErrorString(err, &str);                                                                                   \
+        std::printf("CU error %s:%d '%s'\n", __FILE__, __LINE__, str);                                                 \
+    } while (0);
+
 #ifdef NVML_API_VERSION
 #define NVML_CHECK(cmd)                                                                                                \
     do {                                                                                                               \

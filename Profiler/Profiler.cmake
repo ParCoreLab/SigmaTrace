@@ -13,6 +13,7 @@ target_link_libraries(Profiler PRIVATE Launcher)
 # Profiler Modules
 add_subdirectory(Modules/CudaExportTableOverwrite)
 add_subdirectory(Modules/MemoryHijack)
+#add_subdirectory(Modules/GPUMemoryHijack)
 # ================================================================
 
 # ================================================================
@@ -39,6 +40,7 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
 
     # Profiler modules
     target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerMemoryRepeater)
+    # target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerGPUMemoryRepeater)
 
     # Runtime dependencies
     target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cuda_driver)

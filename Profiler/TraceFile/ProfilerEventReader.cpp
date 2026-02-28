@@ -865,7 +865,7 @@ public:
         add_header_annotations(instant_event, file_header);
 
         m_builder.add_annotation("Addr", event.addr);
-        m_builder.add_annotation("wqe_index", event.wqe_index);
+        // m_builder.add_annotation("wqe_index", event.wqe_index);
         m_builder.add_annotation("qp_num", event.qp_num);
         m_builder.add_annotation("Is_CPU_Hijack", event.is_cpu_hijack ? "Yes" : "No");
     }

@@ -1,0 +1,6 @@
+Sigma_add_library(ProfilerGPUMemoryRepeater STATIC GPUMemoryRepeater.cu GPUMemoryRepeater.cuh)
+target_include_directories(ProfilerGPUMemoryRepeater PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(ProfilerGPUMemoryRepeater PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+target_link_libraries(ProfilerGPUMemoryRepeater PRIVATE SigmaHelpers)
+target_link_libraries(ProfilerGPUMemoryRepeater PRIVATE ProfilerExportTableOverwrite)

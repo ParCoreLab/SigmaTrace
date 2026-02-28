@@ -42,7 +42,8 @@ namespace Profiler::Events {
     EVENT_STRUCT DoorbellRing {
         uint64_t addr;
         uint64_t fake_addr{0};
-        uint64_t wqe_index;
+        // uint64_t wqe_index;
+        uint32_t prod_index;
         uint32_t qp_num;
         GpuId_T gpu_id;
         bool is_cpu_hijack{false};

@@ -90,7 +90,7 @@ set(SIGMA_CXX_WARNINGS_CLANG
 )
 
 set(SIGMA_CUDA_WARNINGS
-        -Werror=all-warnings
+        # -Werror=all-warnings
         -Wreorder
         # -Wdefault-stream-launch
         -Wext-lambda-captures-this

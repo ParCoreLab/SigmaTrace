@@ -25,6 +25,12 @@ extern "C" ibv_context* mlx5dv_open_device(ibv_device* device, mlx5dv_context_at
     return mlx5dv::Profiler::invoke_preload<mlx5dv::open_device_tag>(device, attr);
 }
 
+extern "C" int mlx5dv_devx_obj_modify(struct mlx5dv_devx_obj* obj, const void* in, size_t inlen, void* out,
+                                      size_t outlen) {
+    return mlx5dv::Profiler::invoke_preload<mlx5dv::obj_modify_tag>(obj, in, inlen, out, outlen);
+}
+
+
 extern "C" int mlx5dv_query_device(ibv_context* ctx_in, mlx5dv_context* attrs_out) {
     return mlx5dv::Profiler::invoke_preload<mlx5dv::query_device_tag>(ctx_in, attrs_out);
 }
