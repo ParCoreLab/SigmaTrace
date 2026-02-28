@@ -1474,15 +1474,8 @@ namespace Profiler::hijack {
         return real_func(p, bytesize, Flags);
     }
 
-    CUresult Fake_cuMemHostRegister(void* p, size_t bytesize, unsigned int Flags) {
-        static auto* real_cuMemHostRegister =
-                reinterpret_cast<decltype(cuMemHostRegister)*>(CudaExportTable::get_real_cu_func("cuMemHostRegister"));
-
-        return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);
-    }
-
     CUresult Fake_cuMemHostRegister_v2(void* p, size_t bytesize, unsigned int Flags) {
-        static auto* real_cuMemHostRegister = reinterpret_cast<decltype(cuMemHostRegister_v2)*>(
+        auto* real_cuMemHostRegister = reinterpret_cast<decltype(cuMemHostRegister_v2)*>(
                 CudaExportTable::get_real_cu_func("cuMemHostRegister_v2"));
 
         return CuMemHostRegisterOverwrite(real_cuMemHostRegister, p, bytesize, Flags);

@@ -8,5 +8,5 @@ namespace Profiler::CudaExportTable {
 
     void* get_real_cu_func(const std::string& cu_func_name);
 
-    void register_overwrite(std::string cu_func_name, void* replacement_func);
+    void register_overwrite(std::string cu_func_name, CallbackType replacement_func);
 } // namespace Profiler::CudaExportTable

@@ -1,3 +1,4 @@
+#include <cassert>
 #include <sys/mman.h>
 
 #include <string>
@@ -20,7 +21,8 @@ CuGetProcAddress_v2_t real_cuGetProcAddress_v2 = nullptr;
 namespace Profiler::CudaExportTable {
     struct OverwriteEntry {
         CallbackType overwrite_callback;
-        void* real_cu_func;
+        void* real_cu_func{nullptr};
+        bool is_replaced{false};
     };
 
     // If you see an undebuggable floating point exception it's this
@@ -37,13 +39,16 @@ namespace Profiler::CudaExportTable {
         return real_fn_entry->second.real_cu_func;
     }
 
-    void register_overwrite(std::string cu_func_name, void* replacement_func) {
+    void register_overwrite(std::string cu_func_name, CallbackType replacement_func) {
         if (RegisteredOverwrites.contains(cu_func_name)) {
             const auto error = "cu function " + cu_func_name + " already registered";
             throw std::runtime_error(error);
         }
 
-        RegisteredOverwrites.emplace(std::move(cu_func_name), replacement_func);
+        OverwriteEntry entry{
+                .overwrite_callback = replacement_func,
+        };
+        RegisteredOverwrites.emplace(std::move(cu_func_name), std::move(entry));
     }
 } // namespace Profiler::CudaExportTable
 
@@ -87,11 +92,16 @@ extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* p
     }
 
     // For mapping cu function pointers to RegisteredOverwrites entries
-    std::unordered_map<void*, decltype(RegisteredOverwrites)::value_type> real_cu_to_overwrite;
+    // TODO: std::reference_wrapper maybe
+    std::unordered_map<void*, decltype(RegisteredOverwrites)::iterator> real_cu_to_overwrite;
     real_cu_to_overwrite.reserve(RegisteredOverwrites.size());
 
-    for (auto& overwrite_entry: RegisteredOverwrites) {
-        const auto& [func_name, overwrite_func] = overwrite_entry;
+    for (auto overwrite_it = RegisteredOverwrites.begin(); overwrite_it != RegisteredOverwrites.end(); ++overwrite_it) {
+        const auto& func_name = overwrite_it->first;
+
+        // if (func_name.ends_with("_v2")) {
+        //     continue;
+        // }
 
         // TODO: RTLD_NEXT?
         void* real_cu_func = smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_DEFAULT, func_name.c_str());
@@ -100,8 +110,8 @@ extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* p
             continue;
         }
 
-        overwrite_entry.second.real_cu_func = real_cu_func;
-        real_cu_to_overwrite.emplace(real_cu_func, overwrite_entry);
+        overwrite_it->second.real_cu_func = real_cu_func;
+        real_cu_to_overwrite.emplace(real_cu_func, overwrite_it);
     }
 
     // In-place patching
@@ -119,8 +129,9 @@ extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* p
          * void* thunk = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
          * code[i++] = 0x4D; code[i++] = 0x89; code[i++] = 0xC1;  // mov r9,
          */
-        const auto& overwrite_entry = cu_overwrite_entry->second.second;
+        auto& overwrite_entry = cu_overwrite_entry->second->second;
         orig_table[i] = overwrite_entry.overwrite_callback;
+        overwrite_entry.is_replaced = true;
     }
 
     return res;
@@ -150,8 +161,16 @@ extern "C" CUresult cuGetProcAddress_v2(const char* symbol, void** pfn, int cuda
 
     const auto& overwrite_entry = RegisteredOverwrites.find(symbol_str);
     if (overwrite_entry != RegisteredOverwrites.end()) {
-        overwrite_entry->second.real_cu_func = *pfn;
+        /*
+         * I don't know why, but we have to replace the function here too, even if it was replaced in cuGetExportTable
+         * Otherwise we get CUDA_ERROR_INVALID_CONTEXT sometimes
+         */
+        if (*pfn != overwrite_entry->second.overwrite_callback /* && !overwrite_entry->second.is_replaced */) {
+            overwrite_entry->second.real_cu_func = *pfn;
+        }
+
         *pfn = overwrite_entry->second.overwrite_callback;
+        overwrite_entry->second.is_replaced = true;
     }
 
     return res;
