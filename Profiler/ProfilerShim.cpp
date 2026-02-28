@@ -24,8 +24,8 @@
 #include "Events/IbvEvents.hpp"
 #include "Events/Mlx5DvEvents.hpp"
 
-#include "infiniband/mlx5dv.h"
-#include "infiniband/verbs.h"
+#include <infiniband/mlx5dv.h>
+#include <infiniband/verbs.h>
 
 // Internal headers for mlx5 type definitions
 // TODO: this is inside NVSHMEM. May be NVSHMEM or RDMA-CORE version dependent
@@ -46,9 +46,6 @@
 
 // ================================================
 using AddrType = uint64_t;
-// see mlx5_ifc.h
-// using UmemIdType = std::remove_extent_t<decltype(mlx5_ifc_create_qp_in_bits::wq_umem_id)>;
-// static_assert(sizeof(UmemIdType) == sizeof(uint8_t));
 using UmemIdType = uint32_t;
 using UarPageIdType = std::remove_extent_t<decltype(mlx5dv_devx_uar::page_id)>;
 static_assert(sizeof(UarPageIdType) == sizeof(uint32_t));
@@ -106,41 +103,6 @@ namespace Profiler::hijack {
 using Helpers::PtrToUint;
 using Profiler::Events::GpuId_T;
 
-enum class QueueType {
-    Unknown,
-    WQ,
-    CQ,
-};
-
-enum class UmemAllocationType {
-    Unknown = 0,
-    WQE,
-    // TODO: BlueFlame, not BlueField
-    BlueField,
-    Doorbell,
-};
-
-enum class UarAllocationType {
-    Unknown = 0,
-    WQE, // Invalid
-    BlueField,
-    Doorbell, // Invalid
-};
-
-template<typename EnumT>
-[[maybe_unused]] static std::string_view alloc_type_as_string(EnumT type) {
-    switch (type) {
-        case EnumT::WQE:
-            return "WQE";
-        case EnumT::BlueField:
-            return "BlueField";
-        case EnumT::Doorbell:
-            return "Doorbell";
-        default:
-            return "Unknown";
-    }
-}
-
 struct QpInfo {
     CUcontext cuda_ctx;   // captured during umem_reg
     void* sq_base;        // host-accessible SQ buffer address
@@ -155,43 +117,12 @@ struct QpInfo {
 };
 
 struct ProfilerCtx {
-    // ================================================================================================
-    // Doorbell segment parsing and logging
-    static constexpr bool UseGpuIntercept = false;
-
-    /*
-     * Unused
-    // One process really shouldn't have more than 16 GPUs
-    std::array<std::unique_ptr<Profiler::GpuRepeater::GpuMemoryRepeater>, 16> m_gpu_repeaters{nullptr};
-
-    Profiler::GpuRepeater::GpuMemoryRepeater* get_or_create_gpu_repeater(size_t gpu_id, CUcontext ctx) {
-        auto& repeater = m_gpu_repeaters[gpu_id];
-        if (!repeater) {
-            repeater = std::make_unique<Profiler::GpuRepeater::GpuMemoryRepeater>(gpu_id, ctx);
-        }
-
-        return repeater.get();
-    }
-    */
-    // ================================================================================================
-
     // ================================================
     // GPU memory allocations
     // addr -> { size, gpu_id }
     // TODO: Make the value a proper struct so we don't have to do std::get<whatever->second>
-    std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations{};
+    // std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations{};
     // ================================================
-
-    // ================================================
-    // Registered umem and uar IDs to its buffer type
-    std::map<UmemIdType, std::tuple<UmemAllocationType, QueueType>> m_umem_id_to_type;
-    std::map<UarPageIdType, std::tuple<UarAllocationType, QueueType>> m_uar_id_to_type;
-
-    // <addr, length, umem ID>
-    // std::vector<std::tuple<AddrType, size_t, UmemIdType>> m_mlx5_umem_allocations;
-    // TODO: boost multimap
-    // std::map<AddrType, UarPageIdType> m_mlx5_uar_allocations;
-    // std::map<UarPageIdType, AddrType> m_mlx5_uar_page_id_to_addr;
 
     std::mutex m_mlx5_umem_mutex;
     // TODO: boost::multi_index is better than this mess
@@ -216,6 +147,7 @@ struct ProfilerCtx {
     // TODO: put this in a module with more info (memory type, device type) and better (binary) search
     std::map<uint64_t, std::tuple<uint64_t, GpuId_T>> m_ibv_memory_registrations;
 
+    // Helper function for debugging
     GpuId_T find_gpu_id(const uint64_t addr) {
         const auto& entry = m_ibv_memory_registrations.find(addr);
 
@@ -234,28 +166,6 @@ struct ProfilerCtx {
 
         return Profiler::Events::UnknownDeviceId;
     }
-
-    static GpuId_T get_addr_gpu_id(uint64_t addr) {
-        int cuda_dev;
-        auto cuda_err = CUDA_LOG(cudaGetDevice(&cuda_dev));
-        if (cuda_err != cudaSuccess) {
-            return Profiler::Events::UnknownDeviceId;
-        }
-
-        cudaPointerAttributes attrs{};
-        cuda_err = CUDA_LOG(cudaPointerGetAttributes(&attrs, reinterpret_cast<void*>(addr)));
-        if (cuda_err != cudaSuccess) {
-            return Profiler::Events::UnknownDeviceId;
-        }
-
-        GpuId_T gpu_id{static_cast<GpuId_T>(attrs.device)};
-        if (attrs.type == cudaMemoryTypeUnregistered) {
-            // Making sure it's a well defined value
-            return Profiler::Events::UnknownDeviceId;
-        }
-
-        return gpu_id;
-    }
     // ================================================
 
     // ================================================
@@ -263,7 +173,6 @@ struct ProfilerCtx {
     std::atomic<int> num_nic_accesses{0};
     std::atomic<int> num_nic_doorbell_accesses{0};
     std::atomic<int> num_fake_nic_accesses{0};
-    std::atomic<int> num_kernel_launches{0};
 
     std::atomic<int> doorbell_submitted{0};
     std::atomic<int> doorbell_skipped{0};
@@ -275,7 +184,6 @@ struct ProfilerCtx {
 
         std::cout << "[Profiler] doorbell_submitted: " << std::dec << doorbell_submitted << std::endl;
         std::cout << "[Profiler] doorbell_skipped: " << std::dec << doorbell_skipped << std::endl;
-        // std::cout << "[Profiler] num_kernel_launches: " << std::dec << num_kernel_launches << std::endl;
     }
 
     // See Note[late_load]
@@ -505,28 +413,21 @@ struct ProfilerCtx {
 
         m_ibv_profiler->register_post<ibv::open_device_tag>(
                 [](ibv_context* out_context, ibv_device* device, const auto ts_start, const auto ts_end) {
-            // std::cout << "[Profiler] ibv_open_device received " << out_context << std::endl;
-
             const auto event = instance().register_nic(out_context, device);
             instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::close_device_tag>(
                 [](int, ibv_context* context, const auto ts_start, const auto ts_end) {
-            // std::cout << "[Profiler] ibv_close_device received " << context << std::endl;
-
-            auto event = Profiler::Events::IbvCloseDevice{
+            const Profiler::Events::IbvCloseDevice event{
                     .context_addr = reinterpret_cast<uint64_t>(context),
             };
             instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
         m_ibv_profiler->register_post<ibv::create_qp_tag>(
-                [](ibv_qp* out_qp, ibv_pd* pd, ibv_qp_init_attr* qp_init_attr, const auto ts_start, const auto ts_end) {
-            sigma_ignore_unused(pd);
-            sigma_ignore_unused(qp_init_attr);
-
-            Profiler::Events::IbvCreateQp event{
+                [](ibv_qp* out_qp, ibv_pd*, ibv_qp_init_attr*, const auto ts_start, const auto ts_end) {
+            const Profiler::Events::IbvCreateQp event{
                     .context_addr = reinterpret_cast<uint64_t>(out_qp->context),
                     .qp_num = out_qp->qp_num,
             };
@@ -534,7 +435,7 @@ struct ProfilerCtx {
         });
 
         m_ibv_profiler->register_pre<ibv::destroy_qp_tag>([](ibv_qp* qp, const auto ts_start) {
-            Profiler::Events::IbvDestroyQp event{
+            const Profiler::Events::IbvDestroyQp event{
                     // WARNING: not qp->context. Why? I have no clue
                     .context_addr = reinterpret_cast<uint64_t>(qp->pd->context),
                     .qp_num = qp->qp_num,
@@ -548,7 +449,7 @@ struct ProfilerCtx {
                 return;
             }
 
-            Profiler::Events::IbvModifyQp event{
+            const Profiler::Events::IbvModifyQp event{
                     .context_addr = reinterpret_cast<uint64_t>(qp->context),
                     .qp_num = qp->qp_num,
                     .attr = *attr,
@@ -559,48 +460,23 @@ struct ProfilerCtx {
         // ================================================
         // Memory registration
         // TODO: this can be done automatically/declaratively by declaring which arg is addr, which one is length, etc.
-        m_ibv_profiler->register_post<ibv::reg_mr_tag>([](ibv_mr* out_mr, ibv_pd* pd, void* addr, size_t length,
-                                                          int access, const auto ts_start, const auto ts_end) {
-            sigma_ignore_unused(out_mr);
-            sigma_ignore_unused(pd);
-            sigma_ignore_unused(access);
-
-            const auto alloc_addr = reinterpret_cast<uint64_t>(addr);
-
-            /*
-            const auto gpu_id = get_addr_gpu_id(alloc_addr);
-            if (gpu_id != Profiler::Events::UnknownDeviceId) {
-                const auto [_, inserted] = m_ibv_memory_registrations.insert({alloc_addr, {length, gpu_id}});
-                if (!inserted) {
-                    // std::cerr << "reg_mr_tag addr " << addr << " already registered" << std::endl;
-                    // std::abort();
-                    return;
-                }
-            }
-            */
-
+        m_ibv_profiler->register_post<ibv::reg_mr_tag>(
+                [](ibv_mr*, ibv_pd* pd, void* addr, size_t length, int, const auto ts_start, const auto ts_end) {
             const Profiler::Events::IbvMemoryReg event{
-                    .context_addr = reinterpret_cast<uint64_t>(pd->context),
-                    .addr = alloc_addr,
+                    .context_addr = PtrToUint(pd->context),
+                    .addr = PtrToUint(addr),
                     .size = length,
                     .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
             };
             instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
 
-        m_ibv_profiler->register_post<ibv::reg_mr_iova2_tag>([](ibv_mr* out_mr, ibv_pd* pd, void* addr, size_t length,
-                                                                uint64_t iova, unsigned int access, const auto ts_start,
+        m_ibv_profiler->register_post<ibv::reg_mr_iova2_tag>([](ibv_mr*, ibv_pd* pd, void* addr, size_t length,
+                                                                uint64_t, unsigned int, const auto ts_start,
                                                                 const auto ts_end) {
-            sigma_ignore_unused(out_mr);
-            sigma_ignore_unused(pd);
-            sigma_ignore_unused(iova);
-            sigma_ignore_unused(access);
-
-            const auto alloc_addr = reinterpret_cast<uint64_t>(addr);
-
             const Profiler::Events::IbvMemoryReg event{
-                    .context_addr = reinterpret_cast<uint64_t>(pd->context),
-                    .addr = alloc_addr,
+                    .context_addr = PtrToUint(pd->context),
+                    .addr = PtrToUint(addr),
                     .size = length,
                     .type = Profiler::Events::IbvMemoryRegType::ibv_reg_mr_iova2,
             };
@@ -608,9 +484,7 @@ struct ProfilerCtx {
         });
 
         m_ibv_profiler->register_post<ibv::post_send_tag>(
-                [](int, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr** bad_wr, const auto ts_start, const auto ts_end) {
-            sigma_ignore_unused(bad_wr);
-
+                [](int, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr**, const auto ts_start, const auto ts_end) {
             const auto context_addr = PtrToUint(qp->context);
 
             Profiler::Events::IbvPostSend post_send_event{
@@ -657,9 +531,7 @@ struct ProfilerCtx {
         });
 
         m_ibv_profiler->register_post<ibv::post_recv_tag>(
-                [](int, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr** bad_wr, const auto ts_start, const auto ts_end) {
-            sigma_ignore_unused(bad_wr);
-
+                [](int, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr**, const auto ts_start, const auto ts_end) {
             if (wr->num_sge > 1) {
                 std::cerr << "TODO: More than 1 SGE found" << std::endl;
             }
@@ -730,114 +602,12 @@ struct ProfilerCtx {
         });
     }
 
-    /*
-    void load_nvbit(const std::filesystem::path& shim_dir) noexcept {
-        m_cuda_profiler = get_instance<cuda_trace::NvbitProfiler>(shim_dir / Profiler::SIGMA_NVBIT_PROVIDER_PATH);
-        // m_cuda_profiler->enable_memop();
-
-        // TODO: pass this along
-        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_alloc_tag>(
-                [](std::uint64_t addr, std::size_t size) {
-            sigma_ignore_unused(addr);
-            sigma_ignore_unused(size);
-        });
-
-        // TODO: pass this along
-        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_register_tag>(
-                [](uint64_t addr, std::size_t size, [[maybe_unused]] unsigned int flags) {
-            sigma_ignore_unused(addr);
-            sigma_ignore_unused(size);
-        });
-
-        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
-                [](GpuId_T gpu_id, const char* kernel_name, auto...) {
-            // TODO: :(
-            Profiler::Events::CUDAKernelLaunch kernel_launch_data{gpu_id};
-            snprintf(kernel_launch_data.kernel_name, sizeof kernel_launch_data.kernel_name, "%s", kernel_name);
-
-            instance().m_event_recorder->Record(kernel_launch_data);
-
-            instance().num_kernel_launches.fetch_add(1, std::memory_order_relaxed);
-        });
-
-        m_cuda_profiler->register_pre<cuda_trace::cuda_kernel_exit_tag>(
-                [](GpuId_T gpu_id, const char* kernel_name, auto...) {
-            // TODO: :(
-            Profiler::Events::CUDAKernelExit kernel_exit_data{gpu_id};
-            snprintf(kernel_exit_data.kernel_name, sizeof kernel_exit_data.kernel_name, "%s", kernel_name);
-
-            instance().m_event_recorder->Record(kernel_exit_data);
-        });
-
-        m_cuda_profiler->register_pre<cuda_trace::cuda_mem_op_tag>(
-                [this](int gpu_id, uint64_t addr, [[maybe_unused]] std::string_view sass_str, auto&&...) {
-            // ================================================
-            // Umem
-            for (auto [alloc_addr, alloc_length, umem_id]: m_mlx5_umem_allocations) {
-                if (alloc_addr <= addr && addr < (alloc_addr + alloc_length)) {
-                    const auto umem_allocation_entry = m_umem_id_to_type.find(umem_id);
-                    if (umem_allocation_entry == m_umem_id_to_type.end()) {
-                        assert(false && "Empty m_umem_id_to_type");
-                        break;
-                    }
-
-                    const auto [alloc_type, queue_type] = umem_allocation_entry->second;
-
-                    if (alloc_type == UmemAllocationType::Doorbell) {
-                        const Profiler::Events::DoorbellRing event{
-                                .gpu_id = static_cast<int16_t>(gpu_id),
-                                .nic_id = 0,
-                                .addr = addr,
-                                .wqe_index = 0,
-                                .qp_num = 0,
-                        };
-                        m_event_recorder->Record(event);
-                        num_nic_doorbell_accesses.fetch_add(1, std::memory_order_relaxed);
-                    } else if (alloc_type == UmemAllocationType::BlueField) {
-                        std::cout << "TODO: BlueField" << std::endl;
-                    }
-
-                    num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-                    return;
-                }
-            }
-            // ================================================
-
-            // ================================================
-            // Uar
-            {
-                const auto uar_allocation_entry = m_mlx5_uar_allocations.find(addr);
-                if (uar_allocation_entry == m_mlx5_uar_allocations.end()) {
-                    return;
-                }
-
-                const auto page_id = uar_allocation_entry->second;
-
-                // TODO: not checking existence
-                const auto [alloc_type, queue_type] = m_uar_id_to_type[page_id];
-
-                if (alloc_type == UarAllocationType::BlueField) {
-                    std::cout << "TODO: BlueField UAR" << std::endl;
-                    // TODO
-                    // const Profiler::Events::DoorbellRing event{.addr = addr};
-                    // m_event_recorder->Record(event);
-                    num_nic_doorbell_accesses.fetch_add(1, std::memory_order_relaxed);
-                }
-                num_nic_accesses.fetch_add(1, std::memory_order_relaxed);
-            }
-            // ================================================
-        });
-    }
-    */
-
     void load_mlx5dv(const std::filesystem::path& shim_dir) {
         m_mlx5dv_profiler = get_instance<mlx5dv::Profiler>(shim_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
 
         m_mlx5dv_profiler->register_post<mlx5dv::open_device_tag>([](ibv_context* out_context, ibv_device* device,
                                                                      mlx5dv_context_attr*, const auto ts_start,
                                                                      const auto ts_end) {
-            // std::cout << "[Profiler] mlx5dv_open_device received " << out_context << std::endl;
-
             const auto event = instance().register_nic(out_context, device);
             instance().m_event_recorder->Record(event, ts_start, ts_end);
         });
@@ -867,19 +637,7 @@ struct ProfilerCtx {
 
             if (mlx5_cmd_opcode == MLX5_CMD_OP_CREATE_QP) {
                 // ================================================
-                constexpr auto queue_type = QueueType::WQ;
-
                 const auto wg_qp_id = DEVX_GET(create_qp_in, cmd_in, uid);
-
-                /*
-                 * Old and unneeded
-                // WQ buffer
-                instance().m_umem_id_to_type[wq_umem_id] = {UmemAllocationType::WQE, queue_type};
-                */
-
-                /*
-                 * See ibgda.cpp ibgda_create_qp
-                 */
 
                 auto& profiler = instance();
 
@@ -970,62 +728,27 @@ struct ProfilerCtx {
                     profiler.m_mlx5_qp_info.insert_or_assign(out_qpn, qp_info);
                 }
 
-                // TODO
-                // profiler.get_or_create_gpu_repeater(static_cast<unsigned>(dev), cuda_ctx);
-
-                // >>> NEW: register QP with GPU repeater if using GPU intercept
-                if (UseGpuIntercept && gpu_mem_type == cudaMemoryTypeDevice) {
-                    std::cerr << "GPU Intercept is unimplemented at this moment" << std::endl;
-                    std::abort();
-
-                    /*
-                    auto* repeater = profiler.get_or_create_gpu_repeater(dev, cuda_ctx);
-                    repeater.add_qp(out_qpn, sq_base, log_sq_size, qp_type, gpu_id);
-                    */
-                }
-
-                /*
-                 * Unused
-                 *
-                    const auto* in_qp_context = DEVX_ADDR_OF(create_qp_in, const_cast<void*>(cmd_in), qpc);
-                    // Not set on creation
-                    // const auto remote_qpn = DEVX_GET(qpc, in_qp_context, remote_qpn);
-
-                    // BlueField register. TODO: what is BlueField?
-                    // TODO: We get this from mlx5dv_devx_alloc_uar too
-                    auto bf_register_uar_id = DEVX_GET(qpc, in_qp_context, uar_page);
-                    profiler.m_uar_id_to_type[bf_register_uar_id] = {UarAllocationType::BlueField, queue_type};
-
-                    // Doorbell register
-                    auto doorbell_register_umem_id = DEVX_GET(qpc, in_qp_context, dbr_umem_id);
-                    profiler.m_umem_id_to_type[doorbell_register_umem_id] = {UmemAllocationType::Doorbell, queue_type};
-
-                    // TODO: Doorbell Offset
-                    auto wq_doorbell_offset = DEVX_GET64(qpc, in_qp_context, dbr_addr);
-                    sigma_ignore_unused(wq_doorbell_offset);
-                */
                 // ================================================
                 return;
             }
 
             if (mlx5_cmd_opcode == MLX5_CMD_OP_CREATE_CQ) {
                 // ================================================
-                constexpr auto queue_type = QueueType::CQ;
 
                 // CQ buffer
                 const auto cq_umem_id = DEVX_GET(create_cq_in, cmd_in, cq_umem_id);
-                instance().m_umem_id_to_type[cq_umem_id] = {UmemAllocationType::WQE, queue_type};
+                sigma_ignore_unused(cq_umem_id);
 
                 // Context
                 const auto* cq_context = DEVX_ADDR_OF(create_cq_in, const_cast<void*>(cmd_in), cq_context);
 
                 // BlueFlame
                 const auto bf_register_uar_id = DEVX_GET(cqc, cq_context, uar_page);
-                instance().m_uar_id_to_type[bf_register_uar_id] = {UarAllocationType::BlueField, queue_type};
+                sigma_ignore_unused(bf_register_uar_id);
 
                 // Doorbell
                 const auto doorbell_register_umem_id = DEVX_GET(cqc, cq_context, dbr_umem_id);
-                instance().m_umem_id_to_type[doorbell_register_umem_id] = {UmemAllocationType::Doorbell, queue_type};
+                sigma_ignore_unused(doorbell_register_umem_id);
 
                 // TODO: Doorbell Offset
                 const auto cq_doorbell_offset = DEVX_GET64(cqc, cq_context, dbr_addr);
@@ -1060,18 +783,13 @@ struct ProfilerCtx {
             std::scoped_lock lock(Profiler::hijack::m_profiler_hijack_mutex);
 
             auto& profiler = instance();
-            if constexpr (!UseGpuIntercept) {
-                // CPU path: signal finish on MemoryRepeaterHandles (existing behavior)
-                const auto& handles = profiler.m_mlx5_uar_hijack_handles.find(devx_uar->page_id);
-                if (handles != profiler.m_mlx5_uar_hijack_handles.end()) {
-                    for (auto& h: handles->second) {
-                        h.signal_finish();
-                    }
-                    profiler.m_mlx5_uar_hijack_handles.erase(handles);
+            // CPU path: signal finish on MemoryRepeaterHandles (existing behavior)
+            const auto& handles = profiler.m_mlx5_uar_hijack_handles.find(devx_uar->page_id);
+            if (handles != profiler.m_mlx5_uar_hijack_handles.end()) {
+                for (auto& h: handles->second) {
+                    h.signal_finish();
                 }
-            } else {
-                std::cerr << "GPU Intercept is unimplemented at this moment" << std::endl;
-                std::abort();
+                profiler.m_mlx5_uar_hijack_handles.erase(handles);
             }
 
             Profiler::hijack::Mlx5UarAllocations.erase(devx_uar->reg_addr);
@@ -1336,100 +1054,42 @@ namespace Profiler::hijack {
             return real_func(pdptr, p, Flags);
         }
 
-        // >>> CHANGED
+        // ================================================================================================
+        // Fake UAR page replacement
+        // ================================================================================================
+
         auto& profiler = ProfilerCtx::instance();
-
-        if constexpr (ProfilerCtx::UseGpuIntercept) {
-            // ================================================================================================
-            // GPU-side Logging
-            // ================================================================================================
-
-            std::cerr << "GPU Intercept is unimplemented at this moment" << std::endl;
-            std::abort();
-
-            // Check if we already set up interception for this UAR
-            {
-                const auto& entry = CuFakeUarPtrs.find(p);
-                if (entry != CuFakeUarPtrs.end()) {
-                    // Already intercepted - return existing fake device pointer
-                    return real_func(pdptr, entry->second, Flags);
-                }
+        // Already registered a repeater — return fake host ptr
+        {
+            const auto& fake_device_ptr_entry = CuFakeUarPtrs.find(p);
+            if (fake_device_ptr_entry != CuFakeUarPtrs.end()) {
+                void* fake_addr = fake_device_ptr_entry->second;
+                return real_func(pdptr, fake_addr, Flags);
             }
-
-            // Step 1: Get the REAL device pointer to the NIC BAR.
-            // cuMemHostRegister was actually called (GPU path), so this works.
-            CUdeviceptr real_dev_ptr = 0;
-            CUresult res = real_func(&real_dev_ptr, p, Flags);
-            if (res != CUDA_SUCCESS) {
-                std::cerr << "[GpuRepeater] Failed to get real device ptr for UAR" << std::endl;
-                return res;
-            }
-
-            /*
-             * Unused
-            // Step 2: Determine which GPU this is for
-            CUcontext cur_ctx{nullptr};
-            CU_CHECK(cuCtxGetCurrent(&cur_ctx));
-            CUdevice dev{-1};
-            CU_CHECK(cuCtxGetDevice(&dev));
-
-            // Step 3: Get or create the GPU repeater and register UAR.
-            // add_uar allocates fake GPU memory and returns its device ptr.
-
-            auto* repeater = profiler.get_or_create_gpu_repeater(static_cast<unsigned>(dev), cur_ctx);
-            CUdeviceptr fake_dev_ptr = repeater->add_uar(real_dev_ptr);
-
-            // Step 4: We need a host pointer that maps to fake_dev_ptr
-            // for the CuFakeUarPtrs table. Since fake_dev_ptr is cudaMalloc'd
-            // GPU memory, we can't easily get a host pointer. Instead, store
-            // the device ptr directly and handle the lookup in the return path.
-            //
-            // We bypass cuMemHostGetDevicePointer entirely and just return
-            // the fake device pointer.
-            CuFakeUarPtrs.insert_or_assign(p, reinterpret_cast<void*>(fake_dev_ptr));
-            *pdptr = fake_dev_ptr;
-            */
-
-            return CUDA_SUCCESS;
-
-        } else {
-            // ================================================================================================
-            // CPU-side Logging
-            // ================================================================================================
-
-            // Already registered a repeater — return fake host ptr
-            {
-                const auto& fake_device_ptr_entry = CuFakeUarPtrs.find(p);
-                if (fake_device_ptr_entry != CuFakeUarPtrs.end()) {
-                    void* fake_addr = fake_device_ptr_entry->second;
-                    return real_func(pdptr, fake_addr, Flags);
-                }
-            }
-
-            // First time: allocate fake host page
-            constexpr auto page_size{4096};
-            void* uar_fake_page_addr;
-            const auto cu_err = CU_LOG(cuMemHostAlloc(&uar_fake_page_addr, page_size,
-                                                      CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP));
-            if (cu_err != CUDA_SUCCESS) {
-                return cu_err;
-            }
-
-            memset(uar_fake_page_addr, 0, page_size);
-
-            void* reg_addr_real = p;
-            void* fake_reg_addr = uar_fake_page_addr;
-
-            MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real, on_doorbell_ring};
-
-            const auto page_id = Mlx5UarAllocations.at(p);
-            auto& hijack_handles = profiler.m_mlx5_uar_hijack_handles[page_id];
-            auto& inserted_handle = hijack_handles.emplace_back(std::move(handle));
-            inserted_handle.start();
-
-            const auto& [fake_ptr_entry, _] = CuFakeUarPtrs.insert_or_assign(p, fake_reg_addr);
-            return real_func(pdptr, fake_ptr_entry->second, Flags);
         }
+
+        // First time: allocate fake host page
+        constexpr auto PageSize{4096};
+        void* uar_fake_page_addr;
+        const auto cu_err = CU_LOG(
+                cuMemHostAlloc(&uar_fake_page_addr, PageSize, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP));
+        if (cu_err != CUDA_SUCCESS) {
+            return cu_err;
+        }
+        std::memset(uar_fake_page_addr, 0, PageSize);
+
+        void* reg_addr_real = p;
+        void* fake_reg_addr = uar_fake_page_addr;
+
+        MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real, on_doorbell_ring};
+
+        const auto page_id = Mlx5UarAllocations.at(p);
+        auto& hijack_handles = profiler.m_mlx5_uar_hijack_handles[page_id];
+        auto& inserted_handle = hijack_handles.emplace_back(std::move(handle));
+        inserted_handle.start();
+
+        const auto& [fake_ptr_entry, _] = CuFakeUarPtrs.insert_or_assign(p, fake_reg_addr);
+        return real_func(pdptr, fake_ptr_entry->second, Flags);
     }
 
     CUresult Fake_cuMemHostGetDevicePointer_v2(CUdeviceptr* pdptr, void* p, unsigned int Flags) {
@@ -1439,8 +1099,6 @@ namespace Profiler::hijack {
         return CuMemHostGetDevicePointerOverwrite(real_cuMemHostGetDevicePointer, pdptr, p, Flags);
     }
 
-    // GPU path: Call the real func (we need the real device mapping)
-    // CPU path: skip register
     decltype(auto) CuMemHostRegisterOverwrite(auto* real_func, void* p, size_t bytesize, unsigned int Flags) {
         if (!real_func) {
             std::cerr << "No real_cuMemHostRegister" << std::endl;
@@ -1450,25 +1108,9 @@ namespace Profiler::hijack {
         // UAR registered and IO memory
         if (Mlx5UarAllocations.contains(p) && (Flags & CU_MEMHOSTREGISTER_DEVICEMAP)) {
             std::scoped_lock lock(m_profiler_hijack_mutex);
-
-            if (ProfilerCtx::UseGpuIntercept) {
-                std::cerr << "GPU Intercept is unimplemented at this moment" << std::endl;
-                std::abort();
-
-                // GPU path: actually register so cuMemHostGetDevicePointer
-                // can retrieve the real NIC BAR device pointer.
-                auto res = real_func(p, bytesize, Flags);
-                if (res != CUDA_SUCCESS) {
-                    std::cerr << "[GpuRepeater] cuMemHostRegister failed on UAR addr" << std::endl;
-                    return res;
-                }
-                CuMemHostRegisterAddrs.emplace(p);
-                return CUDA_SUCCESS;
-            } else {
-                // CPU path: skip register (existing behavior)
-                CuMemHostRegisterAddrs.emplace(p);
-                return CUDA_SUCCESS;
-            }
+            // Fake page, skip register
+            CuMemHostRegisterAddrs.emplace(p);
+            return CUDA_SUCCESS;
         }
 
         return real_func(p, bytesize, Flags);
@@ -1492,16 +1134,8 @@ namespace Profiler::hijack {
         }
 
         if (Mlx5UarAllocations.contains(p)) {
-            if constexpr (ProfilerCtx::UseGpuIntercept) {
-                std::cerr << "GPU Intercept is unimplemented at this moment" << std::endl;
-                std::abort();
-
-                // GPU path: we DID call real register, so call real unregister
-                return real_cuMemHostUnregister(p);
-            } else {
-                // CPU path: we skipped register, so skip unregister
-                return CUDA_SUCCESS;
-            }
+            // We skipped register, so skip unregister
+            return CUDA_SUCCESS;
         }
 
         return real_cuMemHostUnregister(p);

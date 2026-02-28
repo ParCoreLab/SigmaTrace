@@ -4,6 +4,10 @@
 #include <cstdlib>
 #include <ctime>
 
+#include <array>
+#include <functional>
+#include <optional>
+
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -130,4 +134,57 @@ namespace Helpers::Cuda {
             clock_offset = static_cast<clock_t>(end_clock - start_clock);
         }
     }
+
+    template<typename T>
+        requires std::is_same_v<T, uint64_t> || std::is_same_v<T, void*>
+    static auto get_addr_gpu_attrs(const T addr) {
+        constexpr auto num_attrs{2};
+
+        std::array<CUpointer_attribute, num_attrs> attrs{
+                CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
+                CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
+        };
+
+        CUmemorytype memory_type{};
+        CUdevice gpu_id{};
+        void* out_attrs_data[num_attrs]{
+                &memory_type,
+                &gpu_id,
+        };
+
+        const auto dev_ptr = reinterpret_cast<CUdeviceptr>(addr);
+        CU_CHECK(cuPointerGetAttributes(num_attrs, attrs.data(), out_attrs_data, dev_ptr));
+
+        return std::pair{memory_type, gpu_id};
+    }
+
+    template<typename T>
+        requires std::is_same_v<T, uint64_t> || std::is_same_v<T, void*>
+    static std::optional<uint16_t> get_addr_gpu_id(const T addr) {
+        int cuda_dev;
+        auto cuda_err = CUDA_LOG(cudaGetDevice(&cuda_dev));
+        if (cuda_err != cudaSuccess) {
+            return {};
+        }
+
+        cudaPointerAttributes attrs{};
+        if constexpr (std::is_same_v<T, void*>) {
+            cuda_err = CUDA_LOG(cudaPointerGetAttributes(&attrs, addr));
+        } else {
+            cuda_err = CUDA_LOG(cudaPointerGetAttributes(&attrs, reinterpret_cast<void*>(addr)));
+        }
+
+        if (cuda_err != cudaSuccess) {
+            return {};
+        }
+
+        const auto gpu_id{static_cast<uint16_t>(attrs.device)};
+        if (attrs.type == cudaMemoryTypeUnregistered) {
+            // Making sure it's a well defined value
+            return {};
+        }
+
+        return gpu_id;
+    }
+
 } // namespace Helpers::Cuda

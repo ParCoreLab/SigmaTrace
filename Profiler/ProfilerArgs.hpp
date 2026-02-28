@@ -20,7 +20,6 @@ namespace Profiler {
 
         std::filesystem::path ShimDir{};
 
-        bool LoadNvbit{false};
         bool LoadIbtrace{true};
         bool LoadMlx5dv{true};
 
@@ -29,7 +28,6 @@ namespace Profiler {
         [[nodiscard]] std::array<std::string, 5> to_env() const {
             return {
                     make_env_entry("ShimPath", ShimDir),
-                    make_env_entry("LoadNvbit", LoadNvbit),
                     make_env_entry("LoadIbtrace", LoadIbtrace),
                     make_env_entry("LoadMlx5dv", LoadMlx5dv),
                     make_env_entry("Check", Check),
@@ -40,7 +38,6 @@ namespace Profiler {
         [[nodiscard]] static ProfilerArgs from_env() {
             return {
                     .ShimDir{parse_env<std::filesystem::path>("ShimPath", {})},
-                    .LoadNvbit = parse_env("LoadNvbit", false),
                     .LoadIbtrace = parse_env("LoadIbtrace", true),
                     .LoadMlx5dv = parse_env("LoadMlx5dv", true),
                     .Check = parse_env("Check", 0),
