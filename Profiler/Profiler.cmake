@@ -59,6 +59,13 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     #    Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
     Sigma_profiler_link_provider(${ProfilerShimTarget} CuptiEventProvider)
 
+    if (LIBFABRIC_FOUND)
+        Sigma_profiler_link_provider(${ProfilerShimTarget} LibfabricTraceShared)
+    endif ()
+    if (UCX_FOUND)
+        Sigma_profiler_link_provider(${ProfilerShimTarget} UcxTraceShared)
+    endif ()
+
     # Tracing and Logging
     target_link_libraries(${ProfilerShimTarget} PRIVATE EventsLib)
     target_include_directories(${ProfilerShimTarget} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")

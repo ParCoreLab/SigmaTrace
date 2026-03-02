@@ -13,7 +13,9 @@
 
 #include "../Events/CUDAEvents.hpp"
 #include "../Events/IbvEvents.hpp"
+#include "../Events/LibfabricEvents.hpp"
 #include "../Events/Mlx5DvEvents.hpp"
+#include "../Events/UcxEvents.hpp"
 #include "Helpers/Utilities.hpp"
 
 // Convenience
@@ -39,7 +41,21 @@ using EnabledEvents =
                          ProfilerEvents::IbvPollCq, ProfilerEvents::IbvCompletion,                                  //
                          ProfilerEvents::Mlx5dvMemoryRegistration, ProfilerEvents::Mlx5dvMemoryDereg,               //
                          ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
-                         ProfilerEvents::CUDAKernelExit //
+                         ProfilerEvents::CUDAKernelExit, //
+                         // libfabric events
+                         ProfilerEvents::FiDomainOpen, ProfilerEvents::FiEndpointCreate,             //
+                         ProfilerEvents::FiEndpointClose, ProfilerEvents::FiMemoryReg,               //
+                         ProfilerEvents::FiAvInsert, ProfilerEvents::FiSend, ProfilerEvents::FiRecv, //
+                         ProfilerEvents::FiRdmaRead, ProfilerEvents::FiRdmaWrite,                    //
+                         ProfilerEvents::FiCompletion, ProfilerEvents::FiInject,                     //
+                         ProfilerEvents::FiEndpointQpMapping,                                        //
+                         // UCX events
+                         ProfilerEvents::UcpInit, ProfilerEvents::UcpWorkerCreate,                           //
+                         ProfilerEvents::UcpWorkerDestroy, ProfilerEvents::UcpEpCreate,                      //
+                         ProfilerEvents::UcpEpClose, ProfilerEvents::UcpTagSend, ProfilerEvents::UcpTagRecv, //
+                         ProfilerEvents::UcpPut, ProfilerEvents::UcpGet, ProfilerEvents::UcpAmSend,          //
+                         ProfilerEvents::UcpMemMap, ProfilerEvents::UcpMemUnmap,                             //
+                         ProfilerEvents::UcpWorkerProgress, ProfilerEvents::UcpEpQpMapping                   //
                          >;
 
 template<typename T, typename... Ts>
@@ -403,7 +419,22 @@ struct ProcessLocalStorage {
     // (context_addr, mem addr / page id) -> flow id
     absl::flat_hash_map<std::pair<uint64_t, uint64_t>, uint64_t> mlx5dv_pending_umem_flows;
     absl::flat_hash_map<std::pair<uint64_t, uint64_t>, uint64_t> mlx5dv_pending_uar_flows;
-    // ============================================================================};
+    // ============================================================================
+
+    // ============================================================================
+    // libfabric
+    absl::flat_hash_map<uint64_t, uint64_t> fi_ep_create_destroy_flows; // ep_addr -> flow_id
+    absl::flat_hash_map<uint64_t, uint64_t> fi_pending_context_flows;   // context -> flow_id
+    absl::flat_hash_map<uint64_t, uint64_t> fi_ep_to_qp;                // ep_addr -> qp_num
+    // ============================================================================
+
+    // ============================================================================
+    // UCX
+    absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_create_close_flows;       // ep_addr -> flow_id
+    absl::flat_hash_map<uint64_t, uint64_t> ucp_worker_create_destroy_flows; // worker_addr -> flow_id
+    absl::flat_hash_map<uint64_t, uint64_t> ucp_tag_send_flows;              // tag -> flow_id
+    absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_to_qp;                    // ep_addr -> qp_num
+    // ============================================================================
 };
 
 // Local to one Node
@@ -868,7 +899,435 @@ public:
         // m_builder.add_annotation("wqe_index", event.wqe_index);
         m_builder.add_annotation("qp_num", event.qp_num);
         m_builder.add_annotation("Is_CPU_Hijack", event.is_cpu_hijack ? "Yes" : "No");
+    // ========================================================================
+    // libfabric events
+    // ========================================================================
+    void visit(EventTrait<ProfilerEvents::FiDomainOpen> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiDomainOpen&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "Fabric Addr", event.fabric_addr);
+        m_builder.add_annotation(slice, "Domain Addr", event.domain_addr);
+        m_builder.add_annotation(slice, "Provider", std::string(event.provider_name));
     }
+
+    void visit(EventTrait<ProfilerEvents::FiEndpointCreate> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiEndpointCreate&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto& local_storage = process_local_storage(file_header);
+        const auto flow_id = m_builder.new_flow_id();
+        local_storage.fi_ep_create_destroy_flows[event.ep_addr] = flow_id;
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        slice->add_flow_ids(flow_id);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Domain Addr", event.domain_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiEndpointClose> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiEndpointClose&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+
+        auto& local_storage = process_local_storage(file_header);
+        auto it = local_storage.fi_ep_create_destroy_flows.find(event.ep_addr);
+        if (it != local_storage.fi_ep_create_destroy_flows.end()) {
+            slice->add_terminating_flow_ids(it->second);
+            local_storage.fi_ep_create_destroy_flows.erase(it);
+        }
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiMemoryReg> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiMemoryReg&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "Addr", event.addr);
+        m_builder.add_annotation(slice, "Size", event.size);
+        m_builder.add_annotation(slice, "Requested Key", event.requested_key);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiAvInsert> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiAvInsert&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "AV Addr", event.av_addr);
+        m_builder.add_annotation(slice, "Count", event.count);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiSend> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiSend&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto& local_storage = process_local_storage(file_header);
+
+        // Create send->completion flow using context pointer as key
+        if (event.context != 0) {
+            const auto flow_id = m_builder.new_flow_id();
+            local_storage.fi_pending_context_flows[event.context] = flow_id;
+        }
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Total IOV Len", event.total_iov_len);
+        m_builder.add_annotation(slice, "Dest Addr", event.dest_addr);
+        m_builder.add_annotation(slice, "Flags", event.flags);
+
+        if (event.context != 0) {
+            auto it = local_storage.fi_pending_context_flows.find(event.context);
+            if (it != local_storage.fi_pending_context_flows.end()) {
+                slice->add_flow_ids(it->second);
+            }
+        }
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiRecv> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiRecv&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Total IOV Len", event.total_iov_len);
+        m_builder.add_annotation(slice, "Flags", event.flags);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiRdmaRead> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiRdmaRead&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Total IOV Len", event.total_iov_len);
+        m_builder.add_annotation(slice, "Remote Addr", event.remote_addr);
+        m_builder.add_annotation(slice, "Remote Key", event.remote_key);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiRdmaWrite> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiRdmaWrite&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Total IOV Len", event.total_iov_len);
+        m_builder.add_annotation(slice, "Remote Addr", event.remote_addr);
+        m_builder.add_annotation(slice, "Remote Key", event.remote_key);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiCompletion> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiCompletion&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "CQ Addr", event.cq_addr);
+        m_builder.add_annotation(slice, "Num Completions", event.num_completions);
+
+        // Terminate send->completion flow if context matches
+        if (event.context != 0) {
+            auto& local_storage = process_local_storage(file_header);
+            auto it = local_storage.fi_pending_context_flows.find(event.context);
+            if (it != local_storage.fi_pending_context_flows.end()) {
+                slice->add_terminating_flow_ids(it->second);
+                local_storage.fi_pending_context_flows.erase(it);
+            }
+        }
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiInject> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::FiInject&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice =
+                m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "libfabric");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Len", event.len);
+        m_builder.add_annotation(slice, "Dest Addr", event.dest_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::FiEndpointQpMapping>, const EventFileHeader& file_header, EventHeader&&,
+               ProfilerEvents::FiEndpointQpMapping&& event) {
+        auto& local_storage = process_local_storage(file_header);
+        local_storage.fi_ep_to_qp[event.ep_addr] = event.qp_num;
+    }
+
+    // ========================================================================
+    // UCX events
+    // ========================================================================
+    void visit(EventTrait<ProfilerEvents::UcpInit> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpInit&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "Context Addr", event.context_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpWorkerCreate> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpWorkerCreate&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto& local_storage = process_local_storage(file_header);
+        const auto flow_id = m_builder.new_flow_id();
+        local_storage.ucp_worker_create_destroy_flows[event.worker_addr] = flow_id;
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        slice->add_flow_ids(flow_id);
+        m_builder.add_annotation(slice, "Context Addr", event.context_addr);
+        m_builder.add_annotation(slice, "Worker Addr", event.worker_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpWorkerDestroy> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpWorkerDestroy&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+
+        auto& local_storage = process_local_storage(file_header);
+        auto it = local_storage.ucp_worker_create_destroy_flows.find(event.worker_addr);
+        if (it != local_storage.ucp_worker_create_destroy_flows.end()) {
+            slice->add_terminating_flow_ids(it->second);
+            local_storage.ucp_worker_create_destroy_flows.erase(it);
+        }
+        m_builder.add_annotation(slice, "Worker Addr", event.worker_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpEpCreate> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpEpCreate&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto& local_storage = process_local_storage(file_header);
+        const auto flow_id = m_builder.new_flow_id();
+        local_storage.ucp_ep_create_close_flows[event.ep_addr] = flow_id;
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        slice->add_flow_ids(flow_id);
+        m_builder.add_annotation(slice, "Worker Addr", event.worker_addr);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpEpClose> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpEpClose&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+
+        auto& local_storage = process_local_storage(file_header);
+        auto it = local_storage.ucp_ep_create_close_flows.find(event.ep_addr);
+        if (it != local_storage.ucp_ep_create_close_flows.end()) {
+            slice->add_terminating_flow_ids(it->second);
+            local_storage.ucp_ep_create_close_flows.erase(it);
+        }
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpTagSend> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpTagSend&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto& local_storage = process_local_storage(file_header);
+
+        // Cross-node tag flow: begin flow keyed on tag
+        const auto flow_id = m_builder.new_flow_id();
+        local_storage.ucp_tag_send_flows[event.tag] = flow_id;
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        slice->add_flow_ids(flow_id);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Tag", event.tag);
+        m_builder.add_annotation(slice, "Size", event.size);
+        m_builder.add_annotation(slice, "Request Addr", event.request_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpTagRecv> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpTagRecv&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "Worker Addr", event.worker_addr);
+        m_builder.add_annotation(slice, "Tag", event.tag);
+        m_builder.add_annotation(slice, "Tag Mask", event.tag_mask);
+        m_builder.add_annotation(slice, "Size", event.size);
+        m_builder.add_annotation(slice, "Request Addr", event.request_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpPut> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpPut&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Size", event.size);
+        m_builder.add_annotation(slice, "Remote Addr", event.remote_addr);
+        m_builder.add_annotation(slice, "Request Addr", event.request_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpGet> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpGet&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "Size", event.size);
+        m_builder.add_annotation(slice, "Remote Addr", event.remote_addr);
+        m_builder.add_annotation(slice, "Request Addr", event.request_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpAmSend> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpAmSend&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "EP Addr", event.ep_addr);
+        m_builder.add_annotation(slice, "AM ID", event.am_id);
+        m_builder.add_annotation(slice, "Header Size", event.header_size);
+        m_builder.add_annotation(slice, "Payload Size", event.payload_size);
+        m_builder.add_annotation(slice, "Request Addr", event.request_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpMemMap> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpMemMap&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "Context Addr", event.context_addr);
+        m_builder.add_annotation(slice, "Addr", event.addr);
+        m_builder.add_annotation(slice, "Size", event.size);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpMemUnmap> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::UcpMemUnmap&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* slice = m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "ucx");
+        add_header_annotations(slice, file_header);
+        m_builder.add_annotation(slice, "Context Addr", event.context_addr);
+        m_builder.add_annotation(slice, "Mem Addr", event.mem_addr);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpWorkerProgress> T, const EventFileHeader& file_header,
+               EventHeader&& header, ProfilerEvents::UcpWorkerProgress&& event) {
+        using Meta = decltype(T);
+        const auto node_id = register_node(file_header.hostname);
+        const auto cpu_id = file_header.cpu_id;
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
+
+        auto* instant = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name, "ucx");
+        add_header_annotations(instant, file_header);
+        m_builder.add_annotation(instant, "Worker Addr", event.worker_addr);
+        m_builder.add_annotation(instant, "Num Progressed", event.num_progressed);
+    }
+
+    void visit(EventTrait<ProfilerEvents::UcpEpQpMapping>, const EventFileHeader& file_header, EventHeader&&,
+               ProfilerEvents::UcpEpQpMapping&& event) {
+        auto& local_storage = process_local_storage(file_header);
+        local_storage.ucp_ep_to_qp[event.ep_addr] = event.qp_num;
+    }
+
+    // ========================================================================
 
     void visit(EventTrait<ProfilerEvents::CUDAKernelLaunch>, const EventFileHeader& file_header, EventHeader&& header,
                ProfilerEvents::CUDAKernelLaunch&& event) {

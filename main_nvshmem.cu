@@ -127,12 +127,17 @@ void program(nvshmemx_uniqueid_t id, const int device_id, const int num_devices)
     CUDA_CHECK(cudaMemcpy(recv_data_host.data(), recv_data, NumElements * sizeof(float), cudaMemcpyDefault));
     const auto ref = (my_pe - 1 + n_pes) % n_pes;
     for (auto i = 0; i < NumElements; ++i) {
-        assert(recv_data_host[i] == ref && "Host data validation failed");
+        if (recv_data_host[i] == ref) {
+            continue;
+        }
+
+        std::cerr << "Host data validation failed" << std::endl;
+        std::abort();
     }
 
     nvshmem_free(send_data);
     nvshmem_free(recv_data);
-    */
+    // */
 
     nvshmem_finalize();
 

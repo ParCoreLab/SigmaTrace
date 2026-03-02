@@ -33,9 +33,12 @@ int main(int argc, char* argv[]) {
             .LoadMlx5dv = true,
             .LoadSanitizer = false,
             .LoadCupti = true,
+            .LoadLibfabric = true,
+            .LoadUcx = true,
     };
 
     std::vector<std::filesystem::path> shim_libs{};
+
     if (profiler_args.LoadIbtrace) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
     }
@@ -44,9 +47,26 @@ int main(int argc, char* argv[]) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
     }
 
+    // if (profiler_args.LoadSanitizer) {
+    //     shim_libs.emplace_back(binary_dir / Profiler::SIGMA_SANITIZER_PROVIDER_PATH);
+    // }
+
     if (profiler_args.LoadCupti) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_CUPTI_PROVIDER_PATH);
     }
+
+#ifdef SIGMA_PROVIDER_libfabric_trace
+    if (profiler_args.LoadLibfabric) {
+        shim_libs.emplace_back(binary_dir / Profiler::SIGMA_LIBFABRIC_PROVIDER_PATH);
+    }
+#endif
+
+#ifdef SIGMA_PROVIDER_ucx_trace
+    if (profiler_args.LoadUcx) {
+        shim_libs.emplace_back(binary_dir / Profiler::SIGMA_UCX_PROVIDER_PATH);
+    }
+#endif
+
     // Main LD_PRELOAD shim
     // We need to add this at the end
     shim_libs.emplace_back(binary_dir / "libProfilerShim.so");

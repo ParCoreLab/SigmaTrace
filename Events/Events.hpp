@@ -41,7 +41,9 @@ namespace Events {
         // ================================================================
         IbvPostSrqRecv,
         IbvReqNotifyCq,
-        // IbvCompletion = 112, // Individual work completion
+        // ================================================================
+        CommunicationSummary, // 118
+        QpConnectionInfo,     // 119
         // ================================================================
 
         // mlx5dv specific events
@@ -63,6 +65,36 @@ namespace Events {
         NcclAllGather,
         NcclBroadcast,
         NcclReduceScatter,
+
+        // libfabric events (500-599)
+        FiDomainOpen = 500,
+        FiEndpointCreate,
+        FiEndpointClose,
+        FiMemoryReg,
+        FiAvInsert,
+        FiSend,
+        FiRecv,
+        FiRdmaRead,
+        FiRdmaWrite,
+        FiCompletion,
+        FiInject,
+        FiEndpointQpMapping,
+
+        // UCX events (600-699)
+        UcpInit = 600,
+        UcpWorkerCreate,
+        UcpWorkerDestroy,
+        UcpEpCreate,
+        UcpEpClose,
+        UcpTagSend,
+        UcpTagRecv,
+        UcpPut,
+        UcpGet,
+        UcpAmSend,
+        UcpMemMap,
+        UcpMemUnmap,
+        UcpWorkerProgress,
+        UcpEpQpMapping,
 
         // User-defined events start at 1000
         UserDefined = 1000,

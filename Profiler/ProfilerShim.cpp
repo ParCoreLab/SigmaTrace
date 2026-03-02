@@ -17,12 +17,18 @@
 
 #include "EventRecorder.hpp"
 #include "EventTrait.hpp"
-#include "Events.hpp"
 
 // Profiler Event definitions
 #include "Events/CUDAEvents.hpp"
 #include "Events/IbvEvents.hpp"
 #include "Events/Mlx5DvEvents.hpp"
+
+#ifdef SIGMA_PROVIDER_ucx_trace
+#include "Events/UcxEvents.hpp"
+#endif
+#ifdef SIGMA_PROVIDER_libfabric_trace
+#include "Events/LibfabricEvents.hpp"
+#endif
 
 #include <infiniband/mlx5dv.h>
 #include <infiniband/verbs.h>
@@ -36,6 +42,13 @@
 #include "CUDAEventSource.hpp"
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
+
+#ifdef SIGMA_PROVIDER_ucx_trace
+#include "UcxEventSource.hpp"
+#endif
+#ifdef SIGMA_PROVIDER_libfabric_trace
+#include "LibfabricEventSource.hpp"
+#endif
 
 // Profiler-specific modules
 #include "Modules/CudaExportTableOverwrite/ExportTableOverwrite.hpp"
@@ -241,6 +254,18 @@ struct ProfilerCtx {
         if (m_args.LoadCupti) {
             load_cupti(m_args.ShimDir);
         }
+
+#ifdef SIGMA_PROVIDER_ucx_trace
+        if (m_args.LoadUcx) {
+            load_ucx(m_args.ShimDir);
+        }
+#endif
+
+#ifdef SIGMA_PROVIDER_libfabric_trace
+        if (m_args.LoadLibfabric) {
+            load_libfabric(m_args.ShimDir);
+        }
+#endif
     }
 
     static ProfilerCtx& instance() {
@@ -259,6 +284,14 @@ struct ProfilerCtx {
 
     // cuda_trace::SanitizerEventSource* m_sanitizer_profiler{nullptr};
     cuda_trace::CUPTIEventSource* m_cupti_profiler{nullptr};
+
+#ifdef SIGMA_PROVIDER_ucx_trace
+    ucx::Profiler* m_ucx_profiler{nullptr};
+#endif
+#ifdef SIGMA_PROVIDER_libfabric_trace
+    libfabric::Profiler* m_libfabric_profiler{nullptr};
+#endif
+
     static void* internal_load_lib(std::string_view lib_name) {
         const auto mode = smart_dlsym::DL_RTLD_NOW | smart_dlsym::DL_RTLD_GLOBAL;
         void* ibv_shim = smart_dlsym::real_dlopen(lib_name.data(), mode);
@@ -892,6 +925,296 @@ struct ProfilerCtx {
         std::cout << "Profiler loaded CUPTI" << std::endl;
     }
 
+#ifdef SIGMA_PROVIDER_ucx_trace
+    // ================================================================================================
+    // Thread-local correlation: set during UCX operations for cross-layer mapping
+    // TODO: not really used properly right now
+    static inline thread_local uint64_t tls_active_ucp_ep{0};
+
+    void load_ucx(const std::filesystem::path& shim_dir) {
+        m_ucx_profiler = get_instance<ucx::Profiler>(shim_dir / Profiler::SIGMA_UCX_PROVIDER_PATH);
+
+        m_ucx_profiler->register_post<ucx::ucp_init_version_tag>(
+                [](ucs_status_t status, unsigned, unsigned, const ucp_params_t*, const ucp_config_t*,
+                   ucp_context_h* context_p, const auto ts_start, const auto ts_end) {
+            std::cout << "[Profiler] ucp_init_version_tag called!" << std::endl;
+
+            if (status != 0 || !context_p || !*context_p) {
+                return;
+            }
+
+            const Profiler::Events::UcpInit event{
+                    .context_addr = reinterpret_cast<uint64_t>(*context_p),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_worker_create_tag>([](ucs_status_t status, ucp_context_h context,
+                                                                     const ucp_worker_params_t*, ucp_worker_h* worker_p,
+                                                                     const auto ts_start, const auto ts_end) {
+            if (status != 0 || !worker_p || !*worker_p) {
+                return;
+            }
+
+            const Profiler::Events::UcpWorkerCreate event{
+                    .context_addr = reinterpret_cast<uint64_t>(context),
+                    .worker_addr = reinterpret_cast<uint64_t>(*worker_p),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ucx_profiler->register_pre<ucx::ucp_worker_destroy_tag>([](ucp_worker_h worker, const auto ts_start) {
+            const Profiler::Events::UcpWorkerDestroy event{
+                    .worker_addr = reinterpret_cast<uint64_t>(worker),
+            };
+
+            instance().m_event_recorder->Record(event, ts_start);
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_ep_create_tag>([](ucs_status_t status, ucp_worker_h worker,
+                                                                 const ucp_ep_params_t*, ucp_ep_h* ep_p,
+                                                                 const auto ts_start, const auto ts_end) {
+            if (status != 0 || !ep_p || !*ep_p) {
+                return;
+            }
+
+            const Profiler::Events::UcpEpCreate event{
+                    .worker_addr = reinterpret_cast<uint64_t>(worker),
+                    .ep_addr = reinterpret_cast<uint64_t>(*ep_p),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ucx_profiler->register_pre<ucx::ucp_ep_close_nbx_tag>(
+                [](ucp_ep_h ep, const ucp_request_param_t*, const auto ts_start) {
+            const Profiler::Events::UcpEpClose event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+            };
+            instance().m_event_recorder->Record(event, ts_start);
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_tag_send_nbx_tag>(
+                [](ucs_status_ptr_t request, ucp_ep_h ep, const void*, size_t count, ucp_tag_t tag,
+                   const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+            tls_active_ucp_ep = reinterpret_cast<uint64_t>(ep);
+            const Profiler::Events::UcpTagSend event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .tag = tag,
+                    .size = count,
+                    .request_addr = reinterpret_cast<uint64_t>(request),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+            tls_active_ucp_ep = 0;
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_tag_recv_nbx_tag>(
+                [](ucs_status_ptr_t request, ucp_worker_h worker, void*, size_t count, ucp_tag_t tag,
+                   ucp_tag_t tag_mask, const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+            const Profiler::Events::UcpTagRecv event{
+                    .worker_addr = reinterpret_cast<uint64_t>(worker),
+                    .tag = tag,
+                    .tag_mask = tag_mask,
+                    .size = count,
+                    .request_addr = reinterpret_cast<uint64_t>(request),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_put_nbx_tag>(
+                [](ucs_status_ptr_t request, ucp_ep_h ep, const void*, size_t count, uint64_t remote_addr, ucp_rkey_h,
+                   const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+            tls_active_ucp_ep = reinterpret_cast<uint64_t>(ep);
+            const Profiler::Events::UcpPut event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .size = count,
+                    .remote_addr = remote_addr,
+                    .request_addr = reinterpret_cast<uint64_t>(request),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+            tls_active_ucp_ep = 0;
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_get_nbx_tag>(
+                [](ucs_status_ptr_t request, ucp_ep_h ep, void*, size_t count, uint64_t remote_addr, ucp_rkey_h,
+                   const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+            tls_active_ucp_ep = reinterpret_cast<uint64_t>(ep);
+            const Profiler::Events::UcpGet event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .size = count,
+                    .remote_addr = remote_addr,
+                    .request_addr = reinterpret_cast<uint64_t>(request),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+            tls_active_ucp_ep = 0;
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_am_send_nbx_tag>(
+                [](ucs_status_ptr_t request, ucp_ep_h ep, unsigned int am_id, const void*, size_t header_length,
+                   const void*, size_t count, const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+            tls_active_ucp_ep = reinterpret_cast<uint64_t>(ep);
+            const Profiler::Events::UcpAmSend event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .am_id = am_id,
+                    .header_size = header_length,
+                    .payload_size = count,
+                    .request_addr = reinterpret_cast<uint64_t>(request),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+            tls_active_ucp_ep = 0;
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_mem_map_tag>([](ucs_status_t status, ucp_context_h context,
+                                                               const ucp_mem_map_params_t*, ucp_mem_h*,
+                                                               const auto ts_start, const auto ts_end) {
+            if (status != 0) {
+                return;
+            }
+
+            const Profiler::Events::UcpMemMap event{
+                    .context_addr = reinterpret_cast<uint64_t>(context),
+                    .addr = 0, // Would need to dereference params to get addr
+                    .size = 0,
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_ucx_profiler->register_post<ucx::ucp_mem_unmap_tag>(
+                [](ucs_status_t, ucp_context_h context, ucp_mem_h memh, const auto ts_start, const auto ts_end) {
+            const Profiler::Events::UcpMemUnmap event{
+                    .context_addr = reinterpret_cast<uint64_t>(context),
+                    .mem_addr = reinterpret_cast<uint64_t>(memh),
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        // TODO: this might spam
+        m_ucx_profiler->register_post<ucx::ucp_worker_progress_tag>(
+                [](unsigned int num_progressed, ucp_worker_h worker, const auto ts_start, const auto ts_end) {
+            if (num_progressed == 0) {
+                return;
+            }
+
+            const Profiler::Events::UcpWorkerProgress event{
+                    .worker_addr = reinterpret_cast<uint64_t>(worker),
+                    .num_progressed = num_progressed,
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        std::cout << "[Profiler] Loaded UCX" << std::endl;
+    }
+    // ================================================================================================
+#endif
+
+#ifdef SIGMA_PROVIDER_libfabric_trace
+    // ================================================================================================
+    // Thread-local correlation: set during libfabric operations for cross-layer mapping
+    // TODO: not really used properly right now
+    static inline thread_local uint64_t tls_active_fi_ep{0};
+
+    void load_libfabric(const std::filesystem::path& shim_dir) {
+        m_libfabric_profiler = get_instance<libfabric::Profiler>(shim_dir / Profiler::SIGMA_LIBFABRIC_PROVIDER_PATH);
+
+        // Object-ops: ep->msg->sendmsg (captures fi_send/fi_sendv/fi_sendmsg/fi_inject)
+        m_libfabric_profiler->register_post<fi::ep_msg_sendmsg_tag>(
+                [](ssize_t, fid_ep* ep, const fi_msg* msg, uint64_t flags, const auto ts_start, const auto ts_end) {
+            tls_active_fi_ep = reinterpret_cast<uint64_t>(ep);
+            uint64_t total_len = 0;
+            if (msg && msg->msg_iov) {
+                for (size_t i = 0; i < msg->iov_count; i++) {
+                    total_len += msg->msg_iov[i].iov_len;
+                }
+            }
+            const Profiler::Events::FiSend event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
+                    .total_iov_len = total_len,
+                    .flags = flags,
+                    .dest_addr = msg ? msg->addr : 0,
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+            tls_active_fi_ep = 0;
+        });
+
+        m_libfabric_profiler->register_post<fi::ep_msg_recvmsg_tag>(
+                [](ssize_t, fid_ep* ep, const fi_msg* msg, uint64_t flags, const auto ts_start, const auto ts_end) {
+            uint64_t total_len = 0;
+            if (msg && msg->msg_iov) {
+                for (size_t i = 0; i < msg->iov_count; i++) {
+                    total_len += msg->msg_iov[i].iov_len;
+                }
+            }
+            const Profiler::Events::FiRecv event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
+                    .total_iov_len = total_len,
+                    .flags = flags,
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+
+        m_libfabric_profiler->register_post<fi::ep_rma_readmsg_tag>(
+                [](ssize_t, fid_ep* ep, const fi_msg_rma* msg, uint64_t, const auto ts_start, const auto ts_end) {
+            tls_active_fi_ep = reinterpret_cast<uint64_t>(ep);
+            uint64_t total_len = 0;
+            uint64_t remote_addr = 0;
+            uint64_t remote_key = 0;
+            if (msg) {
+                if (msg->msg_iov) {
+                    for (size_t i = 0; i < msg->iov_count; i++) {
+                        total_len += msg->msg_iov[i].iov_len;
+                    }
+                }
+                if (msg->rma_iov && msg->rma_iov_count > 0) {
+                    remote_addr = msg->rma_iov[0].addr;
+                    remote_key = msg->rma_iov[0].key;
+                }
+            }
+
+            const Profiler::Events::FiRdmaRead event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
+                    .total_iov_len = total_len,
+                    .remote_addr = remote_addr,
+                    .remote_key = remote_key,
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+            tls_active_fi_ep = 0;
+        });
+
+        m_libfabric_profiler->register_post<fi::ep_rma_writemsg_tag>(
+                [](ssize_t, fid_ep* ep, const fi_msg_rma* msg, uint64_t, const auto ts_start, const auto ts_end) {
+            tls_active_fi_ep = reinterpret_cast<uint64_t>(ep);
+            uint64_t total_len = 0;
+            uint64_t remote_addr = 0;
+            uint64_t remote_key = 0;
+            if (msg) {
+                if (msg->msg_iov) {
+                    for (size_t i = 0; i < msg->iov_count; i++) {
+                        total_len += msg->msg_iov[i].iov_len;
+                    }
+                }
+                if (msg->rma_iov && msg->rma_iov_count > 0) {
+                    remote_addr = msg->rma_iov[0].addr;
+                    remote_key = msg->rma_iov[0].key;
+                }
+            }
+
+            const Profiler::Events::FiRdmaWrite event{
+                    .ep_addr = reinterpret_cast<uint64_t>(ep),
+                    .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
+                    .total_iov_len = total_len,
+                    .remote_addr = remote_addr,
+                    .remote_key = remote_key,
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+            tls_active_fi_ep = 0;
+        });
+
+        std::cout << "[Profiler] Loaded libfabric tracing" << std::endl;
+    }
+    // ================================================================================================
+#endif
 };
 
 namespace Profiler::hijack {

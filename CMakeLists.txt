@@ -23,6 +23,8 @@ include(NCCL)
 include(NVSHMEM)
 include(NVBIT)
 include(Perfetto)
+include(UCX)
+include(Libfabric)
 
 # Modules
 add_subdirectory(Modules)
@@ -72,6 +74,16 @@ add_subdirectory(Ibtrace)
 
 # mlx5dv Trace library
 add_subdirectory(Mlx5dvTrace)
+
+# UCX Trace library
+if (UCX_FOUND)
+    add_subdirectory(UcxTrace)
+endif ()
+
+# libfabric Trace library
+if (LIBFABRIC_FOUND)
+    add_subdirectory(LibfabricTrace)
+endif ()
 
 # CUDA Trace libraries
 add_subdirectory(CUDATrace)

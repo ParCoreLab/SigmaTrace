@@ -24,20 +24,20 @@ namespace Profiler {
         bool LoadMlx5dv{true};
         bool LoadSanitizer{false};
         bool LoadCupti{false};
+        bool LoadLibfabric{false};
+        bool LoadUcx{false};
 
         int Check{CheckVal};
 
-        [[nodiscard]] std::array<std::string, 5> to_env() const {
+        [[nodiscard]] std::array<std::string, 8> to_env() const {
             return {
-                    make_env_entry("ShimPath", ShimDir),
-                    make_env_entry("LoadIbtrace", LoadIbtrace),
-                    make_env_entry("LoadMlx5dv", LoadMlx5dv),
-                    make_env_entry("Check", Check),
                     make_env_entry("ShimPath", ShimDir),            //
                     make_env_entry("LoadIbtrace", LoadIbtrace),     //
                     make_env_entry("LoadMlx5dv", LoadMlx5dv),       //
                     make_env_entry("LoadSanitizer", LoadSanitizer), //
                     make_env_entry("LoadCupti", LoadCupti),         //
+                    make_env_entry("LoadLibfabric", LoadLibfabric), //
+                    make_env_entry("LoadUcx", LoadUcx),             //
                     make_env_entry("Check", Check),                 //
             };
         }
@@ -50,6 +50,8 @@ namespace Profiler {
                     .LoadMlx5dv = parse_env("LoadMlx5dv", true),
                     .LoadSanitizer = parse_env("LoadSanitizer", true),
                     .LoadCupti = parse_env("LoadCupti", true),
+                    .LoadLibfabric = parse_env("LoadLibfabric", false),
+                    .LoadUcx = parse_env("LoadUcx", false),
                     .Check = parse_env("Check", 0),
             };
         }

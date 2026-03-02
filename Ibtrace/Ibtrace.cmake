@@ -9,14 +9,6 @@ set(IbverbsTraceSources
 Sigma_add_provider_library(IbverbsTraceShared SHARED ${IbverbsTraceSources})
 Sigma_add_provider_library(IbverbsTraceStatic STATIC ${IbverbsTraceSources})
 
-# TODO: haven't found a good way to link against this.
-# Main profiler that dlopen's this lib already includes the SmartDlsym symbols
-target_link_libraries(IbverbsTraceShared PRIVATE
-        -Wl,--whole-archive
-        # SmartDlsym
-        -Wl,--no-whole-archive
-)
-
 foreach (IbverbsTraceTarget IN ITEMS IbverbsTraceShared IbverbsTraceStatic)
     set_target_properties(${IbverbsTraceTarget} PROPERTIES
             INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
