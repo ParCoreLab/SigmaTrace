@@ -29,13 +29,9 @@ foreach (IbverbsTraceTarget IN ITEMS IbverbsTraceShared IbverbsTraceStatic)
             PRIVATE
             $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
 
-    # This breaks things
-    # Should load symbols dynamically
-    # TODO: not having it here breaks other things...
-    target_link_libraries(${IbverbsTraceTarget} PRIVATE ibverbs)
-
     target_link_libraries(${IbverbsTraceTarget} PUBLIC HookLib)
 
-    # verbs.h header
+    # TODO: Do INTERFACE_INCLUDE_DIRECTORIES in the future
+    # Headers only - link-time dependency on libibverbs/libmlx5 breaks dlsym hooks
     target_include_directories(${IbverbsTraceTarget} PRIVATE "${RDMA_INCLUDE_DIR}")
 endforeach ()
