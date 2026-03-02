@@ -25,10 +25,9 @@ foreach (Mlx5dvTraceTarget IN ITEMS Mlx5dvTraceShared Mlx5dvTraceStatic)
             PRIVATE
             $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
 
-    target_link_libraries(${Mlx5dvTraceTarget} PUBLIC HookLib)
+    # Headers only - no runtime link dependency on libmlx5
+    target_link_libraries(${Mlx5dvTraceTarget} PRIVATE mlx5_headers)
 
-    # TODO: Do INTERFACE_INCLUDE_DIRECTORIES in the future
-    # Headers only - link-time dependency on libibverbs/libmlx5 breaks dlsym hooks
-    target_include_directories(${Mlx5dvTraceTarget} PRIVATE "${RDMA_INCLUDE_DIR}")
+    target_link_libraries(${Mlx5dvTraceTarget} PUBLIC HookLib)
 endforeach ()
 

@@ -232,6 +232,12 @@ function(Sigma_profiler_link_provider name provider)
             PUBLIC
             $<TARGET_PROPERTY:${provider},INTERFACE_INCLUDE_DIRECTORIES>)
 
+    # This makes it so the system headers we pull from providers don't cause compiler warnings
+    target_include_directories(
+            ${name}
+            SYSTEM PUBLIC
+            $<TARGET_PROPERTY:${provider},INTERFACE_SYSTEM_INCLUDE_DIRECTORIES>)
+
     get_target_property(ProviderName ${provider} OUTPUT_NAME)
 
     # SIGMA_PROVIDER_ibverbs_trace=./providers/libibverbs_trace.so

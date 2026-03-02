@@ -63,8 +63,8 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     target_link_libraries(${ProfilerShimTarget} PRIVATE EventsLib)
     target_include_directories(${ProfilerShimTarget} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")
 
-    # For infiniband/mlx5dv.h headers
-    target_include_directories(${ProfilerShimTarget} PRIVATE "${RDMA_INCLUDE_DIR}")
+    # For infiniband/mlx5dv.h headers system includes
+    target_link_libraries(${ProfilerShimTarget} PRIVATE ibverbs_headers)
 
     # Make sure we build before the profiler
     add_dependencies(Profiler ${ProfilerShimTarget})

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include "infiniband/verbs.h"
+#include <infiniband/verbs.h>
 
 #include "Common.hpp"
 #include "EventTrait.hpp"

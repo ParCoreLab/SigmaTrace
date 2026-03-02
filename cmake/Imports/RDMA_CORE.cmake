@@ -94,6 +94,14 @@ set_target_properties(mlx5 PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES "${RDMA_INCLUDE_DIR}"
 )
 
+# Header-only interface targets: link against these to get rdma-core headers
+# as system includes without creating a runtime link dependency on libibverbs/libmlx5.
+add_library(ibverbs_headers INTERFACE IMPORTED GLOBAL)
+target_include_directories(ibverbs_headers SYSTEM INTERFACE "${RDMA_INCLUDE_DIR}")
+
+add_library(mlx5_headers INTERFACE IMPORTED GLOBAL)
+target_include_directories(mlx5_headers SYSTEM INTERFACE "${RDMA_INCLUDE_DIR}")
+
 if (BUILD_RDMA_CORE)
     add_dependencies(ibverbs rdma-core)
     add_dependencies(verbs rdma-core)

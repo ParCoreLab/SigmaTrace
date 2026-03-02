@@ -29,9 +29,8 @@ foreach (IbverbsTraceTarget IN ITEMS IbverbsTraceShared IbverbsTraceStatic)
             PRIVATE
             $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
 
-    target_link_libraries(${IbverbsTraceTarget} PUBLIC HookLib)
+    # Headers only - no runtime link dependency on libibverbs
+    target_link_libraries(${IbverbsTraceTarget} PRIVATE ibverbs_headers)
 
-    # TODO: Do INTERFACE_INCLUDE_DIRECTORIES in the future
-    # Headers only - link-time dependency on libibverbs/libmlx5 breaks dlsym hooks
-    target_include_directories(${IbverbsTraceTarget} PRIVATE "${RDMA_INCLUDE_DIR}")
+    target_link_libraries(${IbverbsTraceTarget} PUBLIC HookLib)
 endforeach ()
