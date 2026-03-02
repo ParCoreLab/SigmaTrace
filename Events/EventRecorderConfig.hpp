@@ -52,14 +52,14 @@ namespace Events {
 
     // Fast (RDTSC-based) configuration - can be overridden by user
     struct DefaultCompileTimeConfig {
-        using TimestampSourceType = TS::SteadyTimestampSource;
-        static constexpr std::size_t default_buffer_capacity = 128;
+        using TimestampSourceType = TS::GettimeTimestampSource;
+        static constexpr std::size_t default_buffer_capacity = 1024;
     };
 
     // RdtscTimestamp is x86-64 only
     struct PortableCompileTimeConfig {
         using TimestampSourceType = TS::SteadyTimestampSource;
-        static constexpr std::size_t default_buffer_capacity = 128;
+        static constexpr std::size_t default_buffer_capacity = 1024;
     };
 
     // Defaults for easier debugging of the event library itself

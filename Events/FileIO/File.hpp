@@ -152,15 +152,15 @@ namespace FileIO {
 
             // Pre-allocate initial chunk using fallocate (faster than ftruncate, no zeroing)
             m_mapped_size = ChunkBytes + FileHeaderSize;
-            if (fallocate(m_fd, 0, 0, m_mapped_size) < 0) {
-                if (ftruncate(m_fd, m_mapped_size) < 0) {
+            if (fallocate(m_fd, 0, 0, static_cast<off_t>(m_mapped_size)) < 0) {
+                if (ftruncate(m_fd, static_cast<off_t>(m_mapped_size)) < 0) {
                     close(m_fd);
                     throw std::runtime_error("Failed to resize file");
                 }
             }
 
             m_base = static_cast<uint8_t*>(mmap(nullptr, m_mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
-            std::memcpy(m_base, header, FileHeaderSize);
+            std::memcpy(m_base, &header, FileHeaderSize);
 
             if (m_base == MAP_FAILED) {
                 close(m_fd);
@@ -177,13 +177,13 @@ namespace FileIO {
         MmapBackedBuffer& operator=(const MmapBackedBuffer&) = delete;
 
         ~MmapBackedBuffer() {
-            const std::size_t used_bytes = m_current_index * ElementSize;
+            const std::size_t used_bytes = FileHeaderSize + m_current_index * ElementSize;
             if (m_base && m_base != MAP_FAILED) {
                 msync(m_base, used_bytes, MS_ASYNC);
                 munmap(m_base, m_mapped_size);
             }
             if (m_fd >= 0) {
-                std::ignore = ftruncate(m_fd, used_bytes);
+                std::ignore = ftruncate(m_fd, static_cast<off_t>(used_bytes));
                 close(m_fd);
             }
         }
@@ -203,8 +203,8 @@ namespace FileIO {
 
             // Grow file first
             const std::size_t new_size = m_mapped_size + ChunkBytes;
-            if (fallocate(m_fd, 0, 0, new_size) < 0) {
-                if (ftruncate(m_fd, new_size) < 0) {
+            if (fallocate(m_fd, 0, 0, static_cast<off_t>(new_size)) < 0) {
+                if (ftruncate(m_fd, static_cast<off_t>(new_size)) < 0) {
                     throw std::runtime_error("Failed to resize file");
                 }
             }
@@ -224,7 +224,7 @@ namespace FileIO {
         }
 
         void flush() const {
-            msync(m_base, m_current_index * ElementSize, MS_ASYNC);
+            msync(m_base, FileHeaderSize + m_current_index * ElementSize, MS_ASYNC);
         }
 
     private:

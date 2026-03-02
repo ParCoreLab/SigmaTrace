@@ -112,9 +112,8 @@ namespace Events {
         // TODO: is alignas necessary?
         alignas(CACHE_LINE_SIZE) uint64_t m_current;
 
-        // Stream is faster in most cases
-        // FileIO::MmapBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
-        FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+        // Mmap: zero syscalls during recording, writes go to page cache via memory stores
+        FileIO::MmapBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
     };
 
     // Type-safe wrapper for specific event types
