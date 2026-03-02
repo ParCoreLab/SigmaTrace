@@ -118,8 +118,7 @@ namespace hook {
                     if constexpr (DebugPrint) {
                         std::cout << "Registering " << HookTrait<Tag>::name << std::endl;
                     }
-                    auto* handle = Derived::GetLibHandle();
-                    resolve_one_preload<Tag>(handle);
+                    register_preload_one<Tag>();
                 }
                 is_tag_registered = true;
             }
@@ -187,16 +186,16 @@ namespace hook {
         // ================================================================
         // using PreloadBase::real_func;
         template<typename Tag>
-        void resolve_one_preload(auto&&... args) noexcept {
+        void register_preload_one(auto&&... args) noexcept {
             if constexpr (is_preload_hook_v<Tag>) {
                 auto default_func = InvokePreloadPtr<Tag, typename HookTrait<Tag>::FuncPtr>::get();
-                m_preload_impl.template resolve_real<Tag>(std::forward<decltype(args)>(args)..., default_func);
+                m_preload_impl.template register_hook<Tag>(std::forward<decltype(args)>(args)..., default_func);
             }
         }
 
-        void resolve_all_preload(auto&&... args) noexcept {
+        void register_preload_all(auto&&... args) noexcept {
             // m_preload_impl.resolve_all(std::forward<decltype(args)>(args)...);
-            (resolve_one_preload<Tags>(std::forward<decltype(args)>(args)...), ...);
+            (register_preload_one<Tags>(std::forward<decltype(args)>(args)...), ...);
         }
 
         template<ValidCallbackTag Tag>
@@ -236,13 +235,20 @@ namespace hook {
 
             // No hooks registered, don't do all the stuff below
             if (!std::get<TaggedBool<Tag>>(mgr.m_registered_tags).value) {
-                const auto& real = mgr.template real_func<Tag>();
+                auto& real = mgr.template real_func<Tag>();
 
                 // If we're here, the injected function is called but no hooks are registered
                 // Late load the real function and call it
                 if (!real) {
-                    std::scoped_lock lock(mgr.m_registration_mutex);
-                    mgr.template internal_register<Tag>();
+                    auto* handle = Derived::GetLibHandle();
+                    mgr.m_preload_impl.template register_real<Tag>(handle);
+
+                    // Lazy resolution fallback for RTLD_NEXT handles
+                    if (!real) {
+                        std::cerr << "ERROR: Real function for Tag " << HookTrait<Tag>::name << " is empty!"
+                                  << std::endl;
+                        std::abort();
+                    }
                 }
 
                 return real(std::forward<Args>(args)...);
@@ -253,12 +259,18 @@ namespace hook {
 
             mgr.template invoke_all_pre<Tag>(args..., ts_start);
 
-            const auto& real = mgr.template real_func<Tag>();
+            // First time here will always be null
+            auto& real = mgr.template real_func<Tag>();
 
-            // It can die silently otherwise
+            // Lazy resolution: the real library may not have been loaded at registration time
+            // If we're at this stage, the real function has been loaded by the target application
             if (!real) {
-                std::cerr << "ERROR: Real function for Tag " << HookTrait<Tag>::name << " is empty!" << std::endl;
-                std::abort();
+                auto* handle = Derived::GetLibHandle();
+                mgr.m_preload_impl.template register_real<Tag>(handle);
+                if (!real) {
+                    std::cerr << "ERROR: Real function for Tag " << HookTrait<Tag>::name << " is empty!" << std::endl;
+                    std::abort();
+                }
             }
 
             // if constexpr (std::is_void_v<typename HookTrait<Tag>::RetType>) { ... }

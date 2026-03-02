@@ -69,19 +69,41 @@ namespace hook::detail {
 
         template<ValidCallbackTag Tag>
             requires is_preload_hook_v<Tag>
-        void resolve_real(void* handle, HookTrait<Tag>::FuncPtr default_func = nullptr) noexcept {
+        void register_real(void* handle) noexcept {
             using Trait = HookTrait<Tag>;
 
             // Preload in case downstream users don't use dlsym
             auto** real_fn_ptr = &m_real_funcs.template get<Tag>();
-            if (!*real_fn_ptr) {
-                *real_fn_ptr = reinterpret_cast<Trait::FuncPtr>(smart_dlsym::real_dlsym(handle, Trait::symbol_name));
-                if (!*real_fn_ptr) {
-                    std::cerr << "[hook] Failed to resolve " << Trait::symbol_name << std::endl;
-                    return;
-                }
+            if (*real_fn_ptr) {
+                std::cerr << "[hook] ERROR: Real function for " << Trait::symbol_name << " already registered"
+                          << std::endl;
+                std::abort();
             }
 
+            *real_fn_ptr = reinterpret_cast<Trait::FuncPtr>(smart_dlsym::real_dlsym(handle, Trait::symbol_name));
+            if (!*real_fn_ptr) {
+                std::cerr << "[hook] Failed to register real function for " << Trait::symbol_name << std::endl;
+                std::abort();
+            }
+        }
+
+        template<ValidCallbackTag Tag>
+            requires is_preload_hook_v<Tag>
+        void register_hook(HookTrait<Tag>::FuncPtr default_func = nullptr) noexcept {
+            using Trait = HookTrait<Tag>;
+
+            /*
+             * We no longer preload functions to avoid messing with the symbol resolution order
+             * Instead, we wait for the target application to resolve and call the functions
+             * and late load them at that poi
+            // Preload in case downstream users don't use dlsym
+            auto** real_fn_ptr = &m_real_funcs.template get<Tag>();
+            if (!*real_fn_ptr) {
+                *real_fn_ptr = reinterpret_cast<Trait::FuncPtr>(smart_dlsym::real_dlsym(handle, Trait::symbol_name));
+            }
+            */
+
+            auto** real_fn_ptr = &m_real_funcs.template get<Tag>();
             auto* hook_fn = smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_DEFAULT, Trait::symbol_name);
             if (!hook_fn || hook_fn == reinterpret_cast<void*>(*real_fn_ptr)) {
                 if (!hook_fn) {
@@ -94,25 +116,23 @@ namespace hook::detail {
 
             // Replace the function if downstream calls dlvsym. This ensures we has
             smart_dlsym::register_symbol(Trait::symbol_name, [real_fn_ptr, hook_fn](void* real_func, auto&&...) {
-                // Switch to the dlsym version
-                if (*real_fn_ptr) {
-                    *real_fn_ptr = reinterpret_cast<Trait::FuncPtr>(real_func);
-                }
+                // Update real function pointer (may be first resolution when using RTLD_NEXT)
+                *real_fn_ptr = reinterpret_cast<Trait::FuncPtr>(real_func);
 
                 return hook_fn;
             });
         }
 
         template<typename Tag>
-        void resolve_one(auto&&... args) noexcept {
+        void resolve_hook_one(auto&&... args) noexcept {
             if constexpr (is_preload_hook_v<Tag>) {
-                resolve_real<Tag>(std::forward<decltype(args)>(args)...);
+                register_hook<Tag>(std::forward<decltype(args)>(args)...);
             }
         }
 
         // Resolve all preload hooks
-        void resolve_all(auto&&... args) noexcept {
-            (resolve_one<Tags>(std::forward<decltype(args)>(args)...), ...);
+        void resolve_hook_all(auto&&... args) noexcept {
+            (resolve_hook_one<Tags>(std::forward<decltype(args)>(args)...), ...);
         }
 
         // ================================================================
