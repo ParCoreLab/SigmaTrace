@@ -233,6 +233,14 @@ struct ProfilerCtx {
         if (m_args.LoadMlx5dv) {
             load_mlx5dv(m_args.ShimDir);
         }
+
+        // if (m_args.LoadSanitizer) {
+        //     load_sanitizer(m_args.ShimDir);
+        // }
+
+        if (m_args.LoadCupti) {
+            load_cupti(m_args.ShimDir);
+        }
     }
 
     static ProfilerCtx& instance() {
@@ -249,6 +257,8 @@ struct ProfilerCtx {
     cuda_trace::NvbitProfiler* m_cuda_profiler{nullptr};
     mlx5dv::Profiler* m_mlx5dv_profiler{nullptr};
 
+    // cuda_trace::SanitizerEventSource* m_sanitizer_profiler{nullptr};
+    cuda_trace::CUPTIEventSource* m_cupti_profiler{nullptr};
     static void* internal_load_lib(std::string_view lib_name) {
         const auto mode = smart_dlsym::DL_RTLD_NOW | smart_dlsym::DL_RTLD_GLOBAL;
         void* ibv_shim = smart_dlsym::real_dlopen(lib_name.data(), mode);
@@ -863,6 +873,25 @@ struct ProfilerCtx {
                     ts_start);
         });
     }
+
+    void load_cupti(const std::filesystem::path& shim_dir) {
+        m_cupti_profiler = get_instance<cuda_trace::CUPTIEventSource>(shim_dir / Profiler::SIGMA_CUPTI_PROVIDER_PATH);
+
+        m_cupti_profiler->register_pre<cuda_trace::cuda_kernel_launch_tag>(
+                [](int32_t gpu_id, const char* kernel_name, auto ts_start) {
+            std::cout << "[Profiler] [ " << gpu_id << "] CUPTI launched kernel " << kernel_name << std::endl;
+
+            Profiler::Events::CUDAKernelLaunch event{
+                    .gpu_id = static_cast<GpuId_T>(gpu_id),
+            };
+            strncpy(event.kernel_name, kernel_name, sizeof event.kernel_name);
+
+            instance().m_event_recorder->Record(event, ts_start);
+        });
+
+        std::cout << "Profiler loaded CUPTI" << std::endl;
+    }
+
 };
 
 namespace Profiler::hijack {

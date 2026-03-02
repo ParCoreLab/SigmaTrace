@@ -32,8 +32,8 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     # For dlopen/dlsym/dlvsym. Providers make use of the library but only one unit can have the symbols
     target_link_libraries(${ProfilerShimTarget} PUBLIC
             -Wl,--whole-archive
-            SmartDlsym
             ProfilerExportTableOverwrite
+            SmartDlsym
             -Wl,--no-whole-archive
     )
     set_target_properties(${ProfilerShimTarget} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
@@ -42,6 +42,11 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerMemoryRepeater)
     # target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerGPUMemoryRepeater)
 
+    target_include_directories(
+            ${ProfilerShimTarget}
+            PRIVATE
+            $<TARGET_PROPERTY:CUDATrace,INTERFACE_INCLUDE_DIRECTORIES>)
+
     # Runtime dependencies
     target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cuda_driver)
     target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cudart)
@@ -49,8 +54,10 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
 
     # Shim providers
     Sigma_profiler_link_provider(${ProfilerShimTarget} IbverbsTraceShared)
-    Sigma_profiler_link_provider(${ProfilerShimTarget} NvbitMemoryTrackerShared)
+    # Sigma_profiler_link_provider(${ProfilerShimTarget} NvbitMemoryTrackerShared)
     Sigma_profiler_link_provider(${ProfilerShimTarget} Mlx5dvTraceShared)
+    #    Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
+    Sigma_profiler_link_provider(${ProfilerShimTarget} CuptiEventProvider)
 
     # Tracing and Logging
     target_link_libraries(${ProfilerShimTarget} PRIVATE EventsLib)

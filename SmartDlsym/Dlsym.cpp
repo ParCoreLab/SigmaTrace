@@ -23,7 +23,7 @@ namespace smart_dlsym {
     __attribute__((init_priority(101))) std::unordered_map<std::string, CallbackType> RegisteredSymbols{};
 } // namespace smart_dlsym
 
-static void __attribute__((constructor(101))) init() {
+static void __attribute__((constructor(0))) init() {
     smart_dlsym::real_dlopen =
             reinterpret_cast<decltype(smart_dlsym::real_dlopen)>(find_symbol_in_lib("libc", "dlopen"));
 
@@ -34,6 +34,9 @@ static void __attribute__((constructor(101))) init() {
 
 extern "C" void* dlsym(void* handle, const char* symbol) {
     // TODO: don't use assert
+    if (!smart_dlsym::real_dlsym) {
+        init();
+    }
     assert(smart_dlsym::real_dlsym);
 
     return smart_dlsym::load_symbol(smart_dlsym::real_dlsym, handle, symbol);
@@ -41,6 +44,9 @@ extern "C" void* dlsym(void* handle, const char* symbol) {
 
 extern "C" void* dlvsym(void* handle, const char* symbol, const char* version) {
     // TODO: don't use assert
+    if (!smart_dlsym::real_dlvsym) {
+        init();
+    }
     assert(smart_dlsym::real_dlvsym);
 
     // TODO: inline lambda might be better

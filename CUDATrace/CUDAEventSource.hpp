@@ -43,4 +43,27 @@ namespace cuda_trace {
         bool m_trace_memop{false};
     };
 
+    template<typename Derived>
+    class CUDAAPIEventSource : public hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int,
+                                                                 cuda_kernel_launch_tag, cuda_kernel_exit_tag> {
+
+        // TODO: too verbose
+        using Base = hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, cuda_kernel_launch_tag,
+                                                cuda_kernel_exit_tag>;
+
+    public:
+        using Context = Base::Context;
+
+    protected:
+        CUDAAPIEventSource() = default;
+    };
+
+    struct SanitizerEventSource : CUDAAPIEventSource<SanitizerEventSource> {
+        SanitizerEventSource();
+    };
+
+    struct CUPTIEventSource : CUDAAPIEventSource<CUPTIEventSource> {
+        CUPTIEventSource();
+    };
+
 } // namespace cuda_trace

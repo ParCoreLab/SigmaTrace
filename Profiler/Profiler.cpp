@@ -31,6 +31,8 @@ int main(int argc, char* argv[]) {
             .ShimDir = binary_dir,
             .LoadIbtrace = true,
             .LoadMlx5dv = true,
+            .LoadSanitizer = false,
+            .LoadCupti = true,
     };
 
     std::vector<std::filesystem::path> shim_libs{};
@@ -42,6 +44,9 @@ int main(int argc, char* argv[]) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
     }
 
+    if (profiler_args.LoadCupti) {
+        shim_libs.emplace_back(binary_dir / Profiler::SIGMA_CUPTI_PROVIDER_PATH);
+    }
     // Main LD_PRELOAD shim
     // We need to add this at the end
     shim_libs.emplace_back(binary_dir / "libProfilerShim.so");

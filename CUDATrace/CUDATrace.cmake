@@ -10,5 +10,6 @@ target_include_directories(CUDATrace INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+add_subdirectory(CUPTI)
 add_subdirectory(Sanitizer)
 add_subdirectory(Nvbit)

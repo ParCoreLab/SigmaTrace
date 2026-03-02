@@ -181,6 +181,12 @@ namespace hook {
             this->template invoke_all_pre<Tag>(std::forward<Args>(args)..., ts_start);
         }
 
+        template<ValidEventTag Tag, typename... Args>
+            requires is_custom_hook_v<Tag>
+        void invoke_custom_ts(Timestamp ts_start, Args&&... args) noexcept {
+            this->template invoke_all_pre<Tag>(std::forward<Args>(args)..., ts_start);
+        }
+
         // ================================================================
         // 1. Preload hook management
         // ================================================================
