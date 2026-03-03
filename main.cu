@@ -96,8 +96,8 @@ int main(int argc, char* argv[]) {
         auto send_buff = &send_buffs[i];
         auto recv_buff = &recv_buffs[i];
 
-        NCCL_MALLOC(send_buff, DATA_SIZE * sizeof(float));
-        NCCL_MALLOC(recv_buff, DATA_SIZE * sizeof(float));
+        ncclMemAlloc(send_buff, DATA_SIZE * sizeof(float));
+        ncclMemAlloc(recv_buff, DATA_SIZE * sizeof(float));
 
         cudaPointerAttributes send_attrs{};
         cudaPointerAttributes recv_attrs{};
