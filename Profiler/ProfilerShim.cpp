@@ -326,10 +326,6 @@ struct ProfilerCtx {
             load_mlx5dv(m_args.ShimDir);
         }
 
-        // if (m_args.LoadSanitizer) {
-        //     load_sanitizer(m_args.ShimDir);
-        // }
-
         if (m_args.LoadCupti) {
             load_cupti(m_args.ShimDir);
         }
@@ -361,7 +357,6 @@ struct ProfilerCtx {
     cuda_trace::NvbitProfiler* m_cuda_profiler{nullptr};
     mlx5dv::Profiler* m_mlx5dv_profiler{nullptr};
 
-    // cuda_trace::SanitizerEventSource* m_sanitizer_profiler{nullptr};
     cuda_trace::CUPTIEventSource* m_cupti_profiler{nullptr};
 
 #ifdef SIGMA_PROVIDER_ucx_trace

@@ -1,5 +1,7 @@
 find_package(CUDAToolkit REQUIRED)
 
+# ================================================================================================
+# Sanitizer memory tracker (unused)
 set(SANITIZER_ROOT "${CUDAToolkit_LIBRARY_ROOT}/compute-sanitizer")
 if (NOT EXISTS "${SANITIZER_ROOT}")
     message(FATAL_ERROR "Could not find compute-sanitizer at ${SANITIZER_ROOT}")
@@ -34,10 +36,18 @@ set_property(TARGET SanitizerMemoryTrackerFatbin PROPERTY CUDA_FATBIN_COMPILATIO
 target_compile_options(SanitizerMemoryTrackerFatbin PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--fatbin --compile-as-tools-patch>)
 target_link_libraries(SanitizerMemoryTrackerFatbin PRIVATE SANITIZER)
 
-add_custom_target(SanitizerMemoryTrackerFatbinCopy ALL
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_OBJECTS:SanitizerMemoryTrackerFatbin> "${CMAKE_BINARY_DIR}/lib/"
-        DEPENDS SanitizerMemoryTrackerFatbin
-        COMMENT "Copying fatbin to ${CMAKE_BINARY_DIR}/lib"
+# ================================================================================================
+# API Trace Provider (also unused)
+Sigma_add_provider_library(SanitizerEventProvider SHARED SanitizerTrace.cpp)
+
+target_link_libraries(SanitizerEventProvider PRIVATE SANITIZER)
+target_include_directories(SanitizerEventProvider PRIVATE ${SANITIZER_INCLUDE_DIR})
+target_link_libraries(SanitizerEventProvider PUBLIC CUDATrace)
+
+set_target_properties(SanitizerEventProvider PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_NAME "sanitizer_trace"
 )
 
-add_dependencies(SanitizerMemoryTracker SanitizerMemoryTrackerFatbin)
+target_link_libraries(SanitizerEventProvider PRIVATE CUDA::cudart)
+

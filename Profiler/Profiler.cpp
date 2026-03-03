@@ -31,7 +31,6 @@ int main(int argc, char* argv[]) {
             .ShimDir = binary_dir,
             .LoadIbtrace = true,
             .LoadMlx5dv = true,
-            .LoadSanitizer = false,
             .LoadCupti = true,
             .LoadLibfabric = true,
             .LoadUcx = true,
@@ -46,10 +45,6 @@ int main(int argc, char* argv[]) {
     if (profiler_args.LoadMlx5dv) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
     }
-
-    // if (profiler_args.LoadSanitizer) {
-    //     shim_libs.emplace_back(binary_dir / Profiler::SIGMA_SANITIZER_PROVIDER_PATH);
-    // }
 
     if (profiler_args.LoadCupti) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_CUPTI_PROVIDER_PATH);
