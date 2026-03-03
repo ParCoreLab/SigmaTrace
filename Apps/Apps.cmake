@@ -12,6 +12,7 @@ function(add_nvshmem_target target)
     target_link_libraries(${target} PRIVATE MPI::MPI_CXX)
 endfunction()
 
-find_package(MPI REQUIRED)
+find_package(MPI QUIET)
 
 add_nvshmem_target(nvshmem_mpi_uniqueid)
+add_nvshmem_target(nvshmem_thread_group)
