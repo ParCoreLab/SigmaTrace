@@ -98,7 +98,7 @@ namespace Profiler::Events {
 
     EVENT_STRUCT IbvPostSend {
         uint64_t context_addr;
-        uint64_t num_wrs;
+        uint32_t num_wrs;
         uint32_t qp_num; // Queue pair number
     };
 
@@ -146,10 +146,32 @@ namespace Profiler::Events {
         uint64_t context_addr;
         uint64_t wr_id;
         uint32_t qp_num;
-        // ibv_wc_opcode opcode;
-        // ibv_wc_status status;
-        // uint32_t byte_len;
-        // uint16_t pkey_index;
+        ibv_wc_opcode opcode;
+        ibv_wc_status status;
+        uint32_t byte_len;
+    };
+
+    EVENT_STRUCT QpConnectionInfo {
+        uint64_t context_addr;
+        uint32_t src_qpn;
+        uint32_t dest_qpn;
+        uint64_t dest_interface_id;  // from dgid.global.interface_id (0 if unavailable)
+        uint64_t dest_subnet_prefix; // from dgid.global.subnet_prefix
+        uint16_t dest_lid;           // local ID (used when GID unavailable on same subnet)
+        uint8_t port_num;
+    };
+
+    EVENT_STRUCT CommunicationSummary {
+        uint32_t src_qpn;
+        uint32_t dest_qpn;
+        uint64_t bytes_sent;
+        uint64_t bytes_recv;
+        uint32_t send_count;
+        uint32_t recv_count;
+        uint64_t src_node_guid;  // from IbvModifyQp / device registration
+        uint64_t dest_node_guid; // 0 if unknown
+        GpuId_T gpu_id;          // -1 if CPU-only
+        uint16_t dest_lid;       // for same-subnet identification
     };
 
 } // namespace Profiler::Events
@@ -177,5 +199,8 @@ DEFINE_EVENT_TRAIT(Profiler::Events::IbvPostRecvWr, Events::EventTypeId::IbvPost
 
 DEFINE_EVENT_TRAIT(Profiler::Events::IbvPollCq, Events::EventTypeId::IbvPollCq, Events::EventCategory::NIC, "ibv_poll_cq");
 DEFINE_EVENT_TRAIT(Profiler::Events::IbvCompletion, Events::EventTypeId::IbvPollCqCompletion, Events::EventCategory::NIC, "IBV Completion");
+
+DEFINE_EVENT_TRAIT(Profiler::Events::QpConnectionInfo, Events::EventTypeId::QpConnectionInfo, Events::EventCategory::NIC, "QP Connection Info");
+DEFINE_EVENT_TRAIT(Profiler::Events::CommunicationSummary, Events::EventTypeId::CommunicationSummary, Events::EventCategory::NIC, "Communication Summary");
 
 // clang-format on

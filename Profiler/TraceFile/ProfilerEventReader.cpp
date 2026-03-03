@@ -39,6 +39,7 @@ using EnabledEvents =
                          ProfilerEvents::IbvPostSend, ProfilerEvents::IbvPostSendWr, ProfilerEvents::IbvPostSendSg, //
                          ProfilerEvents::IbvPostRecv, ProfilerEvents::IbvPostRecvWr,                                //
                          ProfilerEvents::IbvPollCq, ProfilerEvents::IbvCompletion,                                  //
+                         ProfilerEvents::QpConnectionInfo, ProfilerEvents::CommunicationSummary,                    //
                          ProfilerEvents::Mlx5dvMemoryRegistration, ProfilerEvents::Mlx5dvMemoryDereg,               //
                          ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
                          ProfilerEvents::CUDAKernelExit, //
@@ -77,7 +78,19 @@ public:
         NIC = static_cast<int>(Events::EventCategory::NIC),
         NIC_QP,
         Node,
-        Operation
+        Operation,
+        CounterQpBytesSent,
+        CounterQpBytesRecv,
+        CounterGpuBytesSent,
+        CounterGpuBytesRecv,
+        CounterQpBandwidthSent,
+        CounterQpBandwidthRecv,
+        CounterGpuBandwidthSent,
+        CounterGpuBandwidthRecv,
+        CounterNicBandwidthSent,
+        CounterNicBandwidthRecv,
+        CounterNodeBandwidthSent,
+        CounterNodeBandwidthRecv,
     };
     // TODO: dumb. Make tracks dynamic
     const absl::flat_hash_map<TrackType, std::string> TrackTypeStr{{TrackType::Root, "Root"},
@@ -318,6 +331,57 @@ public:
     }
 
     // ========================================================================
+    // Counter Tracks (for bandwidth-over-time visualization)
+    // ========================================================================
+    uint64_t register_counter_track(uint64_t uuid, uint64_t parent_uuid, const std::string& name) {
+        if (m_registered_tracks.contains(uuid)) {
+            return uuid;
+        }
+
+        auto* packet = m_trace.add_packet();
+        packet->set_trusted_packet_sequence_id(m_sequence_id);
+        auto* desc = packet->mutable_track_descriptor();
+        desc->set_uuid(uuid);
+        desc->set_parent_uuid(parent_uuid);
+        desc->set_name(name);
+        auto* counter = desc->mutable_counter();
+        counter->set_unit(perfetto::protos::CounterDescriptor::UNIT_SIZE_BYTES);
+        counter->set_is_incremental(false);
+        m_registered_tracks.emplace(uuid);
+        return uuid;
+    }
+
+    uint64_t register_counter_track(uint64_t uuid, uint64_t parent_uuid, const std::string& name,
+                                    const std::string& unit_name) {
+        if (m_registered_tracks.contains(uuid)) {
+            return uuid;
+        }
+
+        auto* packet = m_trace.add_packet();
+        packet->set_trusted_packet_sequence_id(m_sequence_id);
+        auto* desc = packet->mutable_track_descriptor();
+        desc->set_uuid(uuid);
+        desc->set_parent_uuid(parent_uuid);
+        desc->set_name(name);
+        auto* counter = desc->mutable_counter();
+        counter->set_unit(perfetto::protos::CounterDescriptor::UNIT_UNSPECIFIED);
+        counter->set_unit_name(unit_name);
+        counter->set_is_incremental(false);
+        m_registered_tracks.emplace(uuid);
+        return uuid;
+    }
+
+    void emit_counter(uint64_t track_uuid, uint64_t timestamp_ns, int64_t value) {
+        auto* packet = m_trace.add_packet();
+        packet->set_trusted_packet_sequence_id(m_sequence_id);
+        packet->set_timestamp(timestamp_ns);
+        auto* event = packet->mutable_track_event();
+        event->set_track_uuid(track_uuid);
+        event->set_type(perfetto::protos::TrackEvent::TYPE_COUNTER);
+        event->set_counter_value(value);
+    }
+
+    // ========================================================================
     // Debug Annotations (for attaching metadata to events)
     // ========================================================================
     template<typename T>
@@ -393,6 +457,21 @@ struct DeviceStorage {
     absl::flat_hash_map<uint32_t, QpInfo> ibv_qp_info;
 };
 
+// QP connection info for cross-node correlation
+struct QpConnectionEntry {
+    uint32_t dest_qpn{0};
+    uint64_t dest_interface_id{0};
+    uint64_t dest_subnet_prefix{0};
+    uint16_t dest_lid{0};
+    uint8_t port_num{0};
+};
+
+// Generation-based flow entry for wr_id reuse disambiguation
+struct FlowEntry {
+    uint64_t flow_id;
+    uint32_t generation;
+};
+
 // Local to one process
 struct ProcessLocalStorage {
     // TODO:
@@ -408,6 +487,16 @@ struct ProcessLocalStorage {
 
     // (qp_num, wr_id) -> flow id
     absl::flat_hash_map<std::tuple<uint64_t, uint32_t>, uint64_t> pending_ibv_completions;
+
+    // ============================================================================
+    // QP connection map: src_qpn -> connection info
+    absl::flat_hash_map<uint32_t, QpConnectionEntry> qp_connection_map;
+
+    // QP -> GPU mapping (from mlx5dv QP creation events)
+    absl::flat_hash_map<uint32_t /*qpn*/, GpuId_T> qp_to_gpu;
+    // QP -> NIC mapping (from IbvCreateQp events)
+    absl::flat_hash_map<uint32_t /*qpn*/, NicId> qp_to_nic;
+    // ============================================================================
 
     // ============================================================================
     // mlx5dv
@@ -467,10 +556,24 @@ public:
     }
 
     ~ProfilerEventReader() {
+        // Flush windowed counters before writing
+        flush_all_windowed_counters();
+
+        // Write communication graph JSON
+        write_comm_graph_json(m_output_path);
+
         // Write final trace to file
         if (!m_builder.write_to_file(m_output_path)) {
             std::cerr << "Failed to write trace to: " << m_output_path << std::endl;
         }
+    }
+
+    void set_gpu_track_mode(bool enabled) {
+        m_gpu_track_mode = enabled;
+    }
+
+    void set_window_size_ms(uint64_t ms) {
+        m_window_size_ns = ms * 1'000'000ULL;
     }
 
     const std::filesystem::path& get_output_path() {
@@ -550,18 +653,31 @@ public:
 
     // ========================================================================
     // CPU-side ibv events
-    uint64_t get_ibv_qp_wr_flow_id(ProcessLocalStorage& local_storage, const auto& event) {
-        auto& completion_flow_map = local_storage.pending_ibv_completions;
 
-        uint64_t flow_id{0};
-        const auto& flow_entry = completion_flow_map.find({event.qp_num, event.wr_id});
-        // WRs IDs are reused sometimes
-        if (flow_entry != completion_flow_map.end()) {
-            flow_id = flow_entry->second;
-        } else {
-            flow_id = m_builder.new_flow_id();
-            completion_flow_map.insert({{event.qp_num, event.wr_id}, flow_id});
+    // Generation-based flow ID: handles wr_id reuse by incrementing generation
+    uint64_t get_ibv_qp_wr_flow_id(ProcessLocalStorage& local_storage, const auto& event) {
+        // Look up dest_qpn for cross-node correlation
+        uint32_t dest_qpn = event.qp_num; // default: same QP (local completion)
+        const auto conn_it = local_storage.qp_connection_map.find(event.qp_num);
+        if (conn_it != local_storage.qp_connection_map.end()) {
+            dest_qpn = conn_it->second.dest_qpn;
         }
+
+        auto key = std::make_pair(dest_qpn, event.wr_id);
+
+        // Increment generation for this (dest_qp, wr_id) pair
+        auto& gen = m_wr_generation[key];
+        ++gen;
+
+        // If there was already a pending flow, warn and overwrite
+        auto pending_it = m_global_pending_flows.find(key);
+        if (pending_it != m_global_pending_flows.end()) {
+            // Previous flow was not completed before wr_id reuse
+            // Best-effort: the old flow will remain unterminated
+        }
+
+        const auto flow_id = m_builder.new_flow_id();
+        m_global_pending_flows[key] = FlowEntry{.flow_id = flow_id, .generation = gen};
 
         return flow_id;
     }
@@ -593,9 +709,25 @@ public:
         auto track_uuid = cpu_track_uuid;
         if (is_nic) {
             if constexpr (requires { event.qp_num; }) {
-                const uint64_t qp_track_uuid = m_builder.make_uuid(TrackType::NIC_QP, node_id, nic_id, event.qp_num);
-                m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
-                track_uuid = qp_track_uuid;
+                // GPU-GPU track mode: route to GPU track if QP→GPU mapping exists
+                if (m_gpu_track_mode) {
+                    auto& lstorage = process_local_storage(file_header);
+                    const auto gpu_it = lstorage.qp_to_gpu.find(event.qp_num);
+                    if (gpu_it != lstorage.qp_to_gpu.end() && gpu_it->second >= 0) {
+                        track_uuid = m_builder.register_device_track(TrackType::GPU, node_id,
+                                                                     static_cast<uint64_t>(gpu_it->second));
+                    } else {
+                        const uint64_t qp_track_uuid =
+                                m_builder.make_uuid(TrackType::NIC_QP, node_id, nic_id, event.qp_num);
+                        m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
+                        track_uuid = qp_track_uuid;
+                    }
+                } else {
+                    const uint64_t qp_track_uuid =
+                            m_builder.make_uuid(TrackType::NIC_QP, node_id, nic_id, event.qp_num);
+                    m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
+                    track_uuid = qp_track_uuid;
+                }
             } else {
                 track_uuid = nic_track_uuid;
             }
@@ -691,6 +823,9 @@ public:
         const auto flow_id = m_builder.new_flow_id();
         local_storage.ibv_qp_create_destroy_flows[{event.context_addr, event.qp_num}] = flow_id;
 
+        // Populate qp_to_nic for DoorbellRing NIC/Node bandwidth tracking
+        local_storage.qp_to_nic[event.qp_num] = local_storage.ibv_context_to_nic_id.at(event.context_addr);
+
         auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
         slice->add_flow_ids(flow_id);
 
@@ -779,6 +914,31 @@ public:
         m_builder.add_annotation("Addr", event.addr);
         m_builder.add_annotation("Length", event.length);
         m_builder.add_annotation("Lkey", event.lkey);
+
+        // Emit bandwidth counters for send
+        if (event.length > 0) {
+            const auto node_id = register_node(file_header.hostname);
+            auto& local_storage = process_local_storage(file_header);
+            const auto nic_id = local_storage.ibv_context_to_nic_id.at(event.context_addr);
+            const uint64_t nic_track_uuid = m_builder.register_device_track(TrackType::NIC, node_id, nic_id);
+            const uint64_t qp_track_uuid = m_builder.make_uuid(TrackType::NIC_QP, node_id, nic_id, event.qp_num);
+            m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
+
+            emit_qp_send_counter(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.length);
+
+            const auto gpu_it = local_storage.qp_to_gpu.find(event.qp_num);
+            if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
+                emit_gpu_send_counter(node_id, gpu_it->second, header.timestamp_start, event.length);
+            }
+
+            // Windowed bandwidth counters
+            emit_qp_bw_sent(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.length);
+            emit_nic_bw_sent(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.length);
+            emit_node_bw_sent(node_id, header.timestamp_start, event.length);
+            if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
+                emit_gpu_bw_sent(node_id, gpu_it->second, header.timestamp_start, event.length);
+            }
+        }
     }
 
     void visit(EventTrait<ProfilerEvents::IbvPostRecv>, const EventFileHeader& file_header, EventHeader&& header,
@@ -817,23 +977,109 @@ public:
         auto* slice =
                 visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event), true);
 
-        // Try to terminate ibv flows
-        auto& local_storage = process_local_storage(file_header);
-        auto& completion_flow_map = local_storage.pending_ibv_completions;
-        const auto& flow_entry = completion_flow_map.find({event.qp_num, event.wr_id});
-        if (flow_entry == completion_flow_map.end()) {
-            std::cerr << "WARNING: IbvCompletion found no preceding flows" << std::endl;
-        } else {
-            const auto flow_id = flow_entry->second;
+        // Try to terminate flows using generation-based matching
+        // For completions, the qp_num IS the local QP (which is the dest from sender's perspective)
+        auto key = std::make_pair(event.qp_num, event.wr_id);
+        auto pending_it = m_global_pending_flows.find(key);
+        if (pending_it != m_global_pending_flows.end()) {
+            const auto flow_id = pending_it->second.flow_id;
             slice->add_terminating_flow_ids(flow_id);
-            completion_flow_map.erase(flow_entry);
+            m_global_pending_flows.erase(pending_it);
+        } else {
+            // Fall back to local completion flow map
+            auto& local_storage = process_local_storage(file_header);
+            auto& completion_flow_map = local_storage.pending_ibv_completions;
+            const auto& flow_entry = completion_flow_map.find({event.qp_num, event.wr_id});
+            if (flow_entry != completion_flow_map.end()) {
+                const auto flow_id = flow_entry->second;
+                slice->add_terminating_flow_ids(flow_id);
+                completion_flow_map.erase(flow_entry);
+            }
         }
 
         m_builder.add_annotation("QP Num", event.qp_num);
         m_builder.add_annotation("WR ID", event.wr_id);
-        // m_builder.add_annotation("Opcode", event.opcode);
-        // m_builder.add_annotation("Status", event.status);
-        // m_builder.add_annotation("Byte len", event.pkey_index);
+        m_builder.add_annotation("Opcode", static_cast<uint32_t>(event.opcode));
+        m_builder.add_annotation("Status", static_cast<uint32_t>(event.status));
+        m_builder.add_annotation("Byte Len", event.byte_len);
+
+        // Emit bandwidth counters for recv completions
+        if ((event.opcode & IBV_WC_RECV) && event.byte_len > 0) {
+            const auto node_id = register_node(file_header.hostname);
+            auto& local_storage = process_local_storage(file_header);
+            const auto nic_id = local_storage.ibv_context_to_nic_id.at(event.context_addr);
+            const uint64_t nic_track_uuid = m_builder.register_device_track(TrackType::NIC, node_id, nic_id);
+            const uint64_t qp_track_uuid = m_builder.make_uuid(TrackType::NIC_QP, node_id, nic_id, event.qp_num);
+            m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
+
+            emit_qp_recv_counter(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.byte_len);
+
+            const auto gpu_it = local_storage.qp_to_gpu.find(event.qp_num);
+            if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
+                emit_gpu_recv_counter(node_id, gpu_it->second, header.timestamp_start, event.byte_len);
+            }
+
+            // Windowed bandwidth counters
+            emit_qp_bw_recv(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.byte_len);
+            emit_nic_bw_recv(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.byte_len);
+            emit_node_bw_recv(node_id, header.timestamp_start, event.byte_len);
+            if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
+                emit_gpu_bw_recv(node_id, gpu_it->second, header.timestamp_start, event.byte_len);
+            }
+        }
+    }
+
+    // ========================================================================
+    // QP Connection Info - builds the connection map for cross-node flows
+    void visit(EventTrait<ProfilerEvents::QpConnectionInfo>, const EventFileHeader& file_header, EventHeader&&,
+               ProfilerEvents::QpConnectionInfo&& event) {
+        auto& local_storage = process_local_storage(file_header);
+
+        // Populate connection map
+        local_storage.qp_connection_map[event.src_qpn] = QpConnectionEntry{
+                .dest_qpn = event.dest_qpn,
+                .dest_interface_id = event.dest_interface_id,
+                .dest_subnet_prefix = event.dest_subnet_prefix,
+                .dest_lid = event.dest_lid,
+                .port_num = event.port_num,
+        };
+
+        // Emit as instant event on the NIC track
+        const auto node_id = register_node(file_header.hostname);
+        uint64_t nic_id = 0;
+        if (event.context_addr != 0) {
+            const auto nic_it = local_storage.ibv_context_to_nic_id.find(event.context_addr);
+            if (nic_it != local_storage.ibv_context_to_nic_id.end()) {
+                nic_id = nic_it->second;
+            }
+        }
+
+        const uint64_t qp_track_uuid = m_builder.make_uuid(TrackType::NIC_QP, node_id, nic_id, event.src_qpn);
+        const uint64_t nic_track_uuid = m_builder.register_device_track(TrackType::NIC, node_id, nic_id);
+        m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.src_qpn, "QP");
+
+        // auto* instant = m_builder.add_instant_event(qp_track_uuid, header.timestamp_start, "QP Connection");
+        // m_builder.add_annotation(instant, "Src QPN", event.src_qpn);
+        // m_builder.add_annotation(instant, "Dest QPN", event.dest_qpn);
+        // m_builder.add_annotation(instant, "Dest Interface ID", event.dest_interface_id);
+        // m_builder.add_annotation(instant, "Dest Subnet Prefix", event.dest_subnet_prefix);
+        // m_builder.add_annotation(instant, "Dest LID", event.dest_lid);
+    }
+
+    // Communication Summary - aggregate metrics per QP, emitted at profiler shutdown
+    // Only used for JSON graph output, NOT emitted into Perfetto trace
+    void visit(EventTrait<ProfilerEvents::CommunicationSummary>, const EventFileHeader& file_header, EventHeader&&,
+               ProfilerEvents::CommunicationSummary&& event) {
+        sigma_ignore_unused(register_node(file_header.hostname));
+
+        // Store for JSON graph output only
+        m_comm_summaries.push_back({file_header.hostname, event});
+
+        // Populate QP→GPU mapping for GPU-GPU track mode
+        if (event.gpu_id >= 0) {
+            auto& local_storage = process_local_storage(file_header);
+            local_storage.qp_to_gpu[event.src_qpn] = event.gpu_id;
+        }
     }
     // ========================================================================
 
@@ -899,6 +1145,29 @@ public:
         // m_builder.add_annotation("wqe_index", event.wqe_index);
         m_builder.add_annotation("qp_num", event.qp_num);
         m_builder.add_annotation("Is_CPU_Hijack", event.is_cpu_hijack ? "Yes" : "No");
+        m_builder.add_annotation("bytes_sent", event.bytes_sent);
+
+        // Emit bandwidth counters for doorbell send
+        if (event.bytes_sent > 0) {
+            // For doorbell events, use the GPU track as parent for the QP counter
+            emit_qp_send_counter(node_id, event.qp_num, track_uuid, header.timestamp_start, event.bytes_sent);
+            emit_gpu_send_counter(node_id, gpu_id, header.timestamp_start, event.bytes_sent);
+
+            // Windowed bandwidth counters
+            emit_qp_bw_sent(node_id, event.qp_num, track_uuid, header.timestamp_start, event.bytes_sent);
+            emit_gpu_bw_sent(node_id, gpu_id, header.timestamp_start, event.bytes_sent);
+            // NIC/Node bandwidth if qp_to_nic lookup succeeds
+            auto& db_local_storage = process_local_storage(file_header);
+            const auto nic_it = db_local_storage.qp_to_nic.find(event.qp_num);
+            if (nic_it != db_local_storage.qp_to_nic.end()) {
+                const uint64_t nic_track_uuid =
+                        m_builder.register_device_track(TrackType::NIC, node_id, nic_it->second);
+                emit_nic_bw_sent(node_id, nic_it->second, nic_track_uuid, header.timestamp_start, event.bytes_sent);
+                emit_node_bw_sent(node_id, header.timestamp_start, event.bytes_sent);
+            }
+        }
+    }
+
     // ========================================================================
     // libfabric events
     // ========================================================================
@@ -1363,6 +1632,244 @@ private:
     std::filesystem::path m_output_path;
     PerfettoTraceBuilder m_builder;
 
+    // GPU-GPU track mode: route events to GPU tracks instead of QP tracks
+    bool m_gpu_track_mode{false};
+
+    // ================================================================
+    // Bandwidth counter state
+    // ================================================================
+    struct QpCounterState {
+        int64_t cumulative_bytes_sent{0};
+        int64_t cumulative_bytes_recv{0};
+        uint64_t send_uuid{0};
+        uint64_t recv_uuid{0};
+    };
+    // Key: (node_id, qp_num)
+    absl::flat_hash_map<std::pair<uint64_t, uint32_t>, QpCounterState> m_qp_byte_counters;
+
+    struct GpuCounterState {
+        int64_t cumulative_bytes_sent{0};
+        int64_t cumulative_bytes_recv{0};
+        uint64_t send_uuid{0};
+        uint64_t recv_uuid{0};
+    };
+    // Key: (node_id, gpu_id)
+    absl::flat_hash_map<std::pair<uint64_t, GpuId_T>, GpuCounterState> m_gpu_byte_counters;
+
+    void emit_qp_send_counter(uint64_t node_id, uint32_t qp_num, uint64_t parent_track_uuid, uint64_t timestamp,
+                              uint64_t bytes) {
+        auto key = std::make_pair(node_id, qp_num);
+        auto& state = m_qp_byte_counters[key];
+        if (state.send_uuid == 0) {
+            state.send_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterQpBytesSent, node_id, qp_num);
+            m_builder.register_counter_track(state.send_uuid, parent_track_uuid,
+                                             "QP" + std::to_string(qp_num) + " Bytes Sent");
+        }
+        state.cumulative_bytes_sent += static_cast<int64_t>(bytes);
+        m_builder.emit_counter(state.send_uuid, timestamp, state.cumulative_bytes_sent);
+    }
+
+    void emit_qp_recv_counter(uint64_t node_id, uint32_t qp_num, uint64_t parent_track_uuid, uint64_t timestamp,
+                              uint64_t bytes) {
+        auto key = std::make_pair(node_id, qp_num);
+        auto& state = m_qp_byte_counters[key];
+        if (state.recv_uuid == 0) {
+            state.recv_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterQpBytesRecv, node_id, qp_num);
+            m_builder.register_counter_track(state.recv_uuid, parent_track_uuid,
+                                             "QP" + std::to_string(qp_num) + " Bytes Recv");
+        }
+        state.cumulative_bytes_recv += static_cast<int64_t>(bytes);
+        m_builder.emit_counter(state.recv_uuid, timestamp, state.cumulative_bytes_recv);
+    }
+
+    void emit_gpu_send_counter(uint64_t node_id, GpuId_T gpu_id, uint64_t timestamp, uint64_t bytes) {
+        auto key = std::make_pair(node_id, gpu_id);
+        auto& state = m_gpu_byte_counters[key];
+        if (state.send_uuid == 0) {
+            auto gpu_track_uuid =
+                    m_builder.register_device_track(TrackType::GPU, node_id, static_cast<uint64_t>(gpu_id));
+            state.send_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterGpuBytesSent, node_id, gpu_id);
+            m_builder.register_counter_track(state.send_uuid, gpu_track_uuid,
+                                             "GPU" + std::to_string(gpu_id) + " Bytes Sent");
+        }
+        state.cumulative_bytes_sent += static_cast<int64_t>(bytes);
+        m_builder.emit_counter(state.send_uuid, timestamp, state.cumulative_bytes_sent);
+    }
+
+    void emit_gpu_recv_counter(uint64_t node_id, GpuId_T gpu_id, uint64_t timestamp, uint64_t bytes) {
+        auto key = std::make_pair(node_id, gpu_id);
+        auto& state = m_gpu_byte_counters[key];
+        if (state.recv_uuid == 0) {
+            auto gpu_track_uuid =
+                    m_builder.register_device_track(TrackType::GPU, node_id, static_cast<uint64_t>(gpu_id));
+            state.recv_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterGpuBytesRecv, node_id, gpu_id);
+            m_builder.register_counter_track(state.recv_uuid, gpu_track_uuid,
+                                             "GPU" + std::to_string(gpu_id) + " Bytes Recv");
+        }
+        state.cumulative_bytes_recv += static_cast<int64_t>(bytes);
+        m_builder.emit_counter(state.recv_uuid, timestamp, state.cumulative_bytes_recv);
+    }
+    // ================================================================
+
+    // ================================================================
+    // Windowed bandwidth counter state
+    // ================================================================
+    struct WindowedCounterState {
+        uint64_t window_size_ns{1'000'000};
+        uint64_t window_start_ts{0};
+        int64_t bytes_in_window{0};
+        uint64_t track_uuid{0};
+        bool initialized{false};
+    };
+
+    // Key: (node_id, qp_num)
+    absl::flat_hash_map<std::pair<uint64_t, uint32_t>, WindowedCounterState> m_qp_bw_sent;
+    absl::flat_hash_map<std::pair<uint64_t, uint32_t>, WindowedCounterState> m_qp_bw_recv;
+    // Key: (node_id, gpu_id)
+    absl::flat_hash_map<std::pair<uint64_t, GpuId_T>, WindowedCounterState> m_gpu_bw_sent;
+    absl::flat_hash_map<std::pair<uint64_t, GpuId_T>, WindowedCounterState> m_gpu_bw_recv;
+    // Key: (node_id, nic_id)
+    absl::flat_hash_map<std::pair<uint64_t, NicId>, WindowedCounterState> m_nic_bw_sent;
+    absl::flat_hash_map<std::pair<uint64_t, NicId>, WindowedCounterState> m_nic_bw_recv;
+    // Key: node_id
+    absl::flat_hash_map<uint64_t, WindowedCounterState> m_node_bw_sent;
+    absl::flat_hash_map<uint64_t, WindowedCounterState> m_node_bw_recv;
+
+    uint64_t m_window_size_ns{1'000'000};
+    uint64_t m_max_timestamp{0};
+
+    void flush_windows(WindowedCounterState& state, uint64_t ts, int64_t bytes) {
+        if (!state.initialized) {
+            state.window_start_ts = (ts / state.window_size_ns) * state.window_size_ns;
+            state.initialized = true;
+        }
+        while (ts >= state.window_start_ts + state.window_size_ns) {
+            int64_t bw = state.bytes_in_window * 1'000'000'000LL / static_cast<int64_t>(state.window_size_ns);
+            m_builder.emit_counter(state.track_uuid, state.window_start_ts + state.window_size_ns, bw);
+            state.window_start_ts += state.window_size_ns;
+            state.bytes_in_window = 0;
+        }
+        state.bytes_in_window += bytes;
+        m_max_timestamp = std::max(m_max_timestamp, ts);
+    }
+
+    void emit_qp_bw_sent(uint64_t node_id, uint32_t qp_num, uint64_t parent_uuid, uint64_t ts, uint64_t bytes) {
+        auto key = std::make_pair(node_id, qp_num);
+        auto& state = m_qp_bw_sent[key];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterQpBandwidthSent, node_id, qp_num);
+            m_builder.register_counter_track(state.track_uuid, parent_uuid,
+                                             "QP" + std::to_string(qp_num) + " Bandwidth Sent", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void emit_qp_bw_recv(uint64_t node_id, uint32_t qp_num, uint64_t parent_uuid, uint64_t ts, uint64_t bytes) {
+        auto key = std::make_pair(node_id, qp_num);
+        auto& state = m_qp_bw_recv[key];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterQpBandwidthRecv, node_id, qp_num);
+            m_builder.register_counter_track(state.track_uuid, parent_uuid,
+                                             "QP" + std::to_string(qp_num) + " Bandwidth Recv", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void emit_gpu_bw_sent(uint64_t node_id, GpuId_T gpu_id, uint64_t ts, uint64_t bytes) {
+        auto key = std::make_pair(node_id, gpu_id);
+        auto& state = m_gpu_bw_sent[key];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            const uint64_t gpu_track_uuid =
+                    m_builder.register_device_track(TrackType::GPU, node_id, static_cast<uint64_t>(gpu_id));
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterGpuBandwidthSent, node_id, gpu_id);
+            m_builder.register_counter_track(state.track_uuid, gpu_track_uuid,
+                                             "GPU" + std::to_string(gpu_id) + " Bandwidth Sent", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void emit_gpu_bw_recv(uint64_t node_id, GpuId_T gpu_id, uint64_t ts, uint64_t bytes) {
+        auto key = std::make_pair(node_id, gpu_id);
+        auto& state = m_gpu_bw_recv[key];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            const uint64_t gpu_track_uuid =
+                    m_builder.register_device_track(TrackType::GPU, node_id, static_cast<uint64_t>(gpu_id));
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterGpuBandwidthRecv, node_id, gpu_id);
+            m_builder.register_counter_track(state.track_uuid, gpu_track_uuid,
+                                             "GPU" + std::to_string(gpu_id) + " Bandwidth Recv", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void emit_nic_bw_sent(uint64_t node_id, NicId nic_id, uint64_t nic_track_uuid, uint64_t ts, uint64_t bytes) {
+        auto key = std::make_pair(node_id, nic_id);
+        auto& state = m_nic_bw_sent[key];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterNicBandwidthSent, node_id, nic_id);
+            m_builder.register_counter_track(state.track_uuid, nic_track_uuid, "NIC Bandwidth Sent", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void emit_nic_bw_recv(uint64_t node_id, NicId nic_id, uint64_t nic_track_uuid, uint64_t ts, uint64_t bytes) {
+        auto key = std::make_pair(node_id, nic_id);
+        auto& state = m_nic_bw_recv[key];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterNicBandwidthRecv, node_id, nic_id);
+            m_builder.register_counter_track(state.track_uuid, nic_track_uuid, "NIC Bandwidth Recv", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void emit_node_bw_sent(uint64_t node_id, uint64_t ts, uint64_t bytes) {
+        auto& state = m_node_bw_sent[node_id];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            const uint64_t node_track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::Node, node_id);
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterNodeBandwidthSent, node_id);
+            m_builder.register_counter_track(state.track_uuid, node_track_uuid, "Node Bandwidth Sent", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void emit_node_bw_recv(uint64_t node_id, uint64_t ts, uint64_t bytes) {
+        auto& state = m_node_bw_recv[node_id];
+        state.window_size_ns = m_window_size_ns;
+        if (state.track_uuid == 0) {
+            const uint64_t node_track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::Node, node_id);
+            state.track_uuid = PerfettoTraceBuilder::make_uuid(TrackType::CounterNodeBandwidthRecv, node_id);
+            m_builder.register_counter_track(state.track_uuid, node_track_uuid, "Node Bandwidth Recv", "bytes/s");
+        }
+        flush_windows(state, ts, static_cast<int64_t>(bytes));
+    }
+
+    void flush_all_windowed_counters() {
+        const uint64_t final_ts = m_max_timestamp + m_window_size_ns;
+        for (auto& [key, state]: m_qp_bw_sent)
+            flush_windows(state, final_ts, 0);
+        for (auto& [key, state]: m_qp_bw_recv)
+            flush_windows(state, final_ts, 0);
+        for (auto& [key, state]: m_gpu_bw_sent)
+            flush_windows(state, final_ts, 0);
+        for (auto& [key, state]: m_gpu_bw_recv)
+            flush_windows(state, final_ts, 0);
+        for (auto& [key, state]: m_nic_bw_sent)
+            flush_windows(state, final_ts, 0);
+        for (auto& [key, state]: m_nic_bw_recv)
+            flush_windows(state, final_ts, 0);
+        for (auto& [key, state]: m_node_bw_sent)
+            flush_windows(state, final_ts, 0);
+        for (auto& [key, state]: m_node_bw_recv)
+            flush_windows(state, final_ts, 0);
+    }
+    // ================================================================
+
     template<typename T>
     uint32_t register_node(T&& key) {
         const auto& [entry, inserted] = m_global_node_ids.try_emplace(std::forward<T>(key), m_current_node_id);
@@ -1383,10 +1890,6 @@ private:
     uint32_t m_current_node_id{0};
     absl::flat_hash_map<std::string, decltype(m_current_node_id)> m_global_node_ids{};
 
-    // Maps globally unique (hopefully) ibv ids to our local enumeration
-    // uint32_t m_current_nic_id{0};
-    // absl::flat_hash_map<DeviceId, decltype(m_current_nic_id)> m_global_nic_ids;
-
     // ================================================================
     // Global storage
     // ================================================================
@@ -1394,24 +1897,103 @@ private:
     // Has duplicate entries because we don't get a bimap
     absl::flat_hash_map<uint32_t, uint32_t> m_qp_dest_map;
 
+    // Generation-based flow tracking for wr_id reuse disambiguation
+    // Key: (dest_qpn, wr_id) -> FlowEntry
+    absl::flat_hash_map<std::pair<uint32_t, uint64_t>, FlowEntry> m_global_pending_flows;
+    absl::flat_hash_map<std::pair<uint32_t, uint64_t>, uint32_t> m_wr_generation;
+
+    // Communication summaries collected for JSON graph output
+    struct CommSummaryEntry {
+        std::string hostname;
+        ProfilerEvents::CommunicationSummary summary;
+    };
+    std::vector<CommSummaryEntry> m_comm_summaries;
+
     // ================================================================
     // Local Storage
     // Node ID
     std::vector<NodeLocalStorage> m_node_local_storage;
-
-    // Node ID, Process ID, Thread ID
-    // absl::flat_hash_map<std::tuple<GpuId_T, GpuId_T, GpuId_T>, LocalStorage> m_thread_local_storage;
     // ================================================================
+
+    // Write communication graph JSON
+    void write_comm_graph_json(const std::filesystem::path& output_path) const {
+        if (m_comm_summaries.empty())
+            return;
+
+        auto json_path = output_path;
+        json_path.replace_extension(".commgraph.json");
+
+        std::ofstream out(json_path);
+        if (!out.is_open()) {
+            std::cerr << "Failed to write comm graph to: " << json_path << std::endl;
+            return;
+        }
+
+        // Build nodes and edges
+        out << "{\n  \"nodes\": [\n";
+        absl::flat_hash_set<std::string> emitted_nodes;
+        bool first_node = true;
+
+        for (const auto& entry: m_comm_summaries) {
+            const auto& s = entry.summary;
+            std::string node_id = entry.hostname + "_qp" + std::to_string(s.src_qpn);
+            if (emitted_nodes.contains(node_id))
+                continue;
+            emitted_nodes.insert(node_id);
+
+            if (!first_node)
+                out << ",\n";
+            first_node = false;
+
+            out << "    {\"id\": \"" << node_id << "\", \"node\": \"" << entry.hostname << "\", \"qpn\": " << s.src_qpn
+                << ", \"gpu_id\": " << s.gpu_id << ", \"type\": \"" << (s.gpu_id >= 0 ? "gpu" : "cpu") << "\"}";
+        }
+
+        out << "\n  ],\n  \"edges\": [\n";
+        bool first_edge = true;
+
+        for (const auto& entry: m_comm_summaries) {
+            const auto& s = entry.summary;
+            if (s.bytes_sent == 0 && s.bytes_recv == 0)
+                continue;
+
+            if (!first_edge)
+                out << ",\n";
+            first_edge = false;
+
+            out << "    {"
+                << "\"src\": \"" << entry.hostname << "_qp" << s.src_qpn << "\""
+                << ", \"dst_qpn\": " << s.dest_qpn << ", \"bytes_sent\": " << s.bytes_sent
+                << ", \"bytes_recv\": " << s.bytes_recv << ", \"send_count\": " << s.send_count
+                << ", \"recv_count\": " << s.recv_count << "}";
+        }
+
+        out << "\n  ]\n}\n";
+        std::cout << "Wrote communication graph to: " << json_path << std::endl;
+    }
 };
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <events dir> <output file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <events dir> <output file> [--gpu-tracks]" << std::endl;
         std::exit(1);
     }
 
     const auto input_path = std::filesystem::current_path() / std::filesystem::path{argv[1]} / "events";
     const auto output_path = std::filesystem::path{argv[2]};
+
+    // bool gpu_track_mode = false;
+    bool gpu_track_mode = true;
+    uint64_t window_ms = 1;
+
+    for (int i = 3; i < argc; i++) {
+        if (std::string_view{argv[i]} == "--gpu-tracks") {
+            gpu_track_mode = true;
+        } else if (std::string_view{argv[i]} == "--window-ms" && i + 1 < argc) {
+            window_ms = std::stoull(argv[i + 1]);
+            ++i;
+        }
+    }
 
     if (!std::filesystem::exists(input_path)) {
         std::cerr << input_path << " does not exist" << std::endl;
@@ -1422,6 +2004,8 @@ int main(int argc, char* argv[]) {
     config.EventsDirectory = input_path;
 
     ProfilerEventReader reader{config, output_path};
+    reader.set_gpu_track_mode(gpu_track_mode);
+    reader.set_window_size_ms(window_ms);
 
     std::cout << "Reading events from: " << config.EventsDirectory << std::endl;
     std::cout << "Writing output to: " << reader.get_output_path() << std::endl;

@@ -47,6 +47,7 @@ namespace Profiler::Events {
         uint32_t qp_num;
         GpuId_T gpu_id;
         bool is_cpu_hijack{false};
+        uint64_t bytes_sent{0};
     };
 } // namespace Profiler::Events
 

@@ -116,6 +116,18 @@ namespace Profiler::hijack {
 using Helpers::PtrToUint;
 using Profiler::Events::GpuId_T;
 
+struct QpTrafficStats {
+    std::atomic<uint64_t> bytes_sent{0};
+    std::atomic<uint64_t> bytes_recv{0};
+    uint32_t send_count{0};
+    uint32_t recv_count{0};
+};
+
+struct PendingDoorbell {
+    uint32_t prod_id;
+    Helpers::TS::Timestamp timestamp;
+};
+
 struct QpInfo {
     CUcontext cuda_ctx;   // captured during umem_reg
     void* sq_base;        // host-accessible SQ buffer address
@@ -123,10 +135,18 @@ struct QpInfo {
     uint32_t qpn;
     GpuId_T gpu_id;
     cudaMemoryType gpu_mem_type;
+    uint8_t service_type{0};
     // on_doorbell
     uint32_t _last_prod_id{0};
     uint32_t _oldest_uncopied_prod_id{0};
     bool _has_pending{false};
+    // Remote endpoint info (populated during QP modify)
+    uint32_t dest_qpn{0};
+    uint64_t dest_interface_id{0};
+    uint16_t dest_lid{0};
+    // QP transport service type from QPC (0x5 = DCI)
+    // Pending doorbells awaiting byte count resolution after batch memcpy+parse
+    std::vector<PendingDoorbell> pending_doorbells{};
 };
 
 struct ProfilerCtx {
@@ -182,6 +202,23 @@ struct ProfilerCtx {
     // ================================================
 
     // ================================================
+    // QP traffic statistics for communication graph
+    std::mutex m_qp_traffic_mutex;
+    std::unordered_map<uint32_t /*qpn*/, QpTrafficStats> m_qp_traffic;
+
+    // QP connection info: src_qpn -> {dest_qpn, context_addr, node_guid}
+    struct QpConnectionEntry {
+        uint64_t context_addr;
+        uint32_t dest_qpn;
+        uint64_t dest_interface_id;
+        uint64_t dest_subnet_prefix;
+        uint16_t dest_lid;
+        uint8_t port_num;
+    };
+    std::unordered_map<uint32_t /*src_qpn*/, QpConnectionEntry> m_qp_connections;
+    // ================================================
+
+    // ================================================
     // Stats
     std::atomic<int> num_nic_accesses{0};
     std::atomic<int> num_nic_doorbell_accesses{0};
@@ -197,6 +234,48 @@ struct ProfilerCtx {
 
         std::cout << "[Profiler] doorbell_submitted: " << std::dec << doorbell_submitted << std::endl;
         std::cout << "[Profiler] doorbell_skipped: " << std::dec << doorbell_skipped << std::endl;
+    }
+
+    // Emit CommunicationSummary events - must be called before EventRecorder destruction
+    void emit_communication_summaries() {
+        if (!m_event_recorder) {
+            return;
+        }
+
+        std::scoped_lock lock(m_qp_traffic_mutex);
+        for (const auto& [qpn, stats]: m_qp_traffic) {
+            uint32_t dest_qpn = 0;
+            uint16_t dest_lid = 0;
+            GpuId_T gpu_id = Profiler::Events::UnknownDeviceId;
+
+            const auto conn_it = m_qp_connections.find(qpn);
+            if (conn_it != m_qp_connections.end()) {
+                dest_qpn = conn_it->second.dest_qpn;
+                dest_lid = conn_it->second.dest_lid;
+            }
+
+            {
+                std::scoped_lock qp_lock(m_mlx5_qp_mutex);
+                const auto qp_it = m_mlx5_qp_info.find(qpn);
+                if (qp_it != m_mlx5_qp_info.end()) {
+                    gpu_id = qp_it->second.gpu_id;
+                }
+            }
+
+            const Profiler::Events::CommunicationSummary summary{
+                    .src_qpn = qpn,
+                    .dest_qpn = dest_qpn,
+                    .bytes_sent = stats.bytes_sent.load(),
+                    .bytes_recv = stats.bytes_recv.load(),
+                    .send_count = stats.send_count,
+                    .recv_count = stats.recv_count,
+                    .src_node_guid = 0,
+                    .dest_node_guid = 0,
+                    .gpu_id = gpu_id,
+                    .dest_lid = dest_lid,
+            };
+            m_event_recorder->Record(summary, 0);
+        }
     }
 
     // See Note[late_load]
@@ -492,12 +571,45 @@ struct ProfilerCtx {
                 return;
             }
 
+            const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
+
             const Profiler::Events::IbvModifyQp event{
-                    .context_addr = reinterpret_cast<uint64_t>(qp->context),
+                    .context_addr = context_addr,
                     .qp_num = qp->qp_num,
                     .attr = *attr,
             };
             instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+            // Extract and record QP connection info
+            const auto dest_qpn = attr->dest_qp_num;
+            const auto& dgid = attr->ah_attr.grh.dgid;
+            const auto dest_interface_id = be64toh(dgid.global.interface_id);
+            const auto dest_subnet_prefix = be64toh(dgid.global.subnet_prefix);
+            const auto dest_lid = attr->ah_attr.dlid;
+            const auto port_num = attr->ah_attr.port_num;
+
+            const Profiler::Events::QpConnectionInfo conn_event{
+                    .context_addr = context_addr,
+                    .src_qpn = qp->qp_num,
+                    .dest_qpn = dest_qpn,
+                    .dest_interface_id = dest_interface_id,
+                    .dest_subnet_prefix = dest_subnet_prefix,
+                    .dest_lid = dest_lid,
+                    .port_num = port_num,
+            };
+            instance().m_event_recorder->Record(conn_event, ts_start + 1, ts_end - 1);
+
+            // Store connection info for shutdown summary
+            auto& profiler = instance();
+            std::scoped_lock lock(profiler.m_qp_traffic_mutex);
+            profiler.m_qp_connections[qp->qp_num] = ProfilerCtx::QpConnectionEntry{
+                    .context_addr = context_addr,
+                    .dest_qpn = dest_qpn,
+                    .dest_interface_id = dest_interface_id,
+                    .dest_subnet_prefix = dest_subnet_prefix,
+                    .dest_lid = dest_lid,
+                    .port_num = port_num,
+            };
         });
 
         // ================================================
@@ -536,6 +648,8 @@ struct ProfilerCtx {
                     .qp_num = qp->qp_num,
             };
 
+            uint64_t total_bytes_sent = 0;
+
             // TODO: probably an ibv lib function for this
             for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
                 post_send_event.num_wrs += 1;
@@ -549,25 +663,20 @@ struct ProfilerCtx {
                 };
                 instance().m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
 
-                // TODO: sg stuff isn't really needed...
-                /*
+                // Sum scatter-gather lengths for traffic accounting
                 for (auto sg_idx = 0; sg_idx < wr_it->num_sge; sg_idx++) {
-                    const auto& sg = wr_it->sg_list[sg_idx];
-
-                    const auto sg_addr = sg.addr;
-                    const auto sg_length = static_cast<size_t>(sg.length);
-
-                    const Profiler::Events::IbvPostSendSg wr_sg_event{
-                            .context_addr = context_addr,
-                            .qp_num = qp->qp_num,
-                            .wr_id = wr_it->wr_id,
-                            .addr = sg_addr,
-                            .length = sg_length,
-                            .lkey = sg.lkey,
-                    };
-                    m_event_recorder->Record(wr_sg_event, ts_start + 2, ts_end - 2);
+                    total_bytes_sent += wr_it->sg_list[sg_idx].length;
                 }
-                */
+            }
+
+            // TODO: eliminate lock
+            // Accumulate send bytes for communication graph
+            if (total_bytes_sent > 0) {
+                auto& profiler = instance();
+                std::scoped_lock lock(profiler.m_qp_traffic_mutex);
+                auto& stats = profiler.m_qp_traffic[qp->qp_num];
+                stats.bytes_sent += total_bytes_sent;
+                stats.send_count += post_send_event.num_wrs;
             }
 
             instance().m_event_recorder->Record(post_send_event, ts_start, ts_end);
@@ -630,17 +739,20 @@ struct ProfilerCtx {
                         .context_addr = PtrToUint(cq->context),
                         .wr_id = wc_entry.wr_id,
                         .qp_num = wc_entry.qp_num,
+                        .opcode = wc_entry.opcode,
+                        .status = wc_entry.status,
+                        .byte_len = wc_entry.byte_len,
                 };
                 instance().m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
 
-                /*
-                auto handle = m_event_recorder->GetSlot<Profiler::Events::IbvCompletion>(ts_start + 1, ts_end - 1);
-                auto* completion_event = handle.get();
-
-                completion_event->context_addr = PtrToUint(cq->context);
-                completion_event->wr_id = wc_entry.wr_id;
-                completion_event->qp_num = wc_entry.qp_num;
-                */
+                // Accumulate recv bytes from completions
+                if (wc_entry.opcode & IBV_WC_RECV) {
+                    auto& profiler = instance();
+                    std::scoped_lock lock(profiler.m_qp_traffic_mutex);
+                    auto& stats = profiler.m_qp_traffic[wc_entry.qp_num];
+                    stats.bytes_recv += wc_entry.byte_len;
+                    stats.recv_count++;
+                }
             }
         });
     }
@@ -680,7 +792,7 @@ struct ProfilerCtx {
 
             if (mlx5_cmd_opcode == MLX5_CMD_OP_CREATE_QP) {
                 // ================================================
-                const auto wg_qp_id = DEVX_GET(create_qp_in, cmd_in, uid);
+                // const auto wg_qp_id = DEVX_GET(create_qp_in, cmd_in, uid);
 
                 auto& profiler = instance();
 
@@ -691,7 +803,7 @@ struct ProfilerCtx {
                 // If not, we don't need to parse all this since they there won't be doorbells
                 // TODO: this is probably wrong, UMEM reg GPU discovery can fail
                 const auto wq_umem_id = DEVX_GET(create_qp_in, cmd_in, wq_umem_id);
-                const auto wq_umem_offset = DEVX_GET(create_qp_in, cmd_in, wq_umem_offset);
+                [[maybe_unused]] const auto wq_umem_offset = DEVX_GET(create_qp_in, cmd_in, wq_umem_offset);
 
                 GpuId_T gpu_id{};
                 cudaMemoryType gpu_mem_type{};
@@ -715,9 +827,9 @@ struct ProfilerCtx {
                     sq_base = reinterpret_cast<void*>(umem_gpu_addr);
                 }
 
-                const auto* in_qp_context = DEVX_ADDR_OF(create_qp_in, cmd_in, qpc);
+                const auto* in_qp_context = DEVX_ADDR_OF(create_qp_in, const_cast<void*>(cmd_in), qpc);
                 [[maybe_unused]] const auto* out_qp_context = DEVX_ADDR_OF(create_qp_in, cmd_out, qpc);
-                const auto wq_umem_offset_raw = DEVX_GET64(create_qp_in, cmd_in, wq_umem_offset);
+                [[maybe_unused]] const auto wq_umem_offset_raw = DEVX_GET64(create_qp_in, cmd_in, wq_umem_offset);
 
 #ifdef SIGMA_DEBUG
                 fprintf(stderr, "[create_qp] wq_umem_offset (DEVX_GET64) = %lu (0x%lx)\n", wq_umem_offset_raw,
@@ -726,7 +838,8 @@ struct ProfilerCtx {
 
                 // const auto out_qpn =  DEVX_GET(create_qp_out, cmd_out, qpn);
                 const auto log_sq_size = DEVX_GET(qpc, in_qp_context, log_sq_size);
-                const auto log_rq_size = DEVX_GET(qpc, in_qp_context, log_rq_size);
+                [[maybe_unused]] const auto log_rq_size = DEVX_GET(qpc, in_qp_context, log_rq_size);
+                const auto st = DEVX_GET(qpc, in_qp_context, st); // transport service type (0x5 = DCI)
 
 #ifdef SIGMA_DEBUG
                 fprintf(stderr,
@@ -764,6 +877,7 @@ struct ProfilerCtx {
                         .qpn = out_qpn,
                         .gpu_id = gpu_id,
                         .gpu_mem_type = gpu_mem_type,
+                        .service_type = static_cast<uint8_t>(st),
                 };
                 // TODO:
                 {
@@ -797,6 +911,70 @@ struct ProfilerCtx {
                 const auto cq_doorbell_offset = DEVX_GET64(cqc, cq_context, dbr_addr);
                 sigma_ignore_unused(cq_doorbell_offset);
                 // ================================================
+            }
+        });
+
+        m_mlx5dv_profiler->register_post<mlx5dv::obj_modify_tag>(
+                [](int, mlx5dv_devx_obj*, const void* cmd_in, size_t, void*, size_t, auto...) {
+            const auto mlx5_cmd_opcode = DEVX_GET(init2rtr_qp_in, cmd_in, opcode);
+
+            if (mlx5_cmd_opcode == MLX5_CMD_OP_INIT2RTR_QP) {
+                auto* qp_context = DEVX_ADDR_OF(init2rtr_qp_in, const_cast<void*>(cmd_in), qpc);
+                const auto qp_remote_qpn = DEVX_GET(qpc, qp_context, remote_qpn);
+                const auto qp_qpn = DEVX_GET(init2rtr_qp_in, cmd_in, qpn);
+
+                // Extract GID and LID from QP context
+                // primary_address_path contains dgid, dlid, port
+                const auto* pri_path = DEVX_ADDR_OF(qpc, qp_context, primary_address_path);
+                const auto dest_lid = static_cast<uint16_t>(DEVX_GET(ads, pri_path, rlid));
+                const auto port_num = static_cast<uint8_t>(DEVX_GET(ads, pri_path, vhca_port_num));
+
+                // Extract destination GID (16 bytes at rgid_rip offset)
+                const auto* rgid_bytes =
+                        reinterpret_cast<const uint8_t*>(DEVX_ADDR_OF(ads, const_cast<uint8_t*>(pri_path), rgid_rip));
+                uint64_t dest_subnet_prefix = 0;
+                uint64_t dest_interface_id = 0;
+                std::memcpy(&dest_subnet_prefix, rgid_bytes, 8);
+                std::memcpy(&dest_interface_id, rgid_bytes + 8, 8);
+                dest_subnet_prefix = be64toh(dest_subnet_prefix);
+                dest_interface_id = be64toh(dest_interface_id);
+
+                // Emit QpConnectionInfo event
+                const Profiler::Events::QpConnectionInfo conn_event{
+                        .context_addr = 0, // no ibv_context available in mlx5dv path
+                        .src_qpn = qp_qpn,
+                        .dest_qpn = qp_remote_qpn,
+                        .dest_interface_id = dest_interface_id,
+                        .dest_subnet_prefix = dest_subnet_prefix,
+                        .dest_lid = dest_lid,
+                        .port_num = port_num,
+                };
+                instance().m_event_recorder->Record(conn_event, 0);
+
+                // Store in QpInfo for doorbell correlation
+                auto& profiler = instance();
+                {
+                    std::scoped_lock lock(profiler.m_mlx5_qp_mutex);
+                    auto it = profiler.m_mlx5_qp_info.find(qp_qpn);
+                    if (it != profiler.m_mlx5_qp_info.end()) {
+                        it->second.dest_qpn = qp_remote_qpn;
+                        it->second.dest_interface_id = dest_interface_id;
+                        it->second.dest_lid = dest_lid;
+                    }
+                }
+
+                // Store connection for shutdown summary
+                {
+                    std::scoped_lock lock(profiler.m_qp_traffic_mutex);
+                    profiler.m_qp_connections[qp_qpn] = ProfilerCtx::QpConnectionEntry{
+                            .context_addr = 0,
+                            .dest_qpn = qp_remote_qpn,
+                            .dest_interface_id = dest_interface_id,
+                            .dest_subnet_prefix = dest_subnet_prefix,
+                            .dest_lid = dest_lid,
+                            .port_num = port_num,
+                    };
+                }
             }
         });
 
@@ -1298,6 +1476,10 @@ namespace Profiler::hijack {
 
         // wqe_buf/qp_info.sq_base is inaccessible from host, we need to copy it over
         if (qp_info.gpu_mem_type == cudaMemoryTypeDevice) {
+            // Capture timestamp and save pending doorbell for deferred byte count resolution
+            const auto ts = profiler.m_event_recorder->timestamp_source().now();
+            qp_info.pending_doorbells.push_back({dbr_prod_id, ts});
+
             if (!qp_info._has_pending) {
                 qp_info._oldest_uncopied_prod_id = last_prod_id;
                 qp_info._has_pending = true;
@@ -1350,6 +1532,11 @@ namespace Profiler::hijack {
                 }
                 CU_CHECK(cuStreamSynchronize(cu_stream));
 
+                uint64_t batch_bytes_sent = 0;
+
+                // Per-WQE byte counts keyed by end prod_id (for matching with pending doorbells)
+                std::unordered_map<uint32_t, uint64_t> wqe_bytes_by_end_prod_id;
+
                 for (uint32_t i = 0, prod_id = prod_id_start; prod_id < prod_id_end;) {
                     const uint8_t* wqe = host_wqe_buf + i * WQEBB_SIZE;
                     const auto* ctrl = reinterpret_cast<const mlx5_wqe_ctrl_seg*>(wqe);
@@ -1364,11 +1551,81 @@ namespace Profiler::hijack {
                         std::abort();
                     }
 
+                    // Parse WQE segments to extract byte count
+                    // ctrl_seg is 16B (1 ds unit). Remaining ds units are data/raddr segments.
+                    const uint32_t opmod_idx_opcode = be32toh(ctrl->opmod_idx_opcode);
+                    const uint8_t opcode = opmod_idx_opcode & 0xFF;
+                    // Only parse data_segs for opcodes with known WQE layouts
+                    // RDMA_WRITE (0x08), RDMA_READ (0x10): ctrl + [datagram] + raddr + data_segs
+                    // SEND (0x0A): ctrl + [datagram] + data_segs
+                    // Skip NOP (0x00), UMR (0x14), and other opcodes with different layouts
+                    const bool has_raddr = (opcode == 0x08 || opcode == 0x10);
+                    const bool has_data_segs = (opcode == 0x08 || opcode == 0x10 || opcode == 0x0A);
+
+                    uint64_t wqe_bytes = 0;
+                    if (has_data_segs && wqe_ds > 1) {
+                        const uint8_t* seg_ptr = wqe + 16;  // past ctrl_seg (16B)
+                        uint32_t remaining_ds = wqe_ds - 1; // ds units after ctrl
+
+                        // DCI QPs (st=0x5) have a 64B datagram/AV segment (4 ds units) after ctrl_seg
+                        if (qp_info.service_type == 0x5 && remaining_ds >= 4) {
+                            seg_ptr += 64;
+                            remaining_ds -= 4;
+                        }
+
+                        if (has_raddr && remaining_ds >= 1) {
+                            // Skip mlx5_wqe_raddr_seg (16B = 1 ds unit)
+                            seg_ptr += 16;
+                            remaining_ds -= 1;
+                        }
+
+                        // Parse data segments (each 16B): byte_count(4B) + lkey(4B) + addr(8B)
+                        // Bit 31 of byte_count is the inline data flag in MLX5; mask it off
+                        while (remaining_ds >= 1) {
+                            const uint32_t byte_count =
+                                    be32toh(*reinterpret_cast<const uint32_t*>(seg_ptr)) & 0x7FFFFFFF;
+                            wqe_bytes += byte_count;
+                            seg_ptr += 16;
+                            remaining_ds -= 1;
+                        }
+                    }
+
+                    batch_bytes_sent += wqe_bytes;
+
                     // ds is in 16B units; advance by whole WQEBBs (64B each = 4 ds units)
                     const uint32_t wqebbs = (wqe_ds + 3) / 4;
                     i += wqebbs;
                     prod_id += wqebbs;
+
+                    // Map end prod_id to byte count for doorbell correlation
+                    wqe_bytes_by_end_prod_id[prod_id] = wqe_bytes;
                 }
+
+                // Accumulate doorbell-path bytes
+                if (batch_bytes_sent > 0) {
+                    std::scoped_lock lock(profiler.m_qp_traffic_mutex);
+                    profiler.m_qp_traffic[dbr_qpn].bytes_sent += batch_bytes_sent;
+                }
+
+                // Emit per-doorbell DoorbellRing events with their original timestamps and computed bytes
+                for (const auto& pending: qp_info.pending_doorbells) {
+                    uint64_t doorbell_bytes = 0;
+                    const auto it = wqe_bytes_by_end_prod_id.find(pending.prod_id);
+                    if (it != wqe_bytes_by_end_prod_id.end()) {
+                        doorbell_bytes = it->second;
+                    }
+
+                    const Profiler::Events::DoorbellRing event{
+                            .addr = 0,
+                            .prod_index = pending.prod_id,
+                            .qp_num = dbr_qpn,
+                            .gpu_id = qp_info.gpu_id,
+                            .is_cpu_hijack = true,
+                            .bytes_sent = doorbell_bytes,
+                    };
+                    profiler.m_event_recorder->Record(event, pending.timestamp);
+                }
+                qp_info.pending_doorbells.clear();
 
                 qp_info._oldest_uncopied_prod_id = dbr_prod_id;
                 qp_info._has_pending = false;
@@ -1380,15 +1637,6 @@ namespace Profiler::hijack {
         }
         assert(qp_info.gpu_id >= 0 && "qp_info GPU ID is not valid in a GPU Doorbell hook");
 
-        // const Profiler::Events::DoorbellRing event{
-        //         .addr = 0,                 // reinterpret_cast<uint64_t>(reg_addr_real),
-        //         .fake_addr = 0,            // reinterpret_cast<uint64_t>(fake_reg_addr),
-        //         .prod_index = dbr_prod_id, // TODO
-        //         .qp_num = dbr_qpn,
-        //         .gpu_id = qp_info.gpu_id, // TODO
-        //         .is_cpu_hijack = true,
-        // };
-        // profiler.m_event_recorder->Record(event);
         profiler.num_fake_nic_accesses.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -1500,6 +1748,10 @@ static void __attribute__((constructor)) init() {
 }
 
 static void __attribute__((destructor)) finalize() {
+    // Emit CommunicationSummary events before the EventRecorder is destroyed
+    // (static destruction order would destroy the recorder before ProfilerCtx)
+    auto& profiler = ProfilerCtx::instance();
+    profiler.emit_communication_summaries();
     std::cout << "[Profiler] Exited Normally!" << std::endl;
 }
 
