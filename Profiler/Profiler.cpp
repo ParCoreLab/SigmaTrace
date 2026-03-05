@@ -34,6 +34,7 @@ int main(int argc, char* argv[]) {
             .LoadCupti = true,
             .LoadLibfabric = true,
             .LoadUcx = true,
+            .EnableDoorbellHijack = true,
     };
 
     std::vector<std::filesystem::path> shim_libs{};

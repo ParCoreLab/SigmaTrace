@@ -20,23 +20,28 @@ namespace Profiler {
 
         std::filesystem::path ShimDir{};
 
+        // Providers
         bool LoadIbtrace{true};
         bool LoadMlx5dv{true};
         bool LoadCupti{false};
         bool LoadLibfabric{false};
         bool LoadUcx{false};
 
+        // Features
+        bool EnableDoorbellHijack{false};
+
         int Check{CheckVal};
 
-        [[nodiscard]] std::array<std::string, 7> to_env() const {
+        [[nodiscard]] std::array<std::string, 8> to_env() const {
             return {
-                    make_env_entry("ShimPath", ShimDir),            //
-                    make_env_entry("LoadIbtrace", LoadIbtrace),     //
-                    make_env_entry("LoadMlx5dv", LoadMlx5dv),       //
-                    make_env_entry("LoadCupti", LoadCupti),         //
-                    make_env_entry("LoadLibfabric", LoadLibfabric), //
-                    make_env_entry("LoadUcx", LoadUcx),             //
-                    make_env_entry("Check", Check),                 //
+                    make_env_entry("ShimPath", ShimDir),                          //
+                    make_env_entry("LoadIbtrace", LoadIbtrace),                   //
+                    make_env_entry("LoadMlx5dv", LoadMlx5dv),                     //
+                    make_env_entry("LoadCupti", LoadCupti),                       //
+                    make_env_entry("LoadLibfabric", LoadLibfabric),               //
+                    make_env_entry("LoadUcx", LoadUcx),                           //
+                    make_env_entry("EnableDoorbellHijack", EnableDoorbellHijack), //
+                    make_env_entry("Check", Check),                               //
             };
         }
 
@@ -49,6 +54,7 @@ namespace Profiler {
                     .LoadCupti = parse_env("LoadCupti", true),
                     .LoadLibfabric = parse_env("LoadLibfabric", false),
                     .LoadUcx = parse_env("LoadUcx", false),
+                    .EnableDoorbellHijack = parse_env("EnableDoorbellHijack", false),
                     .Check = parse_env("Check", 0),
             };
         }

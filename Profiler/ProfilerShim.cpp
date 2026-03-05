@@ -97,7 +97,12 @@ ProfilerCtx::ProfilerCtx() {
     }
 
     // Must be after mlx5dv
-    if (/* m_args.LoadDoorbell && */ m_args.LoadMlx5dv) {
+    if (m_args.EnableDoorbellHijack) {
+        if (!m_args.LoadMlx5dv) {
+            std::cerr << "[Profiler] mlx5dv hooks must be enabled for doorbell hijack support" << std::endl;
+            std::abort();
+        }
+
         load_doorbell_hijack();
     }
 

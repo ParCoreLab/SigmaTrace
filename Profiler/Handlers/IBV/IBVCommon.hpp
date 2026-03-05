@@ -49,7 +49,8 @@
  *     ├── LID: 23
  *     └── GID[0]: fe80::5678
  */
-static Profiler::Events::IbvOpenDevice register_nic(Events::EventRecorder<>* event_recorder, ibv_context* ctx, ibv_device* device) {
+static Profiler::Events::IbvOpenDevice register_nic(Events::EventRecorder<>* event_recorder, ibv_context* ctx,
+                                                    ibv_device* device) {
     using fn_query_port_t = int (*)(ibv_context* context, uint8_t port_num, ibv_port_attr* port_attr);
 
     static auto* libibverbs_handle = smart_dlsym::real_dlopen("libibverbs.so", smart_dlsym::DL_RTLD_NOW);
