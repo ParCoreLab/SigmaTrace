@@ -38,16 +38,16 @@ target_link_libraries(SanitizerMemoryTrackerFatbin PRIVATE SANITIZER)
 
 # ================================================================================================
 # API Trace Provider (also unused)
-Sigma_add_provider_library(SanitizerEventProvider SHARED SanitizerTrace.cpp)
-
-target_link_libraries(SanitizerEventProvider PRIVATE SANITIZER)
-target_include_directories(SanitizerEventProvider PRIVATE ${SANITIZER_INCLUDE_DIR})
-target_link_libraries(SanitizerEventProvider PUBLIC CUDATrace)
-
-set_target_properties(SanitizerEventProvider PROPERTIES
-        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
-        OUTPUT_NAME "sanitizer_trace"
-)
-
-target_link_libraries(SanitizerEventProvider PRIVATE CUDA::cudart)
+#Sigma_add_provider_library(SanitizerEventProvider SHARED SanitizerTrace.cpp)
+#
+#target_link_libraries(SanitizerEventProvider PRIVATE SANITIZER)
+#target_include_directories(SanitizerEventProvider PRIVATE ${SANITIZER_INCLUDE_DIR})
+#target_link_libraries(SanitizerEventProvider PUBLIC CUDATrace)
+#
+#set_target_properties(SanitizerEventProvider PROPERTIES
+#        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+#        OUTPUT_NAME "sanitizer_trace"
+#)
+#
+#target_link_libraries(SanitizerEventProvider PRIVATE CUDA::cudart)
 

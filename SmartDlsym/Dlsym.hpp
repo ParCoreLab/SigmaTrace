@@ -26,6 +26,7 @@ namespace smart_dlsym {
     extern void* (*real_dlopen)(const char*, int);
     extern void* (*real_dlsym)(void*, const char*);
     extern void* (*real_dlvsym)(void*, const char*, const char*);
+    extern void* (*real_dlclose)(void*);
     extern std::unordered_map<std::string, CallbackType> RegisteredSymbols;
 
     inline void register_symbol(std::string symbol_name, CallbackType callback) {

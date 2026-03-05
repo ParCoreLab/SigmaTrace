@@ -30,8 +30,6 @@ namespace Events {
         explicit ThreadLocalRingBuffer(auto&& header, const std::string& file_path) :
             m_current(0), m_file_buffer(std::forward<decltype(header)>(header), file_path) {}
 
-        ~ThreadLocalRingBuffer() = default;
-
         // Non-copyable, TODO: maybe movable
         ThreadLocalRingBuffer(const ThreadLocalRingBuffer&) = delete;
         ThreadLocalRingBuffer& operator=(const ThreadLocalRingBuffer&) = delete;
@@ -94,6 +92,10 @@ namespace Events {
             m_file_buffer.flush();
         }
 
+        void finalize() noexcept {
+            m_file_buffer.finalize();
+        }
+
         auto current_idx() const noexcept {
             return m_current;
         }
@@ -113,6 +115,7 @@ namespace Events {
         alignas(CACHE_LINE_SIZE) uint64_t m_current;
 
         // Mmap: zero syscalls during recording, writes go to page cache via memory stores
+        // FileIO::StreamBackedBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
         FileIO::MmapBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
     };
 
@@ -197,6 +200,10 @@ namespace Events {
 
         void flush() {
             m_buffer.flush();
+        }
+
+        void finalize() noexcept {
+            m_buffer.finalize();
         }
 
         auto dropped_count() const noexcept {

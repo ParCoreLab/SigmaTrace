@@ -44,12 +44,13 @@ namespace cuda_trace {
     };
 
     template<typename Derived>
-    class CUDAAPIEventSource : public hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int,
-                                                                 cuda_kernel_launch_tag, cuda_kernel_exit_tag> {
+    class CUDAAPIEventSource
+        : public hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, cuda_device_available_tag,
+                                            cuda_kernel_launch_tag, cuda_kernel_exit_tag> {
 
         // TODO: too verbose
-        using Base = hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, cuda_kernel_launch_tag,
-                                                cuda_kernel_exit_tag>;
+        using Base = hook::CompositeHookManager<Derived, hook::DefaultHookManagerConfig, int, cuda_device_available_tag,
+                                                cuda_kernel_launch_tag, cuda_kernel_exit_tag>;
 
     public:
         using Context = Base::Context;
@@ -64,6 +65,9 @@ namespace cuda_trace {
 
     struct CUPTIEventSource : CUDAAPIEventSource<CUPTIEventSource> {
         CUPTIEventSource();
+        ~CUPTIEventSource();
+
+        void subscribe_cupti();
     };
 
 } // namespace cuda_trace

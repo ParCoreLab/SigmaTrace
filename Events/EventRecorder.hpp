@@ -16,16 +16,9 @@ namespace Events {
         using TS = Config::TimestampSourceType;
 
     public:
-        /*
-         * TODO: maybe this shouldn't be a singleton so we
-         * can have multiple recorders with different configs
-         * and timestamp sources?
-         * Maybe it should be a unique_ptr even
-         * This is some really weird code
-         */
-        static EventRecorder& instance(RuntimeConfig&& config = RuntimeConfig{}) {
-            static EventRecorder recorder(config);
-            return recorder;
+        // Construct with custom runtime configuration
+        explicit EventRecorder(RuntimeConfig config = RuntimeConfig{}) : m_runtime_config(std::move(config)) {
+            m_runtime_config.ensure_output_directory();
         }
 
         // Non-copyable
@@ -93,11 +86,6 @@ namespace Events {
         }
 
     private:
-        // Construct with custom runtime configuration
-        explicit EventRecorder(RuntimeConfig config = RuntimeConfig{}) : m_runtime_config(std::move(config)) {
-            m_runtime_config.ensure_output_directory();
-        }
-
         TS m_timestamp_source{};
         RuntimeConfig m_runtime_config{};
     };

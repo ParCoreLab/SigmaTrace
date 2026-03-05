@@ -18,7 +18,18 @@ add_subdirectory(Modules/MemoryHijack)
 
 # ================================================================
 # Master LD_PRELOAD Shim for the Profiler
-Sigma_add_library(ProfilerShim SHARED ProfilerShim.cpp ProfilerArgs.hpp ProfilerProviders.hpp)
+Sigma_add_library(ProfilerShim SHARED
+        ProfilerShim.hpp ProfilerShim.cpp
+        Handlers/Common.hpp
+        Handlers/CUDAHijack.cpp
+        Handlers/CUPTI.cpp
+        Handlers/IBV/IBVCommon.hpp
+        Handlers/IBV/Ibverbs.cpp
+        Handlers/IBV/Mlx5dv.cpp
+        Handlers/Libfabric.cpp
+        Handlers/UCX.cpp
+        ProfilerArgs.hpp
+        ProfilerProviders.hpp)
 
 foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     # Internal headers coped from NVSHMEM/rdma-core tree
@@ -54,10 +65,10 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
 
     # Shim providers
     Sigma_profiler_link_provider(${ProfilerShimTarget} IbverbsTraceShared)
-    # Sigma_profiler_link_provider(${ProfilerShimTarget} NvbitMemoryTrackerShared)
     Sigma_profiler_link_provider(${ProfilerShimTarget} Mlx5dvTraceShared)
-    #    Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
     Sigma_profiler_link_provider(${ProfilerShimTarget} CuptiEventProvider)
+    # Sigma_profiler_link_provider(${ProfilerShimTarget} NvbitMemoryTrackerShared)
+    # Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
 
     if (LIBFABRIC_FOUND)
         Sigma_profiler_link_provider(${ProfilerShimTarget} LibfabricTraceShared)

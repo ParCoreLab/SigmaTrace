@@ -1,15 +1,19 @@
 #include <cstdio>
 
 #include <iostream>
+#include <thread>
 
 #include <cuda.h>
 #include <cupti.h>
 
 #include "CUDAEventSource.hpp"
+#include "Helpers/CudaHelpers.hpp"
 
-namespace cuda_trace {
-    CUPTIEventSource::CUPTIEventSource() = default;
-} // namespace cuda_trace
+static constexpr size_t BUF_SIZE = 8 * 1024;
+static constexpr size_t ALIGN_SIZE = 8;
+
+#define ALIGN_BUFFER(buffer, align)                                                                                    \
+    (((uintptr_t) (buffer) & ((align) - 1)) ? ((buffer) + (align) - ((uintptr_t) (buffer) & ((align) - 1))) : (buffer))
 
 // https://github.com/eunomia-bpf/cupti-tutorial/blob/master/activity_trace_async/activity_trace_async.cpp
 #define CUPTI_CHECK(call)                                                                                              \
@@ -23,324 +27,166 @@ namespace cuda_trace {
         }                                                                                                              \
     } while (0)
 
-// #define BUF_SIZE (32 * 1024)
-static constexpr size_t BUF_SIZE = 8 * 1024 * 1024; // 8MB
-#define ALIGN_SIZE (8)
-#define ALIGN_BUFFER(buffer, align)                                                                                    \
-    (((uintptr_t) (buffer) & ((align) - 1)) ? ((buffer) + (align) - ((uintptr_t) (buffer) & ((align) - 1))) : (buffer))
 
-// Timestamp at trace initialization time. Used to normalized other
-// timestamps
-static uint64_t startTimestamp;
+namespace cuda_trace {
+    CUPTIEventSource::CUPTIEventSource() = default;
+    CUPTIEventSource::~CUPTIEventSource() = default;
+} // namespace cuda_trace
 
-static const char* getMemcpyKindString(CUpti_ActivityMemcpyKind kind) {
-    switch (kind) {
-        case CUPTI_ACTIVITY_MEMCPY_KIND_HTOD:
-            return "HtoD";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_DTOH:
-            return "DtoH";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_HTOA:
-            return "HtoA";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_ATOH:
-            return "AtoH";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_ATOA:
-            return "AtoA";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_ATOD:
-            return "AtoD";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_DTOA:
-            return "DtoA";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_DTOD:
-            return "DtoD";
-        case CUPTI_ACTIVITY_MEMCPY_KIND_HTOH:
-            return "HtoH";
-        default:
-            break;
-    }
+namespace cuda_trace {
+    namespace detail {
+        static CUpti_SubscriberHandle g_cupti_subscriber{};
+        // Timestamp at trace initialization time.
+        // Will be used  to normalize other timestamps
+        static uint64_t g_cupti_start_timestamp;
+    } // namespace detail
 
-    return "<unknown>";
-}
+    static void CUPTIAPI on_cupti_callback(void*, CUpti_CallbackDomain domain_id, CUpti_CallbackId,
+                                           [[maybe_unused]] const void* cbdata) {
+        switch (domain_id) {
+            case CUPTI_CB_DOMAIN_SYNCHRONIZE: {
+                // Cannot call cuptiActivityFlushAll here (or from another thread while this
+                // callback is active) - CUPTI holds a global lock during callback dispatch.
+                // Flushing is done from the atexit handler in ProfilerShim instead.
 
-const char* getActivityOverheadKindString(CUpti_ActivityOverheadKind kind) {
-    switch (kind) {
-        case CUPTI_ACTIVITY_OVERHEAD_DRIVER_COMPILER:
-            return "COMPILER";
-        case CUPTI_ACTIVITY_OVERHEAD_CUPTI_BUFFER_FLUSH:
-            return "BUFFER_FLUSH";
-        case CUPTI_ACTIVITY_OVERHEAD_CUPTI_INSTRUMENTATION:
-            return "INSTRUMENTATION";
-        case CUPTI_ACTIVITY_OVERHEAD_CUPTI_RESOURCE:
-            return "RESOURCE";
-        default:
-            break;
-    }
-
-    return "<unknown>";
-}
-
-const char* getActivityObjectKindString(CUpti_ActivityObjectKind kind) {
-    switch (kind) {
-        case CUPTI_ACTIVITY_OBJECT_PROCESS:
-            return "PROCESS";
-        case CUPTI_ACTIVITY_OBJECT_THREAD:
-            return "THREAD";
-        case CUPTI_ACTIVITY_OBJECT_DEVICE:
-            return "DEVICE";
-        case CUPTI_ACTIVITY_OBJECT_CONTEXT:
-            return "CONTEXT";
-        case CUPTI_ACTIVITY_OBJECT_STREAM:
-            return "STREAM";
-        default:
-            break;
-    }
-
-    return "<unknown>";
-}
-
-uint32_t getActivityObjectKindId(CUpti_ActivityObjectKind kind, CUpti_ActivityObjectKindId* id) {
-    switch (kind) {
-        case CUPTI_ACTIVITY_OBJECT_PROCESS:
-            return id->pt.processId;
-        case CUPTI_ACTIVITY_OBJECT_THREAD:
-            return id->pt.threadId;
-        case CUPTI_ACTIVITY_OBJECT_DEVICE:
-            return id->dcs.deviceId;
-        case CUPTI_ACTIVITY_OBJECT_CONTEXT:
-            return id->dcs.contextId;
-        case CUPTI_ACTIVITY_OBJECT_STREAM:
-            return id->dcs.streamId;
-        default:
-            break;
-    }
-
-    return 0xffffffff;
-}
-
-static const char* getComputeApiKindString(CUpti_ActivityComputeApiKind kind) {
-    switch (kind) {
-        case CUPTI_ACTIVITY_COMPUTE_API_CUDA:
-            return "CUDA";
-        case CUPTI_ACTIVITY_COMPUTE_API_CUDA_MPS:
-            return "CUDA_MPS";
-        default:
-            break;
-    }
-
-    return "<unknown>";
-}
-
-static void printActivity(CUpti_Activity* record) {
-    auto& profiler = cuda_trace::CUPTIEventSource::instance();
-
-    switch (record->kind) {
-        case CUPTI_ACTIVITY_KIND_DEVICE: {
-            CUpti_ActivityDevice2* device = (CUpti_ActivityDevice2*) record;
-            printf("DEVICE %s (%u), capability %u.%u, global memory (bandwidth %u GB/s, size %u MB), "
-                   "multiprocessors %u, clock %u MHz\n",
-                   device->name, device->id, device->computeCapabilityMajor, device->computeCapabilityMinor,
-                   (unsigned int) (device->globalMemoryBandwidth / 1024 / 1024),
-                   (unsigned int) (device->globalMemorySize / 1024 / 1024), device->numMultiprocessors,
-                   (unsigned int) (device->coreClockRate / 1000));
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_DEVICE_ATTRIBUTE: {
-            CUpti_ActivityDeviceAttribute* attribute = (CUpti_ActivityDeviceAttribute*) record;
-            printf("DEVICE_ATTRIBUTE %u, device %u, value=0x%llx\n", attribute->attribute.cupti, attribute->deviceId,
-                   (unsigned long long) attribute->value.vUint64);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_CONTEXT: {
-            CUpti_ActivityContext* context = (CUpti_ActivityContext*) record;
-            printf("CONTEXT %u, device %u, compute API %s, NULL stream %d\n", context->contextId, context->deviceId,
-                   getComputeApiKindString((CUpti_ActivityComputeApiKind) context->computeApiKind),
-                   (int) context->nullStreamId);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_MEMCPY: {
-            CUpti_ActivityMemcpy* memcpy = (CUpti_ActivityMemcpy*) record;
-            printf("MEMCPY %s [ %llu - %llu ] device %u, context %u, stream %u, correlation %u/r%u\n",
-                   getMemcpyKindString((CUpti_ActivityMemcpyKind) memcpy->copyKind),
-                   (unsigned long long) (memcpy->start - startTimestamp),
-                   (unsigned long long) (memcpy->end - startTimestamp), memcpy->deviceId, memcpy->contextId,
-                   memcpy->streamId, memcpy->correlationId, memcpy->runtimeCorrelationId);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_MEMSET: {
-            CUpti_ActivityMemset* memset = (CUpti_ActivityMemset*) record;
-            printf("MEMSET value=%u [ %llu - %llu ] device %u, context %u, stream %u, correlation %u\n", memset->value,
-                   (unsigned long long) (memset->start - startTimestamp),
-                   (unsigned long long) (memset->end - startTimestamp), memset->deviceId, memset->contextId,
-                   memset->streamId, memset->correlationId);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_KERNEL:
-        case CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL: {
-            const char* kindString = (record->kind == CUPTI_ACTIVITY_KIND_KERNEL) ? "KERNEL" : "CONC KERNEL";
-            CUpti_ActivityKernel4* kernel = (CUpti_ActivityKernel4*) record;
-
-            printf("CUPTI KERNEL LAUNCH\n");
-
-            // profiler.invoke_custom_ts<cuda_trace::cuda_kernel_launch_tag>(kernel->start, kernel->deviceId,
-            // kernel->name); profiler.invoke_custom_ts<cuda_trace::cuda_kernel_exit_tag>(kernel->end, kernel->deviceId,
-            // kernel->name);
-
-            printf("%s \"%s\" [ %llu - %llu ] device %u, context %u, stream %u, correlation %u\n", kindString,
-                   kernel->name, (unsigned long long) (kernel->start - startTimestamp),
-                   (unsigned long long) (kernel->end - startTimestamp), kernel->deviceId, kernel->contextId,
-                   kernel->streamId, kernel->correlationId);
-            printf("    grid [%u,%u,%u], block [%u,%u,%u], shared memory (static %u, dynamic %u)\n", kernel->gridX,
-                   kernel->gridY, kernel->gridZ, kernel->blockX, kernel->blockY, kernel->blockZ,
-                   kernel->staticSharedMemory, kernel->dynamicSharedMemory);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_DRIVER: {
-            CUpti_ActivityAPI* api = (CUpti_ActivityAPI*) record;
-            printf("DRIVER cbid=%u [ %llu - %llu ] process %u, thread %u, correlation %u\n", api->cbid,
-                   (unsigned long long) (api->start - startTimestamp), (unsigned long long) (api->end - startTimestamp),
-                   api->processId, api->threadId, api->correlationId);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_RUNTIME: {
-            CUpti_ActivityAPI* api = (CUpti_ActivityAPI*) record;
-            printf("RUNTIME cbid=%u [ %llu - %llu ] process %u, thread %u, correlation %u\n", api->cbid,
-                   (unsigned long long) (api->start - startTimestamp), (unsigned long long) (api->end - startTimestamp),
-                   api->processId, api->threadId, api->correlationId);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_NAME: {
-            CUpti_ActivityName* name = (CUpti_ActivityName*) record;
-            switch (name->objectKind) {
-                case CUPTI_ACTIVITY_OBJECT_CONTEXT:
-                    printf("NAME  %s %u %s id %u, name %s\n", getActivityObjectKindString(name->objectKind),
-                           getActivityObjectKindId(name->objectKind, &name->objectId),
-                           getActivityObjectKindString(CUPTI_ACTIVITY_OBJECT_DEVICE),
-                           getActivityObjectKindId(CUPTI_ACTIVITY_OBJECT_DEVICE, &name->objectId), name->name);
-                    break;
-                case CUPTI_ACTIVITY_OBJECT_STREAM:
-                    printf("NAME %s %u %s %u %s id %u, name %s\n", getActivityObjectKindString(name->objectKind),
-                           getActivityObjectKindId(name->objectKind, &name->objectId),
-                           getActivityObjectKindString(CUPTI_ACTIVITY_OBJECT_CONTEXT),
-                           getActivityObjectKindId(CUPTI_ACTIVITY_OBJECT_CONTEXT, &name->objectId),
-                           getActivityObjectKindString(CUPTI_ACTIVITY_OBJECT_DEVICE),
-                           getActivityObjectKindId(CUPTI_ACTIVITY_OBJECT_DEVICE, &name->objectId), name->name);
-                    break;
-                default:
-                    printf("NAME %s id %u, name %s\n", getActivityObjectKindString(name->objectKind),
-                           getActivityObjectKindId(name->objectKind, &name->objectId), name->name);
-                    break;
+                // We don't join because this call is blocking and will block the cupti thread
+                // The whole thing is weird. I tried many permutations of flushing and what
+                // have you in other threads, destructor, etc., and this is unfortunately
+                // the only way that works consistently
+                // what's going on with cupti :(
+                std::thread([]() {
+                    CUPTI_CHECK(cuptiActivityFlushAll(0));
+                }).detach();
+                break;
             }
-            break;
+            case CUPTI_CB_DOMAIN_RESOURCE: {
+                break;
+            }
+
+            default: {
+                break;
+            }
         }
-        case CUPTI_ACTIVITY_KIND_MARKER: {
-            CUpti_ActivityMarker2* marker = (CUpti_ActivityMarker2*) record;
-            printf("MARKER id %u [ %llu ], name %s, domain %s\n", marker->id, (unsigned long long) marker->timestamp,
-                   marker->name, marker->domain);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_MARKER_DATA: {
-            CUpti_ActivityMarkerData* marker = (CUpti_ActivityMarkerData*) record;
-            printf("MARKER_DATA id %u, color 0x%x, category %u, payload %llu/%f\n", marker->id, marker->color,
-                   marker->category, (unsigned long long) marker->payload.metricValueUint64,
-                   marker->payload.metricValueDouble);
-            break;
-        }
-        case CUPTI_ACTIVITY_KIND_OVERHEAD: {
-            CUpti_ActivityOverhead* overhead = (CUpti_ActivityOverhead*) record;
-            printf("OVERHEAD %s [ %llu, %llu ] %s id %u\n", getActivityOverheadKindString(overhead->overheadKind),
-                   (unsigned long long) overhead->start - startTimestamp,
-                   (unsigned long long) overhead->end - startTimestamp,
-                   getActivityObjectKindString(overhead->objectKind),
-                   getActivityObjectKindId(overhead->objectKind, &overhead->objectId));
-            break;
-        }
-        default:
-            printf("  <unknown>\n");
-            break;
-    }
-}
-
-static void CUPTIAPI bufferRequested(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
-    *size = BUF_SIZE;
-    uint8_t* rawBuffer = static_cast<uint8_t*>(malloc(*size + ALIGN_SIZE));
-
-    *buffer = ALIGN_BUFFER(rawBuffer, ALIGN_SIZE);
-    *maxNumRecords = 0;
-
-    if (*buffer == nullptr) {
-        std::cerr << "[CUPTI] Failed allocating buffer" << std::endl;
-        exit(-1);
-    }
-}
-
-static void CUPTIAPI bufferCompleted(CUcontext ctx, uint32_t streamId, uint8_t* buffer, size_t size, size_t validSize) {
-    CUptiResult status{};
-    CUpti_Activity* record{nullptr};
-
-    do {
-        status = cuptiActivityGetNextRecord(buffer, validSize, &record);
-        if (status == CUPTI_SUCCESS) {
-            printActivity(record);
-        } else if (status == CUPTI_ERROR_MAX_LIMIT_REACHED) {
-            break;
-        } else {
-            CUPTI_CHECK(status);
-        }
-    } while (true);
-
-    // report any records dropped from the queue
-    size_t dropped;
-    CUPTI_CHECK(cuptiActivityGetNumDroppedRecords(ctx, streamId, &dropped));
-    if (dropped != 0) {
-        printf("Dropped %u activity records\n", (unsigned int) dropped);
     }
 
-    free(buffer);
-}
+    static void printActivity(CUpti_Activity* record) {
+        auto& profiler = CUPTIEventSource::instance();
 
-/*
-void initTrace() {
-    // device activity record is created when CUDA initializes, so we
-    // want to enable it before cuInit() or any CUDA runtime call
-    // CUPTI_CALL(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_DEVICE));
-    CUPTI_CALL(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_KERNEL));
+        switch (record->kind) {
+            case CUPTI_ACTIVITY_KIND_DEVICE: {
+                const auto* device = reinterpret_cast<CUpti_ActivityDevice5*>(record);
+                profiler.invoke_custom<cuda_device_available_tag>(device->id, device->uuid);
 
-    CUPTI_CALL(cuptiActivityRegisterCallbacks(bufferRequested, bufferCompleted));
+                /*
+                const unsigned int* uuid = reinterpret_cast<unsigned int*>(const_cast<char*>(device->uuid.bytes));
+                printf("[%u]: %02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x\n", device->id,
+                       uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9],
+                       uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]);
+                */
 
-    CUPTI_CALL(cuptiGetTimestamp(&startTimestamp));
-}
-*/
+                break;
+            }
+            case CUPTI_ACTIVITY_KIND_CONTEXT: {
+                [[maybe_unused]] const auto* context = reinterpret_cast<CUpti_ActivityContext3*>(record);
+                break;
+            }
+            case CUPTI_ACTIVITY_KIND_KERNEL:
+            case CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL: {
+                const auto* kernel = reinterpret_cast<CUpti_ActivityKernel10*>(record);
 
-void init_cupti_trace() {
-    static bool initialized{false};
-    if (initialized) {
-        return;
+                const auto device_id = kernel->deviceId;
+                const auto* kernel_name = kernel->name;
+
+                profiler.invoke_custom_ts<cuda_kernel_launch_tag>(kernel->start, device_id, kernel_name);
+                profiler.invoke_custom_ts<cuda_kernel_exit_tag>(kernel->end, device_id, kernel_name);
+
+                break;
+            }
+            default: {
+                break;
+            }
+        }
     }
-    initialized = true;
 
-    CUPTI_CHECK(cuptiActivityRegisterCallbacks(bufferRequested, bufferCompleted));
-    CUPTI_CHECK(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_KERNEL));
+    static void CUPTIAPI bufferRequested(uint8_t** buffer, size_t* size, size_t* maxNumRecords) {
+        *size = BUF_SIZE;
+        uint8_t* rawBuffer = static_cast<uint8_t*>(malloc(*size + ALIGN_SIZE));
 
-    CUPTI_CHECK(cuptiGetTimestamp(&startTimestamp));
-}
+        *buffer = ALIGN_BUFFER(rawBuffer, ALIGN_SIZE);
+        *maxNumRecords = 0;
 
-void finalize_cupti_trace() {
-    CUPTI_CHECK(cuptiActivityFlushAll(0));
-}
+        if (*buffer == nullptr) {
+            std::cerr << "[CUPTI] Failed allocating buffer" << std::endl;
+            exit(-1);
+        }
+    }
+
+    static void CUPTIAPI bufferCompleted(CUcontext ctx, uint32_t streamId, uint8_t* buffer, size_t, size_t validSize) {
+        CUptiResult status{};
+        CUpti_Activity* record{nullptr};
+
+        do {
+            status = cuptiActivityGetNextRecord(buffer, validSize, &record);
+            if (status == CUPTI_SUCCESS) {
+                printActivity(record);
+            } else if (status == CUPTI_ERROR_MAX_LIMIT_REACHED) {
+                break;
+            } else {
+                CUPTI_CHECK(status);
+            }
+        } while (true);
+
+        // report any records dropped from the queue
+        size_t dropped;
+        CUPTI_CHECK(cuptiActivityGetNumDroppedRecords(ctx, streamId, &dropped));
+        if (dropped != 0) {
+            printf("Dropped %u activity records\n", (unsigned int) dropped);
+        }
+
+        free(buffer);
+    }
+
+    void CUPTIEventSource::subscribe_cupti() {
+        // Just in case
+        CUPTI_CHECK(cuptiFinalize());
+
+        CUPTI_CHECK(cuptiActivityRegisterTimestampCallback(Helpers::TS::GettimeTimestampSource::Now));
+
+        // Callback
+        CUPTI_CHECK(cuptiSubscribe(&detail::g_cupti_subscriber, on_cupti_callback, nullptr));
+
+        CUPTI_CHECK(cuptiEnableCallback(1, detail::g_cupti_subscriber, CUPTI_CB_DOMAIN_SYNCHRONIZE,
+                                        CUPTI_CBID_SYNCHRONIZE_CONTEXT_SYNCHRONIZED));
+
+        /*
+        CUPTI_CHECK(cuptiEnableCallback(1, detail::g_cupti_subscriber, CUPTI_CB_DOMAIN_RESOURCE,
+                                        CUPTI_CBID_RESOURCE_CONTEXT_CREATED));
+        */
+
+        // Activity
+        CUPTI_CHECK(cuptiActivityRegisterCallbacks(bufferRequested, bufferCompleted));
+        CUPTI_CHECK(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONTEXT));
+        CUPTI_CHECK(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_DEVICE));
+        CUPTI_CHECK(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_KERNEL));
+
+        CUPTI_CHECK(cuptiGetTimestamp(&detail::g_cupti_start_timestamp));
+    }
+} // namespace cuda_trace
 
 static void __attribute__((constructor)) init() {
-    init_cupti_trace();
+    auto& profiler = cuda_trace::CUPTIEventSource::instance();
+    profiler.subscribe_cupti();
 }
 
-// static void __attribute__((destructor)) finalize() {
-//     CUPTI_CHECK(cuptiActivityFlushAll(0));
-// }
+static void __attribute__((destructor)) fini() {
+    // Breaks things
+    // CUPTI_CHECK(cuptiFinalize());
+}
 
-// namespace cuda_trace {
-//     CUPTIEventSource::~CUPTIEventSource() {
-//         finalize_cupti_trace();
-//     }
-// } // namespace cuda_trace
-
+// Accessor for late-loaded libraries to get the singleton instance via dlsym
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-declarations"
 extern "C" cuda_trace::CUPTIEventSource* sigma_provider_instance() {
-    init_cupti_trace();
     return &cuda_trace::CUPTIEventSource::instance();
 }
+#pragma GCC diagnostic pop

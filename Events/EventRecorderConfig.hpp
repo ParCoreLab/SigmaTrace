@@ -204,6 +204,8 @@ namespace Events {
         // Third, why is it part of a
         template<HasEventTrait EventT>
         [[nodiscard]] EventFileHeader get_event_file_header() const noexcept {
+            // Note: this may be unsafe if the process forks after this function is called
+            // because of thread_local. See ProfilerShim
             thread_local EventFileHeader header = std::invoke([]() {
                 auto header = EventFileHeader{
                         .event_id = EventTrait<EventT>::id,

@@ -46,9 +46,7 @@ int main(int argc, char* argv[]) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
     }
 
-    if (profiler_args.LoadCupti) {
-        shim_libs.emplace_back(binary_dir / Profiler::SIGMA_CUPTI_PROVIDER_PATH);
-    }
+    // CUPTI doesn't have LD_PRELOAD symbols
 
 #ifdef SIGMA_PROVIDER_libfabric_trace
     if (profiler_args.LoadLibfabric) {

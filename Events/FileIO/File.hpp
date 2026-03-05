@@ -43,6 +43,9 @@ namespace FileIO {
         void flush() noexcept {
             m_impl.flush();
         }
+        void finalize() noexcept {
+            m_impl.finalize();
+        }
 
     private:
         ImplType m_impl;
@@ -108,6 +111,11 @@ namespace FileIO {
             m_current_buffer_size = 0;
         }
 
+        void finalize() noexcept {
+            flush();
+            m_stream.close();
+        }
+
     private:
         uint8_t m_buffers[NumBuffers][BufferSize]{};
 
@@ -160,12 +168,12 @@ namespace FileIO {
             }
 
             m_base = static_cast<uint8_t*>(mmap(nullptr, m_mapped_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0));
-            std::memcpy(m_base, &header, FileHeaderSize);
-
             if (m_base == MAP_FAILED) {
                 close(m_fd);
                 throw std::runtime_error("mmap failed");
             }
+
+            std::memcpy(m_base, &header, FileHeaderSize);
 
             madvise(m_base, m_mapped_size, MADV_SEQUENTIAL);
 #ifdef MADV_HUGEPAGE
@@ -177,14 +185,20 @@ namespace FileIO {
         MmapBackedBuffer& operator=(const MmapBackedBuffer&) = delete;
 
         ~MmapBackedBuffer() {
+            finalize();
+        }
+
+        void finalize() noexcept {
             const std::size_t used_bytes = FileHeaderSize + m_current_index * ElementSize;
             if (m_base && m_base != MAP_FAILED) {
-                msync(m_base, used_bytes, MS_ASYNC);
+                msync(m_base, used_bytes, MS_SYNC);
                 munmap(m_base, m_mapped_size);
+                m_base = nullptr;
             }
             if (m_fd >= 0) {
                 std::ignore = ftruncate(m_fd, static_cast<off_t>(used_bytes));
                 close(m_fd);
+                m_fd = -1;
             }
         }
 
@@ -195,8 +209,8 @@ namespace FileIO {
         void commit() {
             ++m_current_index;
 
-            // Need space for the NEXT slot: current_index * ElementSize + ElementSize
-            const std::size_t required_bytes = (m_current_index + 1) * ElementSize;
+            // Need space for the NEXT slot
+            const std::size_t required_bytes = FileHeaderSize + (m_current_index + 1) * ElementSize;
             if (required_bytes <= m_mapped_size) [[likely]] {
                 return;
             }

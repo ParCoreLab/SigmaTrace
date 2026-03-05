@@ -56,10 +56,14 @@ namespace Helpers::TS {
     // clock_gettime via vDSO — ~20ns on Linux, gives wall-time correlation
     class GettimeTimestampSource {
     public:
-        [[nodiscard]] Timestamp now() const noexcept {
+        [[nodiscard]] static Timestamp Now() noexcept {
             timespec ts{};
             clock_gettime(CLOCK_MONOTONIC_RAW, &ts); // or CLOCK_MONOTONIC
             return static_cast<Timestamp>(ts.tv_sec) * 1'000'000'000ULL + static_cast<unsigned long long>(ts.tv_nsec);
+        }
+
+        [[nodiscard]] Timestamp now() const noexcept {
+            return Now();
         }
     };
 

@@ -1,5 +1,6 @@
 find_package(CUDAToolkit REQUIRED)
 
+#Sigma_add_library(CuptiEventProvider SHARED CUPTITrace.cpp)
 Sigma_add_provider_library(CuptiEventProvider SHARED CUPTITrace.cpp)
 
 target_link_libraries(CuptiEventProvider PRIVATE CUDA::cupti)
