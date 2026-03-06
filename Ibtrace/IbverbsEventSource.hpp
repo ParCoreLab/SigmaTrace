@@ -55,8 +55,10 @@ namespace ibv {
         // ================================================================
 
         static void* GetLibHandle() noexcept {
-            static auto* handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
-            return handle;
+            // static auto* handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
+            // return handle;
+
+            return nullptr;
         }
 
         // TODO: the two functions below might need rework

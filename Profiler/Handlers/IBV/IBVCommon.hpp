@@ -51,30 +51,8 @@
  */
 static Profiler::Events::IbvOpenDevice register_nic(Events::EventRecorder<>* event_recorder, ibv_context* ctx,
                                                     ibv_device* device) {
-    using fn_query_port_t = int (*)(ibv_context* context, uint8_t port_num, ibv_port_attr* port_attr);
-
-    static auto* libibverbs_handle = smart_dlsym::real_dlopen("libibverbs.so", smart_dlsym::DL_RTLD_NOW);
-    if (!libibverbs_handle) {
-        std::cerr << "Could not find dlopen libibverbs.so" << std::endl;
-        std::abort();
-    }
-
-    static auto* fn_query_device = reinterpret_cast<decltype(ibv_query_device)*>(
-            smart_dlsym::real_dlsym(libibverbs_handle, "ibv_query_device"));
-
-    static auto* fn_query_port = reinterpret_cast<fn_query_port_t>(
-            smart_dlsym::real_dlvsym(libibverbs_handle, "ibv_query_port", "IBVERBS_1.1"));
-
-    static auto* fn_query_gid =
-            reinterpret_cast<decltype(ibv_query_gid)*>(smart_dlsym::real_dlsym(libibverbs_handle, "ibv_query_gid"));
-
-    if (!fn_query_device || !fn_query_port || !fn_query_gid) {
-        std::cerr << "Could not find ibv_query function symbols" << std::endl;
-        std::abort();
-    }
-
     ibv_device_attr attrs{};
-    const auto res_device = fn_query_device(ctx, &attrs);
+    const auto res_device = ctx->ops._compat_query_device(ctx, &attrs);
     if (res_device != 0) {
         std::cerr << "Failed to query device of ctx " << ctx << std::endl;
         std::abort();
@@ -94,10 +72,24 @@ static Profiler::Events::IbvOpenDevice register_nic(Events::EventRecorder<>* eve
     }
     fetched_nics.emplace(attrs.node_guid);
 
+    // static auto* libibverbs_handle = smart_dlsym::real_dlopen("libibverbs.so", smart_dlsym::DL_RTLD_NOW);
+    // if (!libibverbs_handle) {
+    //     std::cerr << "Could not find dlopen libibverbs.so" << std::endl;
+    //     std::abort();
+    // }
+    //
+    // static auto* fn_query_gid =
+    //         reinterpret_cast<decltype(ibv_query_gid)*>(smart_dlsym::real_dlsym(libibverbs_handle, "ibv_query_gid"));
+    // if (!fn_query_gid) {
+    //     std::cerr << "Could not find ibv_query_gid" << std::endl;
+    //     std::abort();
+    // }
+
     const uint8_t num_ports{attrs.phys_port_cnt};
     for (uint8_t p = 1; p <= num_ports; p++) {
         ibv_port_attr port_attrs{};
-        const auto res_port = fn_query_port(ctx, p, &port_attrs);
+        const auto res_port =
+                ctx->ops._compat_query_port(ctx, p, reinterpret_cast<_compat_ibv_port_attr*>(&port_attrs));
         if (res_port != 0) {
             std::cerr << "Failed to query port " << p << " of ctx " << ctx << std::endl;
             std::abort();
@@ -111,15 +103,17 @@ static Profiler::Events::IbvOpenDevice register_nic(Events::EventRecorder<>* eve
                 .gid = {},
         };
 
+        // TODO: breaks symbols
         // GID index 0 is typically the default (RoCEv2: index 1+ may be different)
-        const auto res_gid = fn_query_gid(ctx, p, 0, &port_event.gid);
-        if (res_gid != 0) {
-            std::cerr << "Failed to query gid of port " << p << " of ctx " << ctx << std::endl;
-            std::abort();
-        }
+        // const auto res_gid = fn_query_gid(ctx, p, 0, &port_event.gid);
+        // if (res_gid != 0) {
+        //     std::cerr << "Failed to query gid of port " << p << " of ctx " << ctx << std::endl;
+        //     std::abort();
+        // }
 
         event_recorder->Record(port_event, 1);
     }
+    // smart_dlsym::real_dlclose(libibverbs_handle);
 
     // This isn't traced and should precede other ibv events
     Profiler::Events::IbvDeviceRegistration device_registration_event{

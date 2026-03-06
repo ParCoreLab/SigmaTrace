@@ -19,6 +19,7 @@ namespace smart_dlsym {
     extern void* DL_RTLD_NEXT;
     extern const int DL_RTLD_NOW;
     extern const int DL_RTLD_GLOBAL;
+    extern const int DL_RTLD_NOLOAD;
 
     using CallbackType = std::function<void*(void*, void*, const char*)>;
 

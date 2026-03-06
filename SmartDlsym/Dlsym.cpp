@@ -14,6 +14,7 @@ namespace smart_dlsym {
     void* DL_RTLD_NEXT = RTLD_NEXT;
     const int DL_RTLD_NOW = RTLD_NOW;
     const int DL_RTLD_GLOBAL = RTLD_GLOBAL;
+    const int DL_RTLD_NOLOAD = RTLD_NOLOAD;
 
     void* (*real_dlopen)(const char*, int) = nullptr;
     void* (*real_dlsym)(void*, const char*) = nullptr;
@@ -24,6 +25,9 @@ namespace smart_dlsym {
     __attribute__((init_priority(101))) std::unordered_map<std::string, CallbackType> RegisteredSymbols{};
 } // namespace smart_dlsym
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wprio-ctor-dtor"
+// If you see an undebuggable double free, however, it's this. Don't load this module more than once !!!!!
 static void __attribute__((constructor(0))) init() {
     smart_dlsym::real_dlopen =
             reinterpret_cast<decltype(smart_dlsym::real_dlopen)>(find_symbol_in_lib("libc", "dlopen"));
@@ -35,6 +39,7 @@ static void __attribute__((constructor(0))) init() {
     smart_dlsym::real_dlclose =
             reinterpret_cast<decltype(smart_dlsym::real_dlclose)>(find_symbol_in_lib("libc", "dlclose"));
 }
+#pragma GCC diagnostic pop
 
 extern "C" void* dlsym(void* handle, const char* symbol) {
     // TODO: don't use assert

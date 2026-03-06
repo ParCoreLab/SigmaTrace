@@ -33,7 +33,8 @@ namespace libfabric {
         using Context = Base::Context;
 
         static void* GetLibHandle() noexcept {
-            return smart_dlsym::DL_RTLD_NEXT;
+            // return smart_dlsym::DL_RTLD_NEXT;
+            return nullptr;
         }
 
         // ================================================================

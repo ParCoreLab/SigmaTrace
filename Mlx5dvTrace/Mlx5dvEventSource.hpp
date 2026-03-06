@@ -22,8 +22,10 @@ namespace mlx5dv {
         using Context = Base::Context;
 
         static void* GetLibHandle() noexcept {
-            static auto* handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
-            return handle;
+            // static auto* handle = smart_dlsym::real_dlopen(LibPath.data(), smart_dlsym::DL_RTLD_NOW);
+            // return handle;
+
+            return nullptr;
         }
 
     protected:

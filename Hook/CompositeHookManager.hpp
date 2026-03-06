@@ -45,11 +45,6 @@ namespace hook {
     // Check if Derived implements get_op
     template<typename D, typename Tag, typename Obj>
     concept has_get_op_for = requires(D& d, Obj* obj) { d.template get_op<Tag>(obj); };
-
-    template<typename D>
-    concept has_get_lib_handle = requires {
-        { D::GetLibHandle() } -> std::same_as<void*>;
-    };
     // ===============================================================
 
     // ================================================================
@@ -111,8 +106,6 @@ namespace hook {
         template<ValidCallbackTag Tag>
         void internal_register() noexcept {
             if constexpr (is_preload_hook_v<Tag>) {
-                static_assert(has_get_lib_handle<Derived>, "Derived must provide: `void* GetLibHandle()`");
-
                 static bool is_tag_registered{false};
                 if (!is_tag_registered) {
                     if constexpr (DebugPrint) {
@@ -246,8 +239,7 @@ namespace hook {
                 // If we're here, the injected function is called but no hooks are registered
                 // Late load the real function and call it
                 if (!real) {
-                    auto* handle = Derived::GetLibHandle();
-                    mgr.m_preload_impl.template register_real<Tag>(handle);
+                    mgr.m_preload_impl.template register_real<Tag>();
 
                     // Lazy resolution fallback for RTLD_NEXT handles
                     if (!real) {
@@ -271,8 +263,7 @@ namespace hook {
             // Lazy resolution: the real library may not have been loaded at registration time
             // If we're at this stage, the real function has been loaded by the target application
             if (!real) {
-                auto* handle = Derived::GetLibHandle();
-                mgr.m_preload_impl.template register_real<Tag>(handle);
+                mgr.m_preload_impl.template register_real<Tag>();
                 if (!real) {
                     std::cerr << "ERROR: Real function for Tag " << HookTrait<Tag>::name << " is empty!" << std::endl;
                     std::abort();
