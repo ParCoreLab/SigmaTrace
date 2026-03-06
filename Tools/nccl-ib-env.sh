@@ -1,0 +1,20 @@
+export NCCL_IB_HCA="mlx5_0"
+export NCCL_IB_DISABLE="0"
+export NCCL_IB_GID_INDEX="0"
+export NCCL_P2P_DISABLE="1"
+export NCCL_SHM_DISABLE="1"
+export NCCL_SOCKET_NAME="ibp33s0"
+export NCCL_NET="IB"
+
+export NCCL_NET_GDR_LEVEL="SYS"
+
+export NCCL_NET_SHARED_BUFFERS="0"
+export NCCL_IGNORE_CPU_AFFINITY="1"
+export NCCL_CROSS_NIC="1"
+export NCCL_MIN_NCHANNELS="1"
+
+export NCCL_DEBUG_SUBSYS="INIT,NET"
+
+export NCCL_NVTX="common"
+
+$@
