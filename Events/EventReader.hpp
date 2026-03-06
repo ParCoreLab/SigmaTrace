@@ -1,8 +1,13 @@
 #pragma once
 
+#include <cstring>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <queue>
 #include <type_traits>
 #include <utility>
@@ -17,7 +22,6 @@ namespace Events {
     // ============================================================================
     // Type List for enabled events
     // ============================================================================
-
     template<typename... Events>
     struct TypeList {
         static constexpr size_t size = sizeof...(Events);
@@ -71,10 +75,14 @@ namespace Events {
 
         std::map<std::string_view, size_t> m_event_stats{};
 
-    private:
-        // Single stream state
+    public:
+        // Single stream state (mmap actually, not a stream)
         struct StreamState {
-            std::ifstream stream;
+            int fd{-1};
+            const char* m_base{nullptr};
+            const char* m_cursor{nullptr};
+            size_t m_size{0};
+
             std::filesystem::path path;
             EventTypeId event_id{EventTypeId::Unknown};
             Timestamp next_timestamp{0};
@@ -82,26 +90,44 @@ namespace Events {
 
             EventFileHeader file_header{};
 
-            explicit StreamState(const std::filesystem::path& p) : stream(p, std::ios::binary), path(p) {
-                if (!stream.is_open()) {
+            explicit StreamState(const std::filesystem::path& p) : path(p) {
+                fd = ::open(p.c_str(), O_RDONLY);
+                if (fd < 0) {
                     return;
                 }
 
-                // File-wide header
-                stream.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
-                if (stream.gcount() != sizeof(file_header)) {
-                    // TODO: log better
-                    std::cerr << "Failed reading file: " << path << std::endl;
-
-                    stream.close();
+                struct stat st{};
+                if (fstat(fd, &st) < 0 || st.st_size == 0) {
+                    close(fd);
+                    fd = -1;
                     return;
                 }
+                m_size = static_cast<size_t>(st.st_size);
+
+                m_base = static_cast<const char*>(mmap(nullptr, m_size, PROT_READ, MAP_PRIVATE, fd, 0));
+                if (m_base == MAP_FAILED) {
+                    m_base = nullptr;
+                    close(fd);
+                    fd = -1;
+                    return;
+                }
+
+                madvise(const_cast<char*>(m_base), m_size, MADV_SEQUENTIAL);
+
+                m_cursor = m_base;
+
+                // Read file header
+                if (remaining() < sizeof(file_header)) {
+                    cleanup();
+                    return;
+                }
+                std::memcpy(&file_header, m_cursor, sizeof(file_header));
+                m_cursor += sizeof(file_header);
 
                 if (file_header._check != MAGIC_VALUE) {
                     std::cerr << "Magic value check fail in File header: " << path << std::endl;
                     std::cerr << "File is corrupted or recorded with an older version. Closing stream... " << std::endl;
-
-                    stream.close();
+                    cleanup();
                     return;
                 }
 
@@ -110,33 +136,67 @@ namespace Events {
                 peek_next();
             }
 
+            ~StreamState() {
+                cleanup();
+            }
+
+            StreamState(StreamState&& o) noexcept :
+                fd(o.fd), m_base(o.m_base), m_cursor(o.m_cursor), m_size(o.m_size), path(std::move(o.path)),
+                event_id(o.event_id), next_timestamp(o.next_timestamp), has_event(o.has_event),
+                file_header(o.file_header) {
+                o.m_base = nullptr;
+                o.fd = -1;
+                o.has_event = false;
+            }
+
+            StreamState& operator=(StreamState&& o) noexcept {
+                if (this != &o) {
+                    cleanup();
+                    fd = o.fd;
+                    m_base = o.m_base;
+                    m_cursor = o.m_cursor;
+                    m_size = o.m_size;
+                    path = std::move(o.path);
+                    event_id = o.event_id;
+                    next_timestamp = o.next_timestamp;
+                    has_event = o.has_event;
+                    file_header = o.file_header;
+                    o.m_base = nullptr;
+                    o.fd = -1;
+                    o.has_event = false;
+                }
+                return *this;
+            }
+
+            StreamState(const StreamState&) = delete;
+            StreamState& operator=(const StreamState&) = delete;
+
+            [[nodiscard]] size_t remaining() const {
+                return m_size - static_cast<size_t>(m_cursor - m_base);
+            }
+
+            void cleanup() {
+                if (m_base) {
+                    ::munmap(const_cast<char*>(m_base), m_size);
+                    m_base = nullptr;
+                }
+                if (fd >= 0) {
+                    ::close(fd);
+                    fd = -1;
+                }
+                has_event = false;
+            }
+
             void peek_next() {
                 has_event = false;
-                if (!stream.is_open() || stream.eof() || stream.peek() == EOF) {
+                if (!m_base || remaining() < sizeof(EventHeader)) {
                     return;
                 }
 
-                const auto pos = stream.tellg();
-
-                EventHeader header(0, 0);
-                stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-                // if (header._check != MAGIC_VALUE) {
-                //     std::cerr << "Magic value check fail in " << path << " (" << header._check << ")" << std::endl;
-                //     std::cerr << "File is corrupted or recorded with an older version. Closing stream... " <<
-                //     std::endl;
-                //
-                //     // A little extreme
-                //     stream.close();
-                //     return;
-                // }
-
-                if (stream.gcount() == sizeof(header)) {
-                    next_timestamp = header.timestamp_start;
-                    has_event = true;
-
-                    // Go back. Header and data will be read later
-                    stream.seekg(pos);
-                }
+                // Read timestamp directly from mmap without copying
+                const auto* header = reinterpret_cast<const EventHeader*>(m_cursor);
+                next_timestamp = header->timestamp_start;
+                has_event = true;
             }
 
             static EventTypeId match_event_id(const EventId_T id) {
@@ -149,6 +209,7 @@ namespace Events {
             }
         };
 
+    private:
         // Heap entry for merge
         struct HeapEntry {
             Timestamp timestamp;
@@ -159,6 +220,7 @@ namespace Events {
             }
         };
 
+    public:
         [[nodiscard]] std::vector<std::filesystem::path> find_event_files() const {
             std::vector<std::filesystem::path> paths;
 
@@ -181,6 +243,7 @@ namespace Events {
             return paths;
         }
 
+    private:
         size_t process_merged() {
             // Open all streams
             std::vector<StreamState> streams;
@@ -213,7 +276,7 @@ namespace Events {
                     // No reader for this, we need to skip the stream...
                     std::cerr << "WARNING: No reader for ID " << static_cast<EventId_T>(state.event_id) << ". "
                               << "Add its tag to the type list" << std::endl;
-                    state.stream.close();
+                    state.cleanup();
                     continue;
                 }
 
@@ -238,21 +301,24 @@ namespace Events {
                 return false;
             }
 
-            StoredEvent<EventT> stored;
-            state.stream.read(reinterpret_cast<char*>(&stored), sizeof(stored));
-
-            if (state.stream.gcount() < static_cast<std::streamsize>(sizeof(stored))) {
+            constexpr size_t total = sizeof(StoredEvent<EventT>);
+            if (state.remaining() < total) {
                 return false;
             }
 
-            // There must be a visitor for this event if we're at this point
-            derived().visit(EventTrait<EventT>{}, state.file_header, std::move(stored.header), std::move(stored.data));
+            const auto* stored = reinterpret_cast<const StoredEvent<EventT>*>(state.m_cursor);
+            state.m_cursor += total;
+
+            EventHeader header = stored->header;
+            EventT data = stored->data;
+            derived().visit(EventTrait<EventT>{}, state.file_header, std::move(header), std::move(data));
 
             ++m_event_stats[EventTrait<EventT>::name];
 
             return true;
         }
 
+    protected:
         RuntimeConfig m_config{};
         std::vector<std::filesystem::path> m_paths;
     };
