@@ -11,6 +11,8 @@
 #include "CallbackManager.hpp"
 #include "HookTrait.hpp"
 
+#include "detail/TagIndex.hpp"
+
 namespace hook::detail {
     /*
      * Scan all loaded shared objects to find a symbol, skipping a specific .so.
@@ -72,13 +74,15 @@ namespace hook::detail {
     public:
         template<typename Tag>
         HookTrait<Tag>::FuncPtr& get() {
-            return std::get<typename HookTrait<Tag>::FuncPtr>(m_funcs);
+            constexpr size_t idx = TagIndex<Tag, Tags...>::value;
+            return std::get<idx>(m_funcs);
         }
 
         // TODO: remove
         template<typename Tag>
         HookTrait<Tag>::FuncPtr get() const {
-            return std::get<typename HookTrait<Tag>::FuncPtr>(m_funcs);
+            constexpr size_t idx = TagIndex<Tag, Tags...>::value;
+            return std::get<idx>(m_funcs);
         }
 
     private:

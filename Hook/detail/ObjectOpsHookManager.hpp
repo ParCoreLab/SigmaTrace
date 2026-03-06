@@ -1,14 +1,16 @@
 #pragma once
 
-#include <array>
-#include <atomic>
 #include <cassert>
 
+#include <array>
+#include <atomic>
 #include <iostream>
 #include <memory>
 #include <unordered_map>
 
 #include "HookTrait.hpp"
+
+#include "detail/TagIndex.hpp"
 
 namespace hook::detail {
     // ================================================================
@@ -80,15 +82,16 @@ namespace hook::detail {
     class ObjectContext {
     public:
         // Original function pointers
-        // TODO: remove
         template<ValidCallbackTag Tag>
-        HookTrait<Tag>::FuncPtr& original() noexcept {
-            return std::get<typename HookTrait<Tag>::FuncPtr>(m_originals);
+        auto& original() noexcept {
+            constexpr size_t idx = TagIndex<Tag, Tags...>::value;
+            return std::get<idx>(m_originals);
         }
 
         template<ValidCallbackTag Tag>
         HookTrait<Tag>::FuncPtr original() const noexcept {
-            return std::get<typename HookTrait<Tag>::FuncPtr>(m_originals);
+            constexpr size_t idx = TagIndex<Tag, Tags...>::value;
+            return std::get<idx>(m_originals);
         }
 
         // The raw object pointer (for reverse lookup)

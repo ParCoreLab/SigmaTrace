@@ -20,10 +20,14 @@
 #define FE_10(m, x, ...) m(x), FE_9(m, __VA_ARGS__)
 #define FE_11(m, x, ...) m(x), FE_10(m, __VA_ARGS__)
 #define FE_12(m, x, ...) m(x), FE_11(m, __VA_ARGS__)
+#define FE_13(m, x, ...) m(x), FE_12(m, __VA_ARGS__)
+#define FE_14(m, x, ...) m(x), FE_13(m, __VA_ARGS__)
+#define FE_15(m, x, ...) m(x), FE_14(m, __VA_ARGS__)
 
-#define GET_FE(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, NAME, ...) NAME
+#define GET_FE(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12, _13_, _14, _15, NAME, ...) NAME
 #define FOR_EACH(m, ...)                                                                                               \
-    GET_FE(__VA_ARGS__, FE_12, FE_11, FE_10, FE_9, FE_8, FE_7, FE_6, FE_5, FE_4, FE_3, FE_2, FE_1)(m, __VA_ARGS__)
+    GET_FE(__VA_ARGS__, FE_15, FE_14, FE_13, FE_12, FE_11, FE_10, FE_9, FE_8, FE_7, FE_6, FE_5, FE_4, FE_3, FE_2,      \
+           FE_1)(m, __VA_ARGS__)
 
 #define VA_ARGS_TO_STRING_TUPLE(...) std::make_tuple(FOR_EACH(STR, __VA_ARGS__))
 
