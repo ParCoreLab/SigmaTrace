@@ -29,16 +29,25 @@ int main(int argc, char* argv[]) {
     // Set up args for the shim and child process
     const Profiler::ProfilerArgs profiler_args{
             .ShimDir = binary_dir,
+#ifdef SIGMA_HAS_RDMA_CORE
             .LoadIbtrace = true,
             .LoadMlx5dv = true,
-            .LoadCupti = true,
-            .LoadLibfabric = true,
-            .LoadUcx = true,
             .EnableDoorbellHijack = true,
+#endif
+#ifdef SIGMA_HAS_CUDA
+            .LoadCupti = true,
+#endif
+#ifdef SIGMA_HAS_LIBFABRIC
+            .LoadLibfabric = true,
+#endif
+#ifdef SIGMA_HAS_UCX
+            .LoadUcx = true,
+#endif
     };
 
     std::vector<std::filesystem::path> shim_libs{};
 
+#ifdef SIGMA_HAS_RDMA_CORE
     if (profiler_args.LoadIbtrace) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
     }
@@ -46,16 +55,17 @@ int main(int argc, char* argv[]) {
     if (profiler_args.LoadMlx5dv) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_MLX5DV_PROVIDER_PATH);
     }
+#endif
 
     // CUPTI doesn't have LD_PRELOAD symbols
 
-#ifdef SIGMA_PROVIDER_libfabric_trace
+#ifdef SIGMA_HAS_LIBFABRIC
     if (profiler_args.LoadLibfabric) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_LIBFABRIC_PROVIDER_PATH);
     }
 #endif
 
-#ifdef SIGMA_PROVIDER_ucx_trace
+#ifdef SIGMA_HAS_UCX
     if (profiler_args.LoadUcx) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_UCX_PROVIDER_PATH);
     }

@@ -3,14 +3,11 @@
 #include <atomic>
 #include <map>
 #include <tuple>
-#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include "Helpers/CudaHelpers.hpp"
-
+// Generic GPU types
+#include "Helpers/GPUTypes.hpp"
 #include "Helpers/Utilities.hpp"
 
 #include "EventRecorder.hpp"
@@ -22,18 +19,19 @@
 #include "Modules/MemoryHijack/MemoryRepeater.hpp"
 
 // Event providers
+#ifdef SIGMA_HAS_CUDA
 #include "CUDAEventSource.hpp"
+#endif
+#ifdef SIGMA_HAS_RDMA_CORE
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
-#ifdef SIGMA_PROVIDER_ucx_trace
+#endif
+#ifdef SIGMA_HAS_UCX
 #include "UcxEventSource.hpp"
 #endif
-#ifdef SIGMA_PROVIDER_libfabric_trace
+#ifdef SIGMA_HAS_LIBFABRIC
 #include "LibfabricEventSource.hpp"
 #endif
-
-#include <dlfcn.h>
-
 
 #include "ProfilerArgs.hpp"
 
@@ -61,12 +59,12 @@ struct PendingDoorbell {
 };
 
 struct QpInfo {
-    CUcontext cuda_ctx;   // captured during umem_reg
-    void* sq_base;        // host-accessible SQ buffer address
-    uint32_t log_wq_size; // num WQEs = 1 << log_wq_size
+    Helpers::GPU::Context gpu_ctx; // captured during umem_reg
+    void* sq_base;                 // host-accessible SQ buffer address
+    uint32_t log_wq_size;          // num WQEs = 1 << log_wq_size
     uint32_t qpn;
     GpuId_T gpu_id;
-    cudaMemoryType gpu_mem_type;
+    Helpers::GPU::MemoryType gpu_mem_type;
     uint8_t service_type{0};
     // on_doorbell
     uint32_t _last_prod_id{0};
@@ -134,11 +132,13 @@ struct ProfilerCtx {
     // std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations{};
     // ================================================
 
+#ifdef SIGMA_HAS_RDMA_CORE
     std::mutex m_mlx5_umem_mutex;
     // TODO: boost::multi_index is better than this mess
     // Address registered with umem_reg -> gpu id
     // TODO: address should be void*
-    std::unordered_map<AddrType, std::tuple<GpuId_T, cudaMemoryType, CUcontext>> m_mlx5_umem_addr_to_gpu;
+    std::unordered_map<AddrType, std::tuple<GpuId_T, Helpers::GPU::MemoryType, Helpers::GPU::Context>>
+            m_mlx5_umem_addr_to_gpu;
     // Umem ID -> entry in the above map
     std::unordered_map<UmemIdType, typename decltype(m_mlx5_umem_addr_to_gpu)::iterator> m_mlx5_umem_to_entry;
 
@@ -185,9 +185,9 @@ struct ProfilerCtx {
     std::atomic<int> doorbell_skipped{0};
     // ================================================
 
-
     // Emit CommunicationSummary events - must be called before EventRecorder destruction
     void emit_communication_summaries();
+#endif // SIGMA_HAS_RDMA_CORE
 
     // See Note[late_load]
     // Event module will interface with the filesystem and may print to stderr
@@ -220,27 +220,38 @@ struct ProfilerCtx {
     Events::RuntimeConfig m_event_recorder_config;
     std::unique_ptr<Events::EventRecorder<>> m_event_recorder{nullptr};
 
-    // struct {
+    // Provider handles
+#ifdef SIGMA_HAS_RDMA_CORE
     ProviderHandle<ibv::Profiler> m_ibv_profiler;
-    ProviderHandle<cuda_trace::NvbitProfiler> m_cuda_profiler;
     ProviderHandle<mlx5dv::Profiler> m_mlx5dv_profiler;
-    ProviderHandle<cuda_trace::CUPTIEventSource> m_cupti_profiler;
-    // } m_handles;
+#endif
 
-#ifdef SIGMA_PROVIDER_ucx_trace
+#ifdef SIGMA_HAS_CUDA
+    ProviderHandle<cuda_trace::NvbitProfiler> m_cuda_profiler;
+    ProviderHandle<cuda_trace::CUPTIEventSource> m_cupti_profiler;
+#endif
+
+#ifdef SIGMA_HAS_UCX
     ProviderHandle<ucx::Profiler> m_ucx_profiler;
 #endif
-#ifdef SIGMA_PROVIDER_libfabric_trace
+#ifdef SIGMA_HAS_LIBFABRIC
     ProviderHandle<libfabric::Profiler> m_libfabric_profiler;
 #endif
 
     // Handlers and Providers
+#ifdef SIGMA_HAS_RDMA_CORE
     void load_ibv(const std::filesystem::path& shim_dir) noexcept;
     void load_mlx5dv(const std::filesystem::path& shim_dir);
-    void load_cupti(const std::filesystem::path& shim_dir);
+#ifdef SIGMA_HAS_CUDA
     void load_doorbell_hijack();
+#endif
+#endif
 
-#ifdef SIGMA_PROVIDER_ucx_trace
+#ifdef SIGMA_HAS_CUDA
+    void load_cupti(const std::filesystem::path& shim_dir);
+#endif
+
+#ifdef SIGMA_HAS_UCX
     // Thread-local correlation: set during UCX operations for cross-layer mapping
     // TODO: not really used properly right now
     static inline thread_local uint64_t tls_active_ucp_ep{0};
@@ -248,7 +259,7 @@ struct ProfilerCtx {
     void load_ucx(const std::filesystem::path& shim_dir);
 #endif
 
-#ifdef SIGMA_PROVIDER_libfabric_trace
+#ifdef SIGMA_HAS_LIBFABRIC
     // Thread-local correlation: set during libfabric operations for cross-layer mapping
     // TODO: not really used properly right now
     static inline thread_local uint64_t tls_active_fi_ep{0};
@@ -261,5 +272,5 @@ struct ProfilerCtx {
 extern ProfilerCtx* g_ProfilerInstance;
 
 static inline ProfilerCtx& instance() {
-    return static_cast<ProfilerCtx&>(*g_ProfilerInstance);
+    return *g_ProfilerInstance;
 }

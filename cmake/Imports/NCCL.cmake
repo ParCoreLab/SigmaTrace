@@ -1,5 +1,18 @@
+option(SIGMA_ENABLE_NCCL "Enable NCCL" ON)
 option(BUILD_NCCL "Build bundled NCCL" OFF)
 set(NCCL_ROOT "" CACHE PATH "Prefix where system NCCL is installed")
+
+set(NCCL_FOUND FALSE)
+
+if (NOT SIGMA_ENABLE_NCCL)
+    message(STATUS "[Sigma] NCCL: disabled by user")
+    return()
+endif ()
+
+if (NOT SIGMA_HAS_CUDA)
+    message(STATUS "[Sigma] NCCL: disabled (no CUDA backend)")
+    return()
+endif ()
 
 if (BUILD_NCCL)
     set(NCCL_DEPENDS_LIST "")
@@ -8,7 +21,6 @@ if (BUILD_NCCL)
     endif ()
 
     # nccl doesn't compile with clang
-    # We default to gcc because some systems have broken nvc++
     if("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
         set(SIGMA_NCCL_C_COMPILER "gcc")
         set(SIGMA_NCCL_CXX_COMPILER "g++")
@@ -33,7 +45,6 @@ if (BUILD_NCCL)
             -DNVTX=ON
             -DRDMA_CORE=ON
             -DNET_PROFILER=ON
-            # Force nccl to use our version
             -DCMAKE_DISABLE_FIND_PACKAGE_verbs=TRUE
             -DCMAKE_C_FLAGS=-I${RDMA_INCLUDE_DIR}
             -DCMAKE_CXX_FLAGS=-I${RDMA_INCLUDE_DIR}
@@ -52,18 +63,16 @@ if (BUILD_NCCL)
 
     ExternalProject_Get_Property(nccl_external BINARY_DIR)
 
-    # Create directory ahead of time so CMake generic include checks don't fail if they happen early
     file(MAKE_DIRECTORY "${BINARY_DIR}/include")
 
     set_target_properties(nccl PROPERTIES
             IMPORTED_LOCATION "${BINARY_DIR}/lib/libnccl.so"
             INTERFACE_INCLUDE_DIRECTORIES "${BINARY_DIR}/include"
     )
-    # Ensure nccl_external is built before we try to link 'nccl'
     add_dependencies(nccl nccl_external)
 
-    # TODO: unsure if this is proper
     set(CMAKE_DISABLE_FIND_PACKAGE_nccl TRUE)
+    set(NCCL_FOUND TRUE)
 else ()
     find_path(NCCL_INCLUDE_DIR NAMES nccl.h
             HINTS ${NCCL_ROOT}/include /usr/include /usr/local/include
@@ -71,13 +80,18 @@ else ()
     find_library(NCCL_LIBRARY NAMES nccl
             HINTS ${NCCL_ROOT}/lib ${NCCL_ROOT}/lib64 /usr/lib /usr/lib64 /usr/local/lib /usr/local/lib64
     )
-    if (NOT NCCL_INCLUDE_DIR OR NOT NCCL_LIBRARY)
-        message(FATAL_ERROR "System NCCL not found; set BUILD_NCCL=ON to build the bundled copy or provide NCCL_ROOT.")
+    if (NCCL_INCLUDE_DIR AND NCCL_LIBRARY)
+        add_library(nccl SHARED IMPORTED)
+        set_target_properties(nccl PROPERTIES
+                IMPORTED_LOCATION "${NCCL_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${NCCL_INCLUDE_DIR}"
+        )
+        set(NCCL_FOUND TRUE)
     endif ()
+endif ()
 
-    add_library(nccl SHARED IMPORTED)
-    set_target_properties(nccl PROPERTIES
-            IMPORTED_LOCATION "${NCCL_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${NCCL_INCLUDE_DIR}"
-    )
+if (NCCL_FOUND)
+    message(STATUS "[Sigma] NCCL: found")
+else ()
+    message(STATUS "[Sigma] NCCL: not found, disabling NCCL support")
 endif ()

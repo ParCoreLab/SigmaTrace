@@ -1,6 +1,3 @@
-#Sigma_source_disable_warnings(mlx5/mlx5_ifc.h mlx5/mlx5_prm.h)
-#Sigma_source_disable_errors(mlx5/mlx5_ifc.h mlx5/mlx5_prm.h)
-
 # ================================================================
 # Profiler launcher executable
 Sigma_add_executable(Profiler Profiler.cpp ProfilerArgs.hpp ProfilerProviders.hpp)
@@ -11,30 +8,46 @@ target_link_libraries(Profiler PRIVATE Launcher)
 
 # ================================================================
 # Profiler Modules
-add_subdirectory(Modules/CudaExportTableOverwrite)
+if (SIGMA_HAS_CUDA)
+    add_subdirectory(Modules/CudaExportTableOverwrite)
+endif ()
 add_subdirectory(Modules/MemoryHijack)
 #add_subdirectory(Modules/GPUMemoryHijack)
 # ================================================================
 
 # ================================================================
 # Master LD_PRELOAD Shim for the Profiler
-Sigma_add_library(ProfilerShim SHARED
+# Build the source list conditionally based on available features
+set(PROFILER_SHIM_SOURCES
         ProfilerShim.hpp ProfilerShim.cpp
         Handlers/Common.hpp
-        Handlers/CUDAHijack.cpp
-        Handlers/CUPTI.cpp
-        Handlers/IBV/IBVCommon.hpp
-        Handlers/IBV/Ibverbs.cpp
-        Handlers/IBV/Mlx5dv.cpp
-        Handlers/Libfabric.cpp
-        Handlers/UCX.cpp
         ProfilerArgs.hpp
         ProfilerProviders.hpp)
 
-foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
-    # Internal headers coped from NVSHMEM/rdma-core tree
-    target_include_directories(${ProfilerShimTarget} SYSTEM PRIVATE "mlx5/include")
+if (SIGMA_HAS_CUDA)
+    list(APPEND PROFILER_SHIM_SOURCES
+            Handlers/CUDAHijack.cpp
+            Handlers/CUPTI.cpp)
+endif ()
 
+if (RDMA_CORE_FOUND)
+    list(APPEND PROFILER_SHIM_SOURCES
+            Handlers/IBV/IBVCommon.hpp
+            Handlers/IBV/Ibverbs.cpp
+            Handlers/IBV/Mlx5dv.cpp)
+endif ()
+
+if (LIBFABRIC_FOUND)
+    list(APPEND PROFILER_SHIM_SOURCES Handlers/Libfabric.cpp)
+endif ()
+
+if (UCX_FOUND)
+    list(APPEND PROFILER_SHIM_SOURCES Handlers/UCX.cpp)
+endif ()
+
+Sigma_add_library(ProfilerShim SHARED ${PROFILER_SHIM_SOURCES})
+
+foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     set_target_properties(${ProfilerShimTarget} PROPERTIES
             POSITION_INDEPENDENT_CODE ON
             OUTPUT_NAME "${ProfilerShimTarget}"
@@ -43,46 +56,62 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     # For dlopen/dlsym/dlvsym. Providers make use of the library but only one unit can have the symbols
     target_link_libraries(${ProfilerShimTarget} PUBLIC
             -Wl,--whole-archive
-            ProfilerExportTableOverwrite
             SmartDlsym
             -Wl,--no-whole-archive
     )
+
+    if (SIGMA_HAS_CUDA)
+        target_link_libraries(${ProfilerShimTarget} PUBLIC
+                -Wl,--whole-archive
+                ProfilerExportTableOverwrite
+                -Wl,--no-whole-archive
+        )
+    endif ()
+
     set_target_properties(${ProfilerShimTarget} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
 
     # Profiler modules
     target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerMemoryRepeater)
     # target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerGPUMemoryRepeater)
 
-    target_include_directories(
-            ${ProfilerShimTarget}
-            PRIVATE
-            $<TARGET_PROPERTY:CUDATrace,INTERFACE_INCLUDE_DIRECTORIES>)
+    if (SIGMA_HAS_CUDA)
+        target_include_directories(
+                ${ProfilerShimTarget}
+                PRIVATE
+                $<TARGET_PROPERTY:CUDATrace,INTERFACE_INCLUDE_DIRECTORIES>)
 
-    # Runtime dependencies
-    target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cuda_driver)
-    target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cudart)
-    target_link_libraries(${ProfilerShimTarget} PRIVATE SigmaHelpers)
+        target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cuda_driver)
+        target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cudart)
 
-    # Shim providers
-    Sigma_profiler_link_provider(${ProfilerShimTarget} IbverbsTraceShared)
-    Sigma_profiler_link_provider(${ProfilerShimTarget} Mlx5dvTraceShared)
-    Sigma_profiler_link_provider(${ProfilerShimTarget} CuptiEventProvider)
-    # Sigma_profiler_link_provider(${ProfilerShimTarget} NvbitMemoryTrackerShared)
-    # Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
+        Sigma_profiler_link_provider(${ProfilerShimTarget} CuptiEventProvider)
+        # Sigma_profiler_link_provider(${ProfilerShimTarget} NvbitMemoryTrackerShared)
+        # Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
+    endif ()
+
+    if (RDMA_CORE_FOUND)
+        # Internal headers copied from NVSHMEM/rdma-core tree
+        target_include_directories(${ProfilerShimTarget} SYSTEM PRIVATE "mlx5/include")
+
+        # For infiniband/mlx5dv.h headers system includes
+        target_link_libraries(${ProfilerShimTarget} PRIVATE ibverbs_headers)
+
+        Sigma_profiler_link_provider(${ProfilerShimTarget} IbverbsTraceShared)
+        Sigma_profiler_link_provider(${ProfilerShimTarget} Mlx5dvTraceShared)
+    endif ()
 
     if (LIBFABRIC_FOUND)
         Sigma_profiler_link_provider(${ProfilerShimTarget} LibfabricTraceShared)
     endif ()
+
     if (UCX_FOUND)
         Sigma_profiler_link_provider(${ProfilerShimTarget} UcxTraceShared)
     endif ()
 
+    target_link_libraries(${ProfilerShimTarget} PRIVATE SigmaHelpers)
+
     # Tracing and Logging
     target_link_libraries(${ProfilerShimTarget} PRIVATE EventsLib)
     target_include_directories(${ProfilerShimTarget} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")
-
-    # For infiniband/mlx5dv.h headers system includes
-    target_link_libraries(${ProfilerShimTarget} PRIVATE ibverbs_headers)
 
     # Make sure we build before the profiler
     add_dependencies(Profiler ${ProfilerShimTarget})
@@ -104,4 +133,3 @@ target_link_libraries(ProfilerEventReader PRIVATE
         absl::flat_hash_map
         absl::flat_hash_set)
 # ================================================================
-

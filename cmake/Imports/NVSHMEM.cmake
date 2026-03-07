@@ -1,5 +1,18 @@
+option(SIGMA_ENABLE_NVSHMEM "Enable NVSHMEM" ON)
 option(BUILD_NVSHMEM "Build bundled NVSHMEM" OFF)
 set(NVSHMEM_ROOT "" CACHE PATH "Prefix where system NVSHMEM is installed")
+
+set(NVSHMEM_FOUND FALSE)
+
+if (NOT SIGMA_ENABLE_NVSHMEM)
+    message(STATUS "[Sigma] NVSHMEM: disabled by user")
+    return()
+endif ()
+
+if (NOT SIGMA_HAS_CUDA)
+    message(STATUS "[Sigma] NVSHMEM: disabled (no CUDA backend)")
+    return()
+endif ()
 
 if (BUILD_NVSHMEM)
     set(NVSHMEM_DEPENDS_LIST "")
@@ -84,17 +97,19 @@ if (BUILD_NVSHMEM)
     add_dependencies(nvshmem::nvshmem_device nvshmem_external)
     add_dependencies(nvshmem::nvshmem_host nvshmem_external)
 
-    # 2. Link CUDA Runtime and MPI (if used)
-    #set(_nvshmem_interface_libs CUDA::cudart)
-    #if(MPI_FOUND)
-    #    list(APPEND _nvshmem_interface_libs MPI::MPI_CXX)
-    #endif()
 
-    #set_target_properties(nvshmem::nvshmem PROPERTIES
-    #        INTERFACE_LINK_LIBRARIES "${_nvshmem_interface_libs}"
-    #)
+    set(NVSHMEM_FOUND TRUE)
 else ()
     # TODO: Version might break it
     # Bit of a hack to get NVSHMEM from nvhpc toolkit
-    find_package(NVSHMEM REQUIRED PATHS "${NVSHMEM_ROOT}" "${CUDAToolkit_LIBRARY_ROOT}/../../comm_libs/nvshmem")
+    find_package(NVSHMEM QUIET PATHS "${NVSHMEM_ROOT}" "${CUDAToolkit_LIBRARY_ROOT}/../../comm_libs/nvshmem")
+    if (NVSHMEM_FOUND)
+        set(NVSHMEM_FOUND TRUE)
+    endif ()
+endif ()
+
+if (NVSHMEM_FOUND)
+    message(STATUS "[Sigma] NVSHMEM: found")
+else ()
+    message(STATUS "[Sigma] NVSHMEM: not found, disabling NVSHMEM support")
 endif ()

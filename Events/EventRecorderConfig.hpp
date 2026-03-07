@@ -128,14 +128,14 @@ namespace Events {
 
         static std::uint64_t get_cpu_id() {
             const static std::uint64_t cpu_id = std::invoke([]() {
-                const auto cpu_id = sched_getcpu();
+                const auto cpu_id_init = sched_getcpu();
 
                 // Apparently can fail if the kernel doesn't support it
-                if (cpu_id < 0) {
+                if (cpu_id_init < 0) {
                     throw std::runtime_error("Can't get CPU ID: errno - " + std::to_string(errno));
                 }
 
-                return static_cast<std::uint64_t>(cpu_id);
+                return static_cast<std::uint64_t>(cpu_id_init);
             });
 
             return cpu_id;
@@ -225,7 +225,7 @@ namespace Events {
             // Note: this may be unsafe if the process forks after this function is called
             // because of thread_local. See ProfilerShim
             thread_local EventFileHeader header = std::invoke([]() {
-                auto header = EventFileHeader{
+                auto header_init = EventFileHeader{
                         .event_id = EventTrait<EventT>::id,
                         .event_category = EventTrait<EventT>::category,
                         .hostname = {},
@@ -235,9 +235,9 @@ namespace Events {
                 };
 
                 const auto& hostname = get_hostname();
-                snprintf(header.hostname, sizeof header.hostname, "%s", hostname.c_str());
+                snprintf(header_init.hostname, sizeof header_init.hostname, "%s", hostname.c_str());
 
-                return header;
+                return header_init;
             });
 
             return header;

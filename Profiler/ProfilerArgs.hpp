@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <concepts>
 #include <cstdlib>
 #include <stdexcept>
@@ -21,42 +20,64 @@ namespace Profiler {
         std::filesystem::path ShimDir{};
 
         // Providers
+#ifdef SIGMA_HAS_RDMA_CORE
         bool LoadIbtrace{true};
         bool LoadMlx5dv{true};
-        bool LoadCupti{false};
-        bool LoadLibfabric{false};
-        bool LoadUcx{false};
-
-        // Features
         bool EnableDoorbellHijack{false};
+#endif
+#ifdef SIGMA_HAS_CUDA
+        bool LoadCupti{false};
+#endif
+#ifdef SIGMA_HAS_LIBFABRIC
+        bool LoadLibfabric{false};
+#endif
+#ifdef SIGMA_HAS_UCX
+        bool LoadUcx{false};
+#endif
 
         int Check{CheckVal};
 
-        [[nodiscard]] std::array<std::string, 8> to_env() const {
-            return {
-                    make_env_entry("ShimPath", ShimDir),                          //
-                    make_env_entry("LoadIbtrace", LoadIbtrace),                   //
-                    make_env_entry("LoadMlx5dv", LoadMlx5dv),                     //
-                    make_env_entry("LoadCupti", LoadCupti),                       //
-                    make_env_entry("LoadLibfabric", LoadLibfabric),               //
-                    make_env_entry("LoadUcx", LoadUcx),                           //
-                    make_env_entry("EnableDoorbellHijack", EnableDoorbellHijack), //
-                    make_env_entry("Check", Check),                               //
-            };
+        [[nodiscard]] std::vector<std::string> to_env() const {
+            std::vector<std::string> env;
+            env.push_back(make_env_entry("ShimPath", ShimDir));
+#ifdef SIGMA_HAS_RDMA_CORE
+            env.push_back(make_env_entry("LoadIbtrace", LoadIbtrace));
+            env.push_back(make_env_entry("LoadMlx5dv", LoadMlx5dv));
+            env.push_back(make_env_entry("EnableDoorbellHijack", EnableDoorbellHijack));
+#endif
+#ifdef SIGMA_HAS_CUDA
+            env.push_back(make_env_entry("LoadCupti", LoadCupti));
+#endif
+#ifdef SIGMA_HAS_LIBFABRIC
+            env.push_back(make_env_entry("LoadLibfabric", LoadLibfabric));
+#endif
+#ifdef SIGMA_HAS_UCX
+            env.push_back(make_env_entry("LoadUcx", LoadUcx));
+#endif
+            env.push_back(make_env_entry("Check", Check));
+            return env;
         }
 
         // TODO: check Check
         [[nodiscard]] static ProfilerArgs from_env() {
-            return {
-                    .ShimDir{parse_env<std::filesystem::path>("ShimPath", {})},
-                    .LoadIbtrace = parse_env("LoadIbtrace", true),
-                    .LoadMlx5dv = parse_env("LoadMlx5dv", true),
-                    .LoadCupti = parse_env("LoadCupti", true),
-                    .LoadLibfabric = parse_env("LoadLibfabric", false),
-                    .LoadUcx = parse_env("LoadUcx", false),
-                    .EnableDoorbellHijack = parse_env("EnableDoorbellHijack", false),
-                    .Check = parse_env("Check", 0),
-            };
+            ProfilerArgs args;
+            args.ShimDir = parse_env<std::filesystem::path>("ShimPath", {});
+#ifdef SIGMA_HAS_RDMA_CORE
+            args.LoadIbtrace = parse_env("LoadIbtrace", true);
+            args.LoadMlx5dv = parse_env("LoadMlx5dv", true);
+            args.EnableDoorbellHijack = parse_env("EnableDoorbellHijack", false);
+#endif
+#ifdef SIGMA_HAS_CUDA
+            args.LoadCupti = parse_env("LoadCupti", true);
+#endif
+#ifdef SIGMA_HAS_LIBFABRIC
+            args.LoadLibfabric = parse_env("LoadLibfabric", false);
+#endif
+#ifdef SIGMA_HAS_UCX
+            args.LoadUcx = parse_env("LoadUcx", false);
+#endif
+            args.Check = parse_env("Check", 0);
+            return args;
         }
 
     private:

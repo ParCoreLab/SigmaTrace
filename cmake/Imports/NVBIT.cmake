@@ -1,3 +1,17 @@
+option(SIGMA_ENABLE_NVBIT "Enable NVBit" ON)
+
+set(NVBIT_FOUND FALSE)
+
+if (NOT SIGMA_ENABLE_NVBIT)
+    message(STATUS "[Sigma] NVBit: disabled by user")
+    return()
+endif ()
+
+if (NOT SIGMA_HAS_CUDA)
+    message(STATUS "[Sigma] NVBit: disabled (no CUDA backend)")
+    return()
+endif ()
+
 set(NVBIT_ARCH ${CMAKE_SYSTEM_PROCESSOR})
 
 # NVBIT releases are either "x86_64" or "aarch64"
@@ -6,7 +20,8 @@ if (NVBIT_ARCH MATCHES "x86_64|amd64|AMD64")
 elseif (NVBIT_ARCH MATCHES "aarch64|arm64|ARM64")
     set(NVBIT_ARCH "aarch64")
 else ()
-    message(FATAL_ERROR "Unsupported architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+    message(STATUS "[Sigma] NVBit: unsupported architecture ${CMAKE_SYSTEM_PROCESSOR}, disabling")
+    return()
 endif ()
 
 set(NVBIT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Imports/nvbit_release_${NVBIT_ARCH}" CACHE PATH "Prefix where system NVBIT is installed")
@@ -27,7 +42,8 @@ if (NOT EXISTS ${NVBIT_ROOT} AND NOT EXISTS ${NVBIT_ARCHIVE})
     list(GET download_status 1 status_message)
 
     if (NOT status_code EQUAL 0)
-        message(FATAL_ERROR "Failed to download NVBit: ${status_message}")
+        message(STATUS "[Sigma] NVBit: download failed (${status_message}), disabling")
+        return()
     endif ()
 endif ()
 
@@ -39,8 +55,6 @@ if (NOT EXISTS ${NVBIT_ROOT})
     file(ARCHIVE_EXTRACT INPUT ${NVBIT_ARCHIVE} DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/Imports/")
 endif ()
 
-message(STATUS "Using NVBIT from ${NVBIT_ROOT}")
-
 add_library(nvbit STATIC IMPORTED)
 set_target_properties(nvbit PROPERTIES
         IMPORTED_LOCATION "${NVBIT_ROOT}/core/libnvbit.a"
@@ -48,3 +62,6 @@ set_target_properties(nvbit PROPERTIES
 )
 
 target_include_directories(nvbit INTERFACE "${NVBIT_ROOT}/core")
+
+set(NVBIT_FOUND TRUE)
+message(STATUS "[Sigma] NVBit: found (${NVBIT_ROOT})")

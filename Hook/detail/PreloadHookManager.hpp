@@ -29,7 +29,7 @@ namespace hook::detail {
     };
 
     inline void* scan_loaded_libraries(const char* symbol, void* skip_base) noexcept {
-        SymbolScanCtx ctx{
+        SymbolScanCtx base_ctx{
                 symbol,
                 skip_base,
                 nullptr,
@@ -60,9 +60,9 @@ namespace hook::detail {
                 return 1;
             }
             return 0;
-        }, &ctx);
+        }, &base_ctx);
 
-        return ctx.result;
+        return base_ctx.result;
     }
 
     // ================================================================

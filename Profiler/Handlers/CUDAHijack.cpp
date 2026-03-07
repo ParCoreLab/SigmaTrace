@@ -7,6 +7,8 @@
 #include "../ProfilerShim.hpp"
 #include "Common.hpp"
 
+#include "Helpers/CudaHelpers.hpp"
+
 #include "../Events/CUDAEvents.hpp"
 #include "../Events/Mlx5DvEvents.hpp"
 #include "CUDAEventSource.hpp"
@@ -175,7 +177,7 @@ namespace Profiler::hijack {
 
                 thread_local CUstream cu_stream = std::invoke([&qp_info]() {
                     CUstream s;
-                    CU_CHECK(cuCtxPushCurrent(qp_info.cuda_ctx));
+                    CU_CHECK(cuCtxPushCurrent(qp_info.gpu_ctx));
                     CU_CHECK(cuStreamCreate(&s, CU_STREAM_NON_BLOCKING));
 
                     CUcontext empty;

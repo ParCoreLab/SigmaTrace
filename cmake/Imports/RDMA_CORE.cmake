@@ -1,9 +1,16 @@
+option(SIGMA_ENABLE_RDMA_CORE "Enable RDMA-core (ibverbs/mlx5dv) support" ON)
 option(BUILD_RDMA_CORE "Build bundled rdma-core" OFF)
 set(RDMA_ROOT "" CACHE PATH "Prefix where system rdma-core is installed")
 
+set(RDMA_CORE_FOUND FALSE)
 set(RDMA_INCLUDE_DIR "")
 set(IBVERBS_LIBRARY_PATH "")
 set(MLX5_LIBRARY_PATH "")
+
+if (NOT SIGMA_ENABLE_RDMA_CORE)
+    message(STATUS "[Sigma] RDMA-core: disabled by user")
+    return()
+endif ()
 
 if (BUILD_RDMA_CORE)
     include(ExternalProject)
@@ -12,8 +19,6 @@ if (BUILD_RDMA_CORE)
             BINARY_DIR "${CMAKE_BINARY_DIR}/rdma-core"
             CMAKE_ARGS
             -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-#            -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
-#            -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
             -DIN_PLACE=1
             # TODO: this breaks on some systems but might be important
             -DENABLE_RESOLVE_NEIGH=0
@@ -48,31 +53,42 @@ if (BUILD_RDMA_CORE)
     # TODO: unsure if this is proper
     set(CMAKE_DISABLE_FIND_PACKAGE_ibverbs TRUE)
     set(CMAKE_DISABLE_FIND_PACKAGE_mlx5 TRUE)
+    set(RDMA_CORE_FOUND TRUE)
 else ()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(RDMA REQUIRED libibverbs libmlx5)
-
-    set(RDMA_INCLUDE_DIR ${RDMA_INCLUDE_DIRS})
-    set(IBVERBS_LIBRARY_PATH ${RDMA_LIBRARIES})
-
-    # Try finding full paths for ExternalProject usage (NCCL)
-    find_library(IBVERBS_LIB_FULL_PATH NAMES ibverbs HINTS ${RDMA_LIBRARY_DIRS})
-    find_library(MLX5_LIB_FULL_PATH NAMES mlx5 HINTS ${RDMA_LIBRARY_DIRS})
-
-    if (NOT IBVERBS_LIB_FULL_PATH)
-        find_library(IBVERBS_LIB_FULL_PATH NAMES ibverbs)
-    endif ()
-    if (NOT MLX5_LIB_FULL_PATH)
-        find_library(MLX5_LIB_FULL_PATH NAMES mlx5)
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(RDMA QUIET libibverbs libmlx5)
     endif ()
 
-    set(IBVERBS_LIBRARY_PATH "${IBVERBS_LIB_FULL_PATH}")
-    set(MLX5_LIBRARY_PATH "${MLX5_LIB_FULL_PATH}")
+    if (RDMA_FOUND)
+        set(RDMA_INCLUDE_DIR ${RDMA_INCLUDE_DIRS})
 
-    if (NOT IBVERBS_LIBRARY_PATH OR NOT MLX5_LIBRARY_PATH)
-        message(FATAL_ERROR "System rdma-core (libibverbs/libmlx5) not found.")
+        # Try finding full paths for ExternalProject usage (NCCL)
+        find_library(IBVERBS_LIB_FULL_PATH NAMES ibverbs HINTS ${RDMA_LIBRARY_DIRS})
+        find_library(MLX5_LIB_FULL_PATH NAMES mlx5 HINTS ${RDMA_LIBRARY_DIRS})
+
+        if (NOT IBVERBS_LIB_FULL_PATH)
+            find_library(IBVERBS_LIB_FULL_PATH NAMES ibverbs)
+        endif ()
+        if (NOT MLX5_LIB_FULL_PATH)
+            find_library(MLX5_LIB_FULL_PATH NAMES mlx5)
+        endif ()
+
+        set(IBVERBS_LIBRARY_PATH "${IBVERBS_LIB_FULL_PATH}")
+        set(MLX5_LIBRARY_PATH "${MLX5_LIB_FULL_PATH}")
+
+        if (IBVERBS_LIBRARY_PATH AND MLX5_LIBRARY_PATH)
+            set(RDMA_CORE_FOUND TRUE)
+        endif ()
+    endif ()
+
+    if (NOT RDMA_CORE_FOUND)
+        message(STATUS "[Sigma] RDMA-core: not found, disabling ibverbs/mlx5dv support")
+        return()
     endif ()
 endif ()
+
+message(STATUS "[Sigma] RDMA-core: found (ibverbs: ${IBVERBS_LIBRARY_PATH}, mlx5: ${MLX5_LIBRARY_PATH})")
 
 # Imported Targets for RDMA
 add_library(ibverbs SHARED IMPORTED GLOBAL)
@@ -94,8 +110,7 @@ set_target_properties(mlx5 PROPERTIES
         INTERFACE_INCLUDE_DIRECTORIES "${RDMA_INCLUDE_DIR}"
 )
 
-# Header-only interface targets: link against these to get rdma-core headers
-# as system includes without creating a runtime link dependency on libibverbs/libmlx5.
+# Header-only interface targets
 add_library(ibverbs_headers INTERFACE IMPORTED GLOBAL)
 target_include_directories(ibverbs_headers SYSTEM INTERFACE "${RDMA_INCLUDE_DIR}")
 

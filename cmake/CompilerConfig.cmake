@@ -5,11 +5,49 @@
 # ================================================================
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 20)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES "native")
+# ================================================================
+# GPU Backend Selection
+# ================================================================
+set(SIGMA_GPU_BACKEND "auto" CACHE STRING "GPU backend: CUDA, HIP, or NONE (auto-detect by default)")
+set_property(CACHE SIGMA_GPU_BACKEND PROPERTY STRINGS "auto" "CUDA" "HIP" "NONE")
+
+include(CheckLanguage)
+
+if (SIGMA_GPU_BACKEND STREQUAL "auto")
+    check_language(CUDA)
+    if (CMAKE_CUDA_COMPILER)
+        set(SIGMA_GPU_BACKEND "CUDA")
+    else ()
+        check_language(HIP)
+        if (CMAKE_HIP_COMPILER)
+            set(SIGMA_GPU_BACKEND "HIP")
+        else ()
+            set(SIGMA_GPU_BACKEND "NONE")
+        endif ()
+    endif ()
+endif ()
+
+set(SIGMA_HAS_CUDA FALSE)
+set(SIGMA_HAS_HIP FALSE)
+
+if (SIGMA_GPU_BACKEND STREQUAL "CUDA")
+    enable_language(CUDA)
+    set(SIGMA_HAS_CUDA TRUE)
+    set(CMAKE_CUDA_STANDARD 20)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "native")
+    endif ()
+    message(STATUS "[Sigma] GPU backend: CUDA (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
+elseif (SIGMA_GPU_BACKEND STREQUAL "HIP")
+    enable_language(HIP)
+    set(SIGMA_HAS_HIP TRUE)
+    message(STATUS "[Sigma] GPU backend: HIP")
+elseif (SIGMA_GPU_BACKEND STREQUAL "NONE")
+    message(STATUS "[Sigma] GPU backend: NONE")
+else ()
+    message(FATAL_ERROR "Unknown SIGMA_GPU_BACKEND: ${SIGMA_GPU_BACKEND}. Must be CUDA, HIP, or NONE.")
 endif ()
 
 # ================================================================
@@ -89,12 +127,14 @@ set(SIGMA_CXX_WARNINGS_CLANG
         -Wno-unknown-warning-option
 )
 
-set(SIGMA_CUDA_WARNINGS
-        # -Werror=all-warnings
-        -Wreorder
-        # -Wdefault-stream-launch
-        -Wext-lambda-captures-this
-)
+if (SIGMA_HAS_CUDA)
+    set(SIGMA_CUDA_WARNINGS
+            # -Werror=all-warnings
+            -Wreorder
+            # -Wdefault-stream-launch
+            -Wext-lambda-captures-this
+    )
+endif ()
 
 # ================================================================
 # Build Configuration Flags
@@ -105,9 +145,11 @@ set(SIGMA_CXX_FLAGS_RELEASE -O3 -march=native -ffast-math)
 set(SIGMA_CXX_FLAGS_RELWITHDEB -O2 -g -fno-omit-frame-pointer)
 
 # CUDA
-set(SIGMA_CUDA_FLAGS_DEBUG -g -O0 --generate-line-info)
-set(SIGMA_CUDA_FLAGS_RELEASE -O3 --use_fast_math --extra-device-vectorization)
-set(SIGMA_CUDA_FLAGS_RELWITHDEB -O2 -g --generate-line-info)
+if (SIGMA_HAS_CUDA)
+    set(SIGMA_CUDA_FLAGS_DEBUG -g -O0 --generate-line-info)
+    set(SIGMA_CUDA_FLAGS_RELEASE -O3 --use_fast_math --extra-device-vectorization)
+    set(SIGMA_CUDA_FLAGS_RELWITHDEB -O2 -g --generate-line-info)
+endif ()
 
 # ================================================================
 # Optional Features
@@ -145,12 +187,14 @@ function(Sigma_apply_compile_options target)
     )
 
     # CUDA warnings and build type flags
-    target_compile_options(${target} PRIVATE
-            "$<$<COMPILE_LANGUAGE:CUDA>:${SIGMA_CUDA_WARNINGS}>"
-            "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:${SIGMA_CUDA_FLAGS_DEBUG}>"
-            "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Release>>:${SIGMA_CUDA_FLAGS_RELEASE}>"
-            "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:RelWithDebInfo>>:${SIGMA_CUDA_FLAGS_RELWITHDEB}>"
-    )
+    if (SIGMA_HAS_CUDA)
+        target_compile_options(${target} PRIVATE
+                "$<$<COMPILE_LANGUAGE:CUDA>:${SIGMA_CUDA_WARNINGS}>"
+                "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:${SIGMA_CUDA_FLAGS_DEBUG}>"
+                "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Release>>:${SIGMA_CUDA_FLAGS_RELEASE}>"
+                "$<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:RelWithDebInfo>>:${SIGMA_CUDA_FLAGS_RELWITHDEB}>"
+        )
+    endif ()
 
     # Compile definitions
     target_compile_definitions(${target} PRIVATE
@@ -158,6 +202,11 @@ function(Sigma_apply_compile_options target)
             $<$<CONFIG:Release>:NDEBUG;SIGMA_RELEASE>
             $<$<CONFIG:RelWithDebInfo>:NDEBUG>
     )
+
+    # Feature flags (SIGMA_HAS_CUDA, SIGMA_HAS_RDMA_CORE, etc.)
+    if (TARGET sigma_feature_flags)
+        target_link_libraries(${target} PRIVATE sigma_feature_flags)
+    endif ()
 
     # LTO
     if (SIGMA_ENABLE_LTO)
@@ -249,13 +298,15 @@ endfunction()
 
 # Sigma_add_cuda_library(name [STATIC|SHARED] source1 ...)
 # Convenience for CUDA libraries with separable compilation
-function(Sigma_add_cuda_library name)
-    add_library(${name} ${ARGN})
-    set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SIGMA_LIB_DIR_FULL}")
+if (SIGMA_HAS_CUDA)
+    function(Sigma_add_cuda_library name)
+        add_library(${name} ${ARGN})
+        set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SIGMA_LIB_DIR_FULL}")
 
-    Sigma_apply_compile_options(${name})
-    set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-endfunction()
+        Sigma_apply_compile_options(${name})
+        set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    endfunction()
+endif ()
 
 # ================================================================
 # Per-Source File Overrides

@@ -8,7 +8,6 @@
 
 #include "EventRecorder.hpp"
 
-#include "Events/IbvEvents.hpp"
 #include "Events/MetaEvents.hpp"
 #include "Helpers/TscCalibration.hpp"
 
@@ -16,10 +15,15 @@
 
 #include "ProfilerShim.hpp"
 
+#ifdef SIGMA_HAS_RDMA_CORE
+#include "Events/IbvEvents.hpp"
+#endif
+
 // Global Profiler instance
 ProfilerCtx* g_ProfilerInstance;
 
 ProfilerCtx::~ProfilerCtx() {
+#ifdef SIGMA_HAS_RDMA_CORE
     std::cout << "[Profiler] num_nic_doorbell_accesses: " << std::dec << num_nic_doorbell_accesses << std::endl;
     std::cout << "[Profiler] num_fake_nic_accesses: " << std::dec << num_fake_nic_accesses << std::endl;
 
@@ -27,8 +31,10 @@ ProfilerCtx::~ProfilerCtx() {
     std::cout << "[Profiler] doorbell_skipped: " << std::dec << doorbell_skipped << std::endl;
 
     emit_communication_summaries();
+#endif
 }
 
+#ifdef SIGMA_HAS_RDMA_CORE
 // Emit CommunicationSummary events on exit
 void ProfilerCtx::emit_communication_summaries() {
     if (!m_event_recorder) {
@@ -70,6 +76,7 @@ void ProfilerCtx::emit_communication_summaries() {
         m_event_recorder->Record(summary, 0);
     }
 }
+#endif // SIGMA_HAS_RDMA_CORE
 
 /*
  * See Note[late_load]
@@ -106,6 +113,7 @@ ProfilerCtx::ProfilerCtx() {
     // Will be populated with things from profiler_args in the future
     m_event_recorder_config = {};
 
+#ifdef SIGMA_HAS_RDMA_CORE
     if (m_args.LoadIbtrace) {
         load_ibv(m_args.ShimDir);
     }
@@ -121,20 +129,25 @@ ProfilerCtx::ProfilerCtx() {
             std::abort();
         }
 
+#ifdef SIGMA_HAS_CUDA
         load_doorbell_hijack();
+#endif
     }
+#endif
 
+#ifdef SIGMA_HAS_CUDA
     if (m_args.LoadCupti) {
         load_cupti(m_args.ShimDir);
     }
+#endif
 
-#ifdef SIGMA_PROVIDER_ucx_trace
+#ifdef SIGMA_HAS_UCX
     if (m_args.LoadUcx) {
         load_ucx(m_args.ShimDir);
     }
 #endif
 
-#ifdef SIGMA_PROVIDER_libfabric_trace
+#ifdef SIGMA_HAS_LIBFABRIC
     if (m_args.LoadLibfabric) {
         load_libfabric(m_args.ShimDir);
     }
@@ -149,22 +162,29 @@ ProfilerCtx::ProfilerCtx(ProfilerCtx&& o) noexcept {
     m_args = Profiler::ProfilerArgs::from_env();
     m_event_recorder_config = {};
 
+#ifdef SIGMA_HAS_RDMA_CORE
     this->m_ibv_profiler = std::move(o.m_ibv_profiler);
-    this->m_cuda_profiler = std::move(o.m_cuda_profiler);
     this->m_mlx5dv_profiler = std::move(o.m_mlx5dv_profiler);
+#endif
+
+#ifdef SIGMA_HAS_CUDA
+    this->m_cuda_profiler = std::move(o.m_cuda_profiler);
     this->m_cupti_profiler = std::move(o.m_cupti_profiler);
 
     // *Some* things need a little push
     if (m_cupti_profiler) {
         m_cupti_profiler->subscribe_cupti();
     }
+#endif
 }
 
+#ifdef SIGMA_HAS_CUDA
 // Forward declaration — defined in CUDAHijack.cpp
 // Not very clean but hack fix needs hack
 namespace Profiler::hijack {
     void reset();
 }
+#endif
 
 // ================================================================================================
 // Init and Exit
@@ -243,9 +263,11 @@ static void profiler_atfork_child() {
     // Release buffers without flushing
     Events::ThreadBufferRegistry::reset_for_fork();
 
+#ifdef SIGMA_HAS_CUDA
     // Reset CUDA doorbell hijack namespace globals
     // They should probably not be globals to begin with
     Profiler::hijack::reset();
+#endif
 
     /*
      * Here we soft reinitialize the Profiler
