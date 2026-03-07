@@ -28,5 +28,5 @@ void ProfilerCtx::load_cupti(const std::filesystem::path& shim_dir) {
         instance().m_event_recorder->Record(event, ts_start);
     });
 
-    std::cout << "Profiler loaded CUPTI" << std::endl;
+    std::cout << "[Profiler] loaded CUPTI Trace" << std::endl;
 }

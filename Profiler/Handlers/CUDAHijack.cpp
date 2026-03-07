@@ -460,4 +460,6 @@ void ProfilerCtx::load_doorbell_hijack() {
 
         Profiler::hijack::Mlx5UarAllocations.erase(devx_uar->reg_addr);
     });
+
+    std::cout << "[Profiler] Loaded Doorbell Hijack Trace" << std::endl;
 }

@@ -325,4 +325,6 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
                 },
                 ts_start);
     });
+
+    std::cout << "[Profiler] loaded mlx5dv Trace" << std::endl;
 }

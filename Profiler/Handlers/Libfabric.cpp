@@ -1,5 +1,3 @@
-#ifdef SIGMA_PROVIDER_libfabric_trace
-
 #include "../ProfilerProviders.hpp"
 #include "../ProfilerShim.hpp"
 #include "Common.hpp"
@@ -106,7 +104,6 @@ void ProfilerCtx::load_libfabric(const std::filesystem::path& shim_dir) {
         tls_active_fi_ep = 0;
     });
 
-    std::cout << "[Profiler] Loaded libfabric tracing" << std::endl;
+    std::cout << "[Profiler] Loaded Libfabric Trace" << std::endl;
 }
 // ================================================================================================
-#endif

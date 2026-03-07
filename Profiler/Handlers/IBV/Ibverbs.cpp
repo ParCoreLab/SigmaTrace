@@ -233,4 +233,6 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
             }
         }
     });
+
+    std::cout << "[Profiler] loaded Ibverbs Trace" << std::endl;
 }

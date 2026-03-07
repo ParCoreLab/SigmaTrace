@@ -1,5 +1,3 @@
-#ifdef SIGMA_PROVIDER_ucx_trace
-
 #include "../ProfilerProviders.hpp"
 #include "../ProfilerShim.hpp"
 #include "Common.hpp"
@@ -178,7 +176,6 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir) {
         instance().m_event_recorder->Record(event, ts_start, ts_end);
     });
 
-    std::cout << "[Profiler] Loaded UCX" << std::endl;
+    std::cout << "[Profiler] Loaded UCX Trace" << std::endl;
 }
 // ================================================================================================
-#endif

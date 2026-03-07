@@ -328,7 +328,7 @@ extern "C" int __libc_start_main(int (*main)(int, char**, char**), int argc, cha
     // We do it here because destructors have reverse order and will break providers
     profiler_finalize();
 
-    return res.get();;
+    return res.get();
 }
 #pragma GCC diagnostic pop
 // ================================================================================================
