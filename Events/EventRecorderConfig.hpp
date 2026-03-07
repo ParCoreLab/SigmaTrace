@@ -52,7 +52,7 @@ namespace Events {
 
     // Fast (RDTSC-based) configuration - can be overridden by user
     struct DefaultCompileTimeConfig {
-        using TimestampSourceType = TS::GettimeTimestampSource;
+        using TimestampSourceType = TS::RdtscTimestampSource;
         static constexpr std::size_t default_buffer_capacity = 1024;
     };
 
@@ -80,6 +80,7 @@ namespace Events {
         // Top level directory for event files
         std::filesystem::path OutputDirectory = "EventRecorder";
         std::filesystem::path EventsDirectory = OutputDirectory / "events";
+        std::filesystem::path MetaEventsDirectory = OutputDirectory / "meta";
 
         // Suffix for event files. Useful for globbing
         std::string EventFileSuffix = ".events";
@@ -98,11 +99,12 @@ namespace Events {
                 const auto timestamp = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
                 OutputDirectory = OutputDirectory.string() + "_" + std::to_string(timestamp);
                 EventsDirectory = OutputDirectory / "events";
+                MetaEventsDirectory = OutputDirectory / "metadata";
                 std::cerr << "Saving in: " << OutputDirectory << std::endl;
                 return ensure_output_directory(_max_retries - 1);
             }
 
-            for (const auto& dir: {OutputDirectory, EventsDirectory}) {
+            for (const auto& dir: {OutputDirectory, EventsDirectory, MetaEventsDirectory}) {
                 std::filesystem::create_directories(dir);
             }
         }
@@ -141,8 +143,8 @@ namespace Events {
 
         // TODO: uint32_t should suffice and even that is too large
         static std::uint64_t get_process_id() noexcept {
-            const static auto process_id{getpid()};
-            return static_cast<uint64_t>(process_id);
+            // Caching can return the parent's PID after fork().
+            return static_cast<uint64_t>(getpid());
         }
 
         static std::uint64_t get_thread_id() noexcept {
@@ -174,11 +176,12 @@ namespace Events {
             return value;
         }
 
+    private:
         // Get the full path for an event file
         // TODO: may be inefficient
         // TODO: why are we taking std::thread::id here?
         template<HasEventTrait EventT>
-        [[nodiscard]] Path get_event_file_path() const noexcept {
+        [[nodiscard]] Path internal_get_event_file_path(const std::filesystem::path& parent_dir) const noexcept {
             // TODO: this can be thread_local
             std::ostringstream oss;
 
@@ -194,8 +197,23 @@ namespace Events {
             // Add the event ID for good measure
             oss << static_cast<EventId_T>(EventTrait<EventT>::id) << EventFileSuffix;
 
-            const auto path = EventsDirectory / oss.str();
+            const auto path = parent_dir / oss.str();
             return path;
+        }
+
+    public:
+        template<HasEventTrait EventT>
+        [[nodiscard]] Path get_event_file_path() const noexcept {
+            if constexpr (EventTrait<EventT>::category == EventCategory::Meta) {
+                return internal_get_event_file_path<EventT>(MetaEventsDirectory);
+            } else {
+                return internal_get_event_file_path<EventT>(EventsDirectory);
+            }
+        }
+
+        template<HasEventTrait EventT>
+        [[nodiscard]] Path get_meta_event_file_path() const noexcept {
+            return internal_get_event_file_path<EventT>(MetaEventsDirectory);
         }
 
         // TODO: this is here for convenience but breaks some conventions

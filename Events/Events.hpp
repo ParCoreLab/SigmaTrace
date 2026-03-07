@@ -15,6 +15,9 @@ namespace Events {
     enum class EventTypeId : EventId_T {
         Unknown = 0,
 
+        // Meta/calibration events (1-9)
+        TscCalibration = 1,
+
         // IBVerbs events (100-199)
         IbvDeviceRegistration = 100,
         IbvPortRegistration,
@@ -105,6 +108,7 @@ namespace Events {
 
     enum class EventCategory {
         Unknown = 0,
+        Meta,
         CPU,
         GPU,
         NIC,

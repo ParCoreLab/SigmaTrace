@@ -150,7 +150,7 @@ namespace cuda_trace {
         // Just in case
         CUPTI_CHECK(cuptiFinalize());
 
-        CUPTI_CHECK(cuptiActivityRegisterTimestampCallback(Helpers::TS::GettimeTimestampSource::Now));
+        CUPTI_CHECK(cuptiActivityRegisterTimestampCallback(Helpers::TS::RdtscTimestampSource::Now));
 
         // Callback
         CUPTI_CHECK(cuptiSubscribe(&detail::g_cupti_subscriber, on_cupti_callback, nullptr));

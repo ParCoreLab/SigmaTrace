@@ -14,6 +14,7 @@
 #include "../Events/CUDAEvents.hpp"
 #include "../Events/IbvEvents.hpp"
 #include "../Events/LibfabricEvents.hpp"
+#include "../Events/MetaEvents.hpp"
 #include "../Events/Mlx5DvEvents.hpp"
 #include "../Events/UcxEvents.hpp"
 #include "Helpers/Utilities.hpp"
@@ -32,7 +33,8 @@ using ThreadId = std::uint64_t;
 using NicId = std::uint64_t;
 
 using EnabledEvents =
-        Events::TypeList<ProfilerEvents::IbvDeviceRegistration, // ProfilerEvents::IbvPortRegistration, //
+        Events::TypeList<ProfilerEvents::TscCalibration,        //
+                         ProfilerEvents::IbvDeviceRegistration, // ProfilerEvents::IbvPortRegistration, //
                          ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,                             //
                          ProfilerEvents::IbvCreateQp, ProfilerEvents::IbvDestroyQp, ProfilerEvents::IbvModifyQp,    //
                          ProfilerEvents::IbvMemoryReg, ProfilerEvents::IbvMemoryDereg,                              //
@@ -578,6 +580,13 @@ public:
 
     const std::filesystem::path& get_output_path() {
         return m_output_path;
+    }
+
+    template<typename EventT>
+    void preprocess(EventTrait<EventT>, EventFileHeader& file_header, EventHeader& header, const EventT&) {
+        const auto node_id = register_node(file_header.hostname);
+        header.timestamp_start = tsc_to_ns(header.timestamp_start, node_id);
+        header.timestamp_end = tsc_to_ns(header.timestamp_end, node_id);
     }
 
     void add_header_annotations(perfetto::protos::TrackEvent* event, const EventFileHeader& file_header) {
@@ -1624,6 +1633,26 @@ public:
         m_builder.end_slice(track_uuid, header.timestamp_start);
     }
 
+    // This is called very early since it's a Meta event
+    void visit(EventTrait<ProfilerEvents::TscCalibration>, const EventFileHeader& file_header, EventHeader&&,
+               ProfilerEvents::TscCalibration&& event) {
+        const auto node_id = register_node(file_header.hostname);
+
+        // Use the first calibration event per node as the start anchor
+        if (m_node_calibrations.contains(node_id)) {
+            return;
+        }
+
+        NodeCalibration calibration{
+                .tsc_start = event.tsc_value,
+                .wall_start_ns = event.wall_ns,
+                .tsc_freq_hz = event.tsc_freq_hz,
+                .has_calibration = true,
+        };
+
+        m_node_calibrations.emplace(node_id, std::move(calibration));
+    }
+
 private:
     // TODO: Set to true when we get the first ibv_open_device
     // Not used currently
@@ -1913,6 +1942,38 @@ private:
     // Local Storage
     // Node ID
     std::vector<NodeLocalStorage> m_node_local_storage;
+    // ================================================================
+
+    // ================================================================
+    // TSC Calibration
+    // ================================================================
+    struct NodeCalibration {
+        uint64_t tsc_start{0};
+        uint64_t wall_start_ns{0};
+        uint64_t tsc_freq_hz{0};
+        bool has_calibration{false};
+    };
+    absl::flat_hash_map<uint32_t /*node_id*/, NodeCalibration> m_node_calibrations;
+
+    uint64_t tsc_to_ns(uint64_t tsc, uint32_t node_id) const {
+        if (tsc == 0) {
+            return 0;
+        }
+
+        auto it = m_node_calibrations.find(node_id);
+        if (it == m_node_calibrations.end() || !it->second.has_calibration) {
+            return tsc; // No calibration available, return raw
+        }
+
+        const auto& cal = it->second;
+        const uint64_t tsc_delta = tsc - cal.tsc_start;
+
+        // Split into seconds and remainder to avoid overflow
+        const uint64_t seconds = tsc_delta / cal.tsc_freq_hz;
+        const uint64_t remainder = tsc_delta % cal.tsc_freq_hz;
+
+        return cal.wall_start_ns + seconds * 1'000'000'000ULL + remainder * 1'000'000'000ULL / cal.tsc_freq_hz;
+    }
     // ================================================================
 
     // Write communication graph JSON

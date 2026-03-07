@@ -32,10 +32,14 @@ namespace Helpers::TS {
     // WARNING: Not portable, affected by frequency scaling
     class RdtscTimestampSource {
     public:
-        [[nodiscard]] Timestamp now() const noexcept {
+        [[nodiscard]] static Timestamp Now() noexcept {
             uint32_t lo, hi;
             __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
             return (static_cast<uint64_t>(hi) << 32) | lo;
+        }
+
+        [[nodiscard]] Timestamp now() const noexcept {
+            return Now();
         }
     };
 

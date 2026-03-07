@@ -2,12 +2,15 @@
 #include <pthread.h>
 
 #include <atomic>
+#include <future>
 
 #include "Dlsym.hpp"
 
 #include "EventRecorder.hpp"
 
 #include "Events/IbvEvents.hpp"
+#include "Events/MetaEvents.hpp"
+#include "Helpers/TscCalibration.hpp"
 
 #include "ProfilerArgs.hpp"
 
@@ -74,7 +77,22 @@ void ProfilerCtx::emit_communication_summaries() {
  */
 void ProfilerCtx::LateLoad() {
     m_event_recorder = std::make_unique<Events::EventRecorder<>>(std::move(m_event_recorder_config));
-    std::cout << "[Profiler] Initialized!" << std::endl;
+
+    // Check for invariant TSC and warn if not available
+    if (!Helpers::TS::check_invariant_tsc()) {
+        std::cerr << "[Profiler] WARNING: Invariant TSC not detected (constant_tsc + nonstop_tsc). "
+                  << "RDTSC timestamps may be unreliable across cores." << std::endl;
+    }
+
+    // Record initial TSC calibration event
+    const auto snapshot = Helpers::TS::capture_tsc_snapshot();
+    const Profiler::Events::TscCalibration calibration{
+            .tsc_value = snapshot.tsc_value,
+            .wall_ns = snapshot.wall_ns,
+            .monotonic_ns = snapshot.monotonic_ns,
+            .tsc_freq_hz = snapshot.tsc_freq_hz,
+    };
+    m_event_recorder->Record(calibration, 0);
 }
 
 /*
@@ -163,6 +181,16 @@ static void profiler_finalize() {
     if (!g_ProfilerInstance) {
         return;
     }
+
+    // We do it earlier here instead of the destructor to avoid segfaults
+    const auto snapshot = Helpers::TS::capture_tsc_snapshot();
+    const Profiler::Events::TscCalibration calibration{
+            .tsc_value = snapshot.tsc_value,
+            .wall_ns = snapshot.wall_ns,
+            .monotonic_ns = snapshot.monotonic_ns,
+            .tsc_freq_hz = snapshot.tsc_freq_hz,
+    };
+    g_ProfilerInstance->m_event_recorder->Record(calibration, 0);
 
     // Flush and truncate all mmap'd event files before destroying the profiler.
     // thread_local destructors won't run for threads still alive at shutdown.
@@ -268,12 +296,17 @@ extern "C" int __libc_start_main(int (*main)(int, char**, char**), int argc, cha
         std::signal(sig, profiler_at_signal);
     }
 
-    const auto res = real_func(main, argc, argv, init, fini, rtld_fini, stack_end);
+    // This is launched in a separate thread because we don't want thread_local
+    // desructors in the main thread to mistaken
+    auto res = std::async([&]() -> int {
+        return real_func(main, argc, argv, init, fini, rtld_fini, stack_end);
+    });
+    res.wait();
 
     // We do it here because destructors have reverse order and will break providers
     profiler_finalize();
 
-    return res;
+    return res.get();;
 }
 #pragma GCC diagnostic pop
 // ================================================================================================

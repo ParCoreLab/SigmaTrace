@@ -32,12 +32,15 @@ namespace Events {
                 }
 
                 void register_finalizer() {
-                    std::weak_ptr<EventRingBuffer<EventT, Capacity>> weak_buf = buffer;
                     std::scoped_lock lock(s_mutex);
-                    s_finalizers.push_back([weak_buf]() {
-                        if (auto shared_buf = weak_buf.lock()) {
-                            shared_buf->finalize();
-                        }
+                    // We take a copy of the shared_ptr here to prevent
+                    // the thread_local destructor from destroying this
+                    // This whole thing doesn't really make sense honestly
+                    // We can probably get away with saving a thread_local
+                    // pointer and putting unique_ptrs on some static scope
+                    // array
+                    s_finalizers.push_back([shared_buf = buffer]() {
+                        shared_buf->finalize();
                     });
                 }
             };

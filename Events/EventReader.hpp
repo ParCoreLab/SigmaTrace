@@ -53,15 +53,20 @@ namespace Events {
             static_assert((Visitable<Derived, EnabledEvents> && ...),
                           "Make sure to define a visitor for all EnabledEvents!");
 
-            if (m_paths.empty()) {
-                m_paths = find_event_files();
-            }
+            size_t num_processed{0};
 
-            if (m_paths.empty()) {
-                return 0;
+            // Process meta events first
+            if (m_meta_event_paths.empty()) {
+                m_meta_event_paths = find_meta_event_files();
             }
+            num_processed += process_merged(m_meta_event_paths);
 
-            return process_merged();
+            if (m_event_paths.empty()) {
+                m_event_paths = find_event_files();
+            }
+            num_processed += process_merged(m_event_paths);
+
+            return num_processed;
         }
 
         const auto& get_stats() const noexcept {
@@ -91,7 +96,7 @@ namespace Events {
             EventFileHeader file_header{};
 
             explicit StreamState(const std::filesystem::path& p) : path(p) {
-                fd = ::open(p.c_str(), O_RDONLY);
+                fd = open(p.c_str(), O_RDONLY);
                 if (fd < 0) {
                     return;
                 }
@@ -220,15 +225,15 @@ namespace Events {
             }
         };
 
-    public:
-        [[nodiscard]] std::vector<std::filesystem::path> find_event_files() const {
+        [[nodiscard]] std::vector<std::filesystem::path>
+        internal_find_event_files(const std::filesystem::path dir) const {
             std::vector<std::filesystem::path> paths;
 
             if (!std::filesystem::exists(m_config.EventsDirectory)) {
                 return paths;
             }
 
-            for (const auto& entry: std::filesystem::directory_iterator(m_config.EventsDirectory)) {
+            for (const auto& entry: std::filesystem::directory_iterator(dir)) {
                 if (!entry.is_regular_file()) {
                     continue;
                 }
@@ -239,17 +244,27 @@ namespace Events {
                 // }
             }
 
-            std::sort(paths.begin(), paths.end());
+            // TODO
+            // std::sort(paths.begin(), paths.end());
             return paths;
         }
 
+    public:
+        [[nodiscard]] std::vector<std::filesystem::path> find_event_files() const {
+            return internal_find_event_files(m_config.EventsDirectory);
+        }
+
+        [[nodiscard]] std::vector<std::filesystem::path> find_meta_event_files() const {
+            return internal_find_event_files(m_config.MetaEventsDirectory);
+        }
+
     private:
-        size_t process_merged() {
+        size_t process_merged(const std::vector<std::filesystem::path>& paths) {
             // Open all streams
             std::vector<StreamState> streams;
-            streams.reserve(m_paths.size());
+            streams.reserve(paths.size());
 
-            for (const auto& path: m_paths) {
+            for (const auto& path: paths) {
                 streams.emplace_back(path);
             }
 
@@ -309,8 +324,20 @@ namespace Events {
             const auto* stored = reinterpret_cast<const StoredEvent<EventT>*>(state.m_cursor);
             state.m_cursor += total;
 
+            // Copy the header in case we need to preprocess it
             EventHeader header = stored->header;
+
+            // TODO: make Visitable const T& everything
             EventT data = stored->data;
+
+            // Allow derived class to transform the header (e.g., TSC-to-ns conversion)
+            // if constexpr (HasPreprocess<Derived, EventT>) {
+            // Meta evnts don't really need preprocessing
+            if constexpr (EventTrait<EventT>::category != EventCategory::Meta) {
+                derived().preprocess(EventTrait<EventT>{}, state.file_header, header, data);
+            }
+            // }
+
             derived().visit(EventTrait<EventT>{}, state.file_header, std::move(header), std::move(data));
 
             ++m_event_stats[EventTrait<EventT>::name];
@@ -320,7 +347,8 @@ namespace Events {
 
     protected:
         RuntimeConfig m_config{};
-        std::vector<std::filesystem::path> m_paths;
+        std::vector<std::filesystem::path> m_event_paths;
+        std::vector<std::filesystem::path> m_meta_event_paths;
     };
 
 } // namespace Events
