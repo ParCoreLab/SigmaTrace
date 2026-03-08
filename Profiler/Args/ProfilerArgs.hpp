@@ -10,63 +10,61 @@
 
 #include "../ProfilerFeatures.hpp"
 
+// Very ugly
+#define INTERNAL_PARSE_ENV_FIELD(field_name) .field_name = parse_env<decltype(field_name)>(#field_name)
+#define INTERNAL_CONVERT_FIELD_ENV(field_name) make_env_entry(#field_name, field_name)
+
 namespace Profiler {
     struct ProfilerArgs {
         static constexpr int CheckVal{123};
         static constexpr std::string_view EnvPrefix{"SIGMA_ENV_"};
 
-        std::filesystem::path ShimDir{};
+        std::filesystem::path ShimDirectory{};
 
-        // Provider flags — always present regardless of which backends were compiled in.
-        // The CLI parser owns defaults; to_env/from_env are guarded by feature macros
-        // because those paths are only meaningful when the corresponding backend exists.
+        // Provider flags always present regardless of which backends were compiled in.
+        // TODO: these should be in feature-guarded wrapper objects
+        bool LoadIbtrace;
+        bool LoadMlx5dv;
+        bool LoadCupti;
+        bool LoadLibfabric;
+        bool LoadUcx;
 
-        // TODO: this should be in feature-guarded wrapper objects
-        bool LoadIbtrace{true};
-        bool LoadMlx5dv{true};
-        bool LoadCupti{true};
-        bool LoadLibfabric{true};
-        bool LoadUcx{true};
+        bool EnableDoorbellHijack;
 
-        bool EnableDoorbellHijack{false};
+        // Output
+        std::string OutputDirectory;
+        bool OutputOverwrite;
 
         int Check{CheckVal};
 
-        [[nodiscard]] std::vector<std::string> to_env() const {
-            std::vector<std::string> env;
-            env.push_back(make_env_entry("ShimPath", ShimDir));
-            if constexpr (Features::HasRdmaCore) {
-                env.push_back(make_env_entry("LoadIbtrace", LoadIbtrace));
-                env.push_back(make_env_entry("LoadMlx5dv", LoadMlx5dv));
-                env.push_back(make_env_entry("EnableDoorbellHijack", EnableDoorbellHijack));
-            }
-
-            if constexpr (Features::HasCUDA) {
-                env.push_back(make_env_entry("LoadCupti", LoadCupti));
-            }
-
-            if constexpr (Features::HasLibfabric) {
-                env.push_back(make_env_entry("LoadLibfabric", LoadLibfabric));
-            }
-
-            if constexpr (Features::HasUCX) {
-                env.push_back(make_env_entry("LoadUcx", LoadUcx));
-            }
-
-            env.push_back(make_env_entry("Check", Check));
-            return env;
+        [[nodiscard]] std::array<std::string, 10> to_env() const {
+            return {
+                    INTERNAL_CONVERT_FIELD_ENV(ShimDirectory),        //
+                    INTERNAL_CONVERT_FIELD_ENV(LoadIbtrace),          //
+                    INTERNAL_CONVERT_FIELD_ENV(LoadMlx5dv),           //
+                    INTERNAL_CONVERT_FIELD_ENV(EnableDoorbellHijack), //
+                    INTERNAL_CONVERT_FIELD_ENV(LoadCupti),            //
+                    INTERNAL_CONVERT_FIELD_ENV(LoadLibfabric),        //
+                    INTERNAL_CONVERT_FIELD_ENV(LoadUcx),              //
+                    INTERNAL_CONVERT_FIELD_ENV(OutputDirectory),      //
+                    INTERNAL_CONVERT_FIELD_ENV(OutputOverwrite),      //
+                    INTERNAL_CONVERT_FIELD_ENV(Check),                //
+            };
         }
 
+        // TODO: remove default values
         [[nodiscard]] static ProfilerArgs from_env() {
             return {
-                    .ShimDir{parse_env<std::filesystem::path>("ShimPath", {})},
-                    .LoadIbtrace = parse_env("LoadIbtrace", true),
-                    .LoadMlx5dv = parse_env("LoadMlx5dv", true),
-                    .LoadCupti = parse_env("LoadCupti", true),
-                    .LoadLibfabric = parse_env("LoadLibfabric", false),
-                    .LoadUcx = parse_env("LoadUcx", false),
-                    .EnableDoorbellHijack = parse_env("EnableDoorbellHijack", false),
-                    .Check = parse_env("Check", 0),
+                    INTERNAL_PARSE_ENV_FIELD(ShimDirectory),        //
+                    INTERNAL_PARSE_ENV_FIELD(LoadIbtrace),          //
+                    INTERNAL_PARSE_ENV_FIELD(LoadMlx5dv),           //
+                    INTERNAL_PARSE_ENV_FIELD(LoadCupti),            //
+                    INTERNAL_PARSE_ENV_FIELD(LoadLibfabric),        //
+                    INTERNAL_PARSE_ENV_FIELD(LoadUcx),              //
+                    INTERNAL_PARSE_ENV_FIELD(EnableDoorbellHijack), //
+                    INTERNAL_PARSE_ENV_FIELD(OutputDirectory),      //
+                    INTERNAL_PARSE_ENV_FIELD(OutputOverwrite),      //
+                    INTERNAL_PARSE_ENV_FIELD(Check),                //
             };
         }
 
@@ -90,17 +88,17 @@ namespace Profiler {
         }
 
         template<typename T>
-        [[nodiscard]] static T parse_env(const std::string_view name, T default_value) {
+        [[nodiscard]] static T parse_env(const std::string_view name) {
             const auto env_name = std::string{EnvPrefix} + std::string{name};
 
             const char* val = std::getenv(env_name.c_str());
             if (val == nullptr) {
-                return default_value;
+                throw std::runtime_error("Missing value for " + env_name);
             }
 
             const std::string_view val_str{val};
             if (val_str.length() < 3) {
-                return default_value;
+                throw std::runtime_error("Empty quoted value in " + env_name);
             }
 
             if (!(val_str.starts_with('"') && val_str.ends_with('"'))) {

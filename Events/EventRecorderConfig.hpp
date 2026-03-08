@@ -82,13 +82,16 @@ namespace Events {
         std::filesystem::path EventsDirectory = OutputDirectory / "events";
         std::filesystem::path MetaEventsDirectory = OutputDirectory / "meta";
 
+        bool OverwriteOutputDir = false;
+
         // Suffix for event files. Useful for globbing
         std::string EventFileSuffix = ".events";
 
         // Ensure output directories exist
         // TODO: all processes/threads in the same launch should have the same root dir. Maybe boost file lock?
         // TODO: probably not a good idea to do this here. What if we copied the config or want to use const?
-        void ensure_output_directory(const int _max_retries = 3) {
+        void ensure_output_directory() {
+            /*
             if (std::filesystem::exists(OutputDirectory)) {
                 if (_max_retries <= 0) {
                     std::cerr << "Could not find a suitable output directory. Please clean up the dir" << std::endl;
@@ -103,6 +106,7 @@ namespace Events {
                 std::cerr << "Saving in: " << OutputDirectory << std::endl;
                 return ensure_output_directory(_max_retries - 1);
             }
+            */
 
             for (const auto& dir: {OutputDirectory, EventsDirectory, MetaEventsDirectory}) {
                 std::filesystem::create_directories(dir);

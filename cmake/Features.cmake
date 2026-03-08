@@ -14,6 +14,7 @@ endmacro()
 
 # Enables a feature
 macro(Sigma_enable_feature NAME)
+    message(STATUS "[Sigma] Enabled feature ${NAME}")
     set(SIGMA_HAS_${NAME} ON CACHE INTERNAL "" FORCE)
 endmacro()
 

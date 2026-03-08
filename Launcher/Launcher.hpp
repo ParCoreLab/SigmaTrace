@@ -17,7 +17,7 @@ namespace Launcher {
     int fork_launch(const std::string& program_bin, const std::vector<const char*>& program_args,
                     const std::vector<const char*>& program_env);
 
-    int lauch_with_ld_preload(const std::string& program_bin, const RangeOf<const char*> auto& c_program_args,
+    int lauch_with_ld_preload(const std::string& program_bin, const RangeOf<std::string> auto& program_args,
                               const RangeOf<std::string> auto& shim_paths,
                               const RangeOf<std::string> auto& extra_env = {}) {
         const auto pwd = std::filesystem::current_path();
@@ -48,11 +48,16 @@ namespace Launcher {
             c_program_env.push_back(environ[i]);
         }
 
-        // Null-terminate for execve
+        // Null-terminated for execve
         c_program_env.push_back(nullptr);
 
         // Convert args range to vector with null terminator
-        std::vector<const char*> args_vec(std::ranges::begin(c_program_args), std::ranges::end(c_program_args));
+        std::vector<const char*> args_vec;
+        args_vec.reserve(program_args.size() + 1);
+        std::transform(std::cbegin(program_args), std::cend(program_args), std::back_inserter(args_vec),
+                       [](const std::string& str) {
+            return str.c_str();
+        });
         args_vec.push_back(nullptr);
 
         return fork_launch(program_bin, args_vec, c_program_env);

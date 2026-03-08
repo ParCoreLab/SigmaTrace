@@ -111,15 +111,18 @@ ProfilerCtx::ProfilerCtx() {
     m_args = Profiler::ProfilerArgs::from_env();
 
     // Will be populated with things from profiler_args in the future
-    m_event_recorder_config = {};
+    m_event_recorder_config = {
+            .OutputDirectory = m_args.OutputDirectory,
+            .OverwriteOutputDir = m_args.OutputOverwrite,
+    };
 
 #if SIGMA_HAS_RDMA_CORE
     if (m_args.LoadIbtrace) {
-        load_ibv(m_args.ShimDir);
+        load_ibv(m_args.ShimDirectory);
     }
 
     if (m_args.LoadMlx5dv) {
-        load_mlx5dv(m_args.ShimDir);
+        load_mlx5dv(m_args.ShimDirectory);
     }
 
     // Must be after mlx5dv
@@ -137,19 +140,19 @@ ProfilerCtx::ProfilerCtx() {
 
 #if SIGMA_HAS_CUDA
     if (m_args.LoadCupti) {
-        load_cupti(m_args.ShimDir);
+        load_cupti(m_args.ShimDirectory);
     }
 #endif
 
 #if SIGMA_HAS_UCX
     if (m_args.LoadUcx) {
-        load_ucx(m_args.ShimDir);
+        load_ucx(m_args.ShimDirectory);
     }
 #endif
 
 #if SIGMA_HAS_LIBFABRIC
     if (m_args.LoadLibfabric) {
-        load_libfabric(m_args.ShimDir);
+        load_libfabric(m_args.ShimDirectory);
     }
 #endif
 }

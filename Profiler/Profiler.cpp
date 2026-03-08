@@ -17,7 +17,6 @@ int main(int argc, char* argv[]) {
     switch (res) {
         case Profiler::ProfilerParseResult::Failed: {
             std::exit(1);
-            break;
         }
         case Profiler::ProfilerParseResult::Help: {
             std::exit(0);
@@ -32,6 +31,7 @@ int main(int argc, char* argv[]) {
     }
 
     // ================================================================
+    // Relative path fix
     std::array<char, PATH_MAX> readlink_buf{};
     const auto len = readlink("/proc/self/exe", readlink_buf.data(), readlink_buf.size() - 1);
     if (len == -1) {
@@ -42,7 +42,9 @@ int main(int argc, char* argv[]) {
 
     // ================================================================
     // Set LD_PRELOAD shims
-    const auto profiler_args = parsed_args.profiler_args;
+    auto profiler_args = parsed_args.profiler_args;
+    profiler_args.ShimDirectory = binary_dir;
+
     std::vector<std::filesystem::path> shim_libs{};
 
 #if SIGMA_HAS_RDMA_CORE
@@ -70,8 +72,9 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    // Master LD_PRELOAD shim — must come last
+    // Master LD_PRELOAD shim must come last
     shim_libs.emplace_back(binary_dir / "libProfilerShim.so");
+    // ================================================================
 
     // ================================================================
     const auto profiler_args_env = profiler_args.to_env();
