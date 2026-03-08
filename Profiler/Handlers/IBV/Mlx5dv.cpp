@@ -2,7 +2,7 @@
 #include "../Common.hpp"
 #include "../ProfilerProviders.hpp"
 
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
 #include "Helpers/CudaHelpers.hpp"
 #endif
 
@@ -41,7 +41,7 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
     });
 
 
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
     m_mlx5dv_profiler->register_post<mlx5dv::obj_create_tag>(
             [](mlx5dv_devx_obj* out_obj, ibv_context*, const void* cmd_in, size_t, void* cmd_out, size_t, auto...) {
         if (!out_obj) {
@@ -268,7 +268,7 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
     m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
             [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, size_t size,
                [[maybe_unused]] uint32_t access, const auto ts_start, const auto ts_end) {
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
         cudaPointerAttributes addr_attrs{};
         CUDA_CHECK(cudaPointerGetAttributes(&addr_attrs, addr));
 

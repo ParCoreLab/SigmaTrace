@@ -1,6 +1,5 @@
 option(SIGMA_ENABLE_LIBFABRIC "Enable libfabric tracing" ON)
 
-set(LIBFABRIC_FOUND FALSE)
 set(LIBFABRIC_INCLUDE_DIR "")
 set(LIBFABRIC_LIBRARY "")
 
@@ -27,7 +26,7 @@ if (LIBFABRIC_PKG_FOUND)
     endforeach ()
 
     if (LIBFABRIC_LIBRARY)
-        set(LIBFABRIC_FOUND TRUE)
+        Sigma_enable_feature(LIBFABRIC)
     else ()
         message(STATUS "[Sigma] libfabric: pkg-config found but library not located, disabling")
     endif ()
@@ -39,11 +38,11 @@ else ()
             HINTS /usr/lib /usr/lib64 /usr/local/lib /usr/local/lib64)
 
     if (LIBFABRIC_INCLUDE_DIR AND LIBFABRIC_LIBRARY)
-        set(LIBFABRIC_FOUND TRUE)
+        Sigma_enable_feature(LIBFABRIC)
     endif ()
 endif ()
 
-if (LIBFABRIC_FOUND)
+if (SIGMA_HAS_LIBFABRIC)
     message(STATUS "[Sigma] libfabric: found (${LIBFABRIC_LIBRARY})")
 else ()
     message(STATUS "[Sigma] libfabric: not found, disabling libfabric tracing")

@@ -1,6 +1,5 @@
 option(SIGMA_ENABLE_UCX "Enable UCX tracing" ON)
 
-set(UCX_FOUND FALSE)
 set(UCX_INCLUDE_DIR "")
 set(UCX_LIBRARY "")
 
@@ -27,7 +26,7 @@ if (UCX_PKG_FOUND)
     endforeach ()
 
     if (UCX_LIBRARY)
-        set(UCX_FOUND TRUE)
+        Sigma_enable_feature(UCX)
     else ()
         message(STATUS "[Sigma] UCX: pkg-config found but libucp not located, disabling")
     endif ()
@@ -39,11 +38,11 @@ else ()
             HINTS /usr/lib /usr/lib64 /usr/local/lib /usr/local/lib64)
 
     if (UCX_INCLUDE_DIR AND UCX_LIBRARY)
-        set(UCX_FOUND TRUE)
+        Sigma_enable_feature(UCX)
     endif ()
 endif ()
 
-if (UCX_FOUND)
+if (SIGMA_HAS_UCX)
     message(STATUS "[Sigma] UCX: found (${UCX_LIBRARY})")
 else ()
     message(STATUS "[Sigma] UCX: not found, disabling UCX tracing")

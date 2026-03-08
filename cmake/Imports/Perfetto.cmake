@@ -1,9 +1,5 @@
 set(PERFETTO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Imports/perfetto" CACHE PATH "Path to Perfetto source")
 
-# Find protobuf for proto compilation
-find_package(Protobuf REQUIRED)
-message(STATUS "Using Protobuf from ${Protobuf_LIBRARY}")
-
 # Directory where proto files are located
 set(PERFETTO_PROTOS_DIR "${PERFETTO_ROOT}/protos")
 

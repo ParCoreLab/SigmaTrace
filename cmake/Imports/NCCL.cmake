@@ -2,8 +2,6 @@ option(SIGMA_ENABLE_NCCL "Enable NCCL" ON)
 option(BUILD_NCCL "Build bundled NCCL" OFF)
 set(NCCL_ROOT "" CACHE PATH "Prefix where system NCCL is installed")
 
-set(NCCL_FOUND FALSE)
-
 if (NOT SIGMA_ENABLE_NCCL)
     message(STATUS "[Sigma] NCCL: disabled by user")
     return()
@@ -72,7 +70,7 @@ if (BUILD_NCCL)
     add_dependencies(nccl nccl_external)
 
     set(CMAKE_DISABLE_FIND_PACKAGE_nccl TRUE)
-    set(NCCL_FOUND TRUE)
+    Sigma_enable_feature(NCCL)
 else ()
     find_path(NCCL_INCLUDE_DIR NAMES nccl.h
             HINTS ${NCCL_ROOT}/include /usr/include /usr/local/include
@@ -86,11 +84,11 @@ else ()
                 IMPORTED_LOCATION "${NCCL_LIBRARY}"
                 INTERFACE_INCLUDE_DIRECTORIES "${NCCL_INCLUDE_DIR}"
         )
-        set(NCCL_FOUND TRUE)
+        Sigma_enable_feature(NCCL)
     endif ()
 endif ()
 
-if (NCCL_FOUND)
+if (SIGMA_HAS_NCCL)
     message(STATUS "[Sigma] NCCL: found")
 else ()
     message(STATUS "[Sigma] NCCL: not found, disabling NCCL support")

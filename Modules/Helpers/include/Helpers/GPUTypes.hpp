@@ -5,7 +5,7 @@
 // Otherwise, they are opaque stand-ins that preserve struct layout.
 namespace Helpers::GPU {}
 
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -14,7 +14,7 @@ namespace Helpers::GPU {
     using MemoryType = cudaMemoryType;
 } // namespace Helpers::GPU
 
-#elif defined(SIGMA_HAS_HIP)
+#elif SIGMA_HAS_HIP
 // TODO: HIP equivalents
 #include <hip/hip_runtime.h>
 namespace Helpers::GPU {

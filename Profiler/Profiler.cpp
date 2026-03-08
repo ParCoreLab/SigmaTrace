@@ -7,47 +7,45 @@
 
 #include "Launcher.hpp"
 
-#include "ProfilerArgs.hpp"
+#include "Args/ProfilerArgs.hpp"
+#include "Args/ProfilerArgsParser.hpp"
 #include "ProfilerProviders.hpp"
 
 int main(int argc, char* argv[]) {
-    // TODO: boost::program_options in the future
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <program> [args]" << std::endl;
-        return 1;
+    // Parse the args
+    auto [res, parsed_args] = Profiler::parse_args(argc, argv);
+    switch (res) {
+        case Profiler::ProfilerParseResult::Failed: {
+            std::exit(1);
+            break;
+        }
+        case Profiler::ProfilerParseResult::Help: {
+            std::exit(0);
+        }
+        case Profiler::ProfilerParseResult::Parsed: {
+            break;
+        }
+        default: {
+            std::cerr << "ERROR: Unchecked ProfilerParseResult" << std::endl;
+            std::exit(0);
+        }
     }
 
-    // Getting the correct relative path to the shim .so
+    // ================================================================
     std::array<char, PATH_MAX> readlink_buf{};
     const auto len = readlink("/proc/self/exe", readlink_buf.data(), readlink_buf.size() - 1);
     if (len == -1) {
         throw std::runtime_error("readlink failed: " + std::string(strerror(errno)));
     }
     const auto binary_dir = std::filesystem::path(readlink_buf.data()).parent_path();
+    // ================================================================
 
-
-    // Set up args for the shim and child process
-    const Profiler::ProfilerArgs profiler_args{
-            .ShimDir = binary_dir,
-#ifdef SIGMA_HAS_RDMA_CORE
-            .LoadIbtrace = true,
-            .LoadMlx5dv = true,
-            .EnableDoorbellHijack = true,
-#endif
-#ifdef SIGMA_HAS_CUDA
-            .LoadCupti = true,
-#endif
-#ifdef SIGMA_HAS_LIBFABRIC
-            .LoadLibfabric = true,
-#endif
-#ifdef SIGMA_HAS_UCX
-            .LoadUcx = true,
-#endif
-    };
-
+    // ================================================================
+    // Set LD_PRELOAD shims
+    const auto profiler_args = parsed_args.profiler_args;
     std::vector<std::filesystem::path> shim_libs{};
 
-#ifdef SIGMA_HAS_RDMA_CORE
+#if SIGMA_HAS_RDMA_CORE
     if (profiler_args.LoadIbtrace) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
     }
@@ -57,30 +55,29 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    // CUPTI doesn't have LD_PRELOAD symbols
+    // CUPTI doesn't use LD_PRELOAD symbols
+    // if (profiler_args.LoadCupti) {}
 
-#ifdef SIGMA_HAS_LIBFABRIC
+#if SIGMA_HAS_LIBFABRIC
     if (profiler_args.LoadLibfabric) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_LIBFABRIC_PROVIDER_PATH);
     }
 #endif
 
-#ifdef SIGMA_HAS_UCX
+#if SIGMA_HAS_UCX
     if (profiler_args.LoadUcx) {
         shim_libs.emplace_back(binary_dir / Profiler::SIGMA_UCX_PROVIDER_PATH);
     }
 #endif
 
-    // Main LD_PRELOAD shim
-    // We need to add this at the end
+    // Master LD_PRELOAD shim — must come last
     shim_libs.emplace_back(binary_dir / "libProfilerShim.so");
 
+    // ================================================================
     const auto profiler_args_env = profiler_args.to_env();
 
-    // Args for the launch
-    const std::string program_bin = argv[1];
-    std::vector<const char*> program_args(argv + 1, argv + argc);
+    const std::string program_bin = parsed_args.program_bin;
+    const auto& program_args = parsed_args.program_args;
 
-    const auto ret = Launcher::lauch_with_ld_preload(program_bin, program_args, shim_libs, profiler_args_env);
-    return ret;
+    return Launcher::lauch_with_ld_preload(program_bin, program_args, shim_libs, profiler_args_env);
 }

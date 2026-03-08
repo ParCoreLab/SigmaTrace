@@ -1,5 +1,8 @@
-# TODO: add to a helper module
-if (NVSHMEM_FOUND AND SIGMA_HAS_CUDA)
+if (SIGMA_HAS_NVSHMEM AND SIGMA_HAS_CUDA)
+    function(set_cuda_rpath target)
+        set_target_properties(${target} PROPERTIES LINK_FLAGS "-Wl,-rpath,${CUDAToolkit_LIBRARY_DIR}")
+    endfunction()
+
     function(add_nvshmem_target target)
         Sigma_add_executable(${target} EXCLUDE_FROM_ALL "${target}.cu")
         set_cuda_rpath(${target})

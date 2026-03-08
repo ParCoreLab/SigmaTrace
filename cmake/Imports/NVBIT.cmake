@@ -1,7 +1,5 @@
 option(SIGMA_ENABLE_NVBIT "Enable NVBit" ON)
 
-set(NVBIT_FOUND FALSE)
-
 if (NOT SIGMA_ENABLE_NVBIT)
     message(STATUS "[Sigma] NVBit: disabled by user")
     return()
@@ -63,5 +61,5 @@ set_target_properties(nvbit PROPERTIES
 
 target_include_directories(nvbit INTERFACE "${NVBIT_ROOT}/core")
 
-set(NVBIT_FOUND TRUE)
+Sigma_enable_feature(NVBIT)
 message(STATUS "[Sigma] NVBit: found (${NVBIT_ROOT})")

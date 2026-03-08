@@ -17,3 +17,7 @@
 	path = Imports/abseil-cpp
 	url = https://github.com/abseil/abseil-cpp.git
 	branch = lts_2026_01_07
+[submodule "Imports/boost"]
+	path = Imports/boost
+	url = https://github.com/boostorg/boost.git
+	tag = boost-1.90.0

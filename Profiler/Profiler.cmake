@@ -1,9 +1,15 @@
 # ================================================================
 # Profiler launcher executable
-Sigma_add_executable(Profiler Profiler.cpp ProfilerArgs.hpp ProfilerProviders.hpp)
+Sigma_add_executable(Profiler
+        Profiler.cpp
+        Args/ProfilerArgsParser.hpp
+        Args/ProfilerArgs.hpp
+        ProfilerFeatures.hpp
+        ProfilerProviders.hpp)
 set_target_properties(Profiler PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
 
 target_link_libraries(Profiler PRIVATE Launcher)
+target_link_libraries(Profiler PRIVATE Boost::program_options)
 # ================================================================
 
 # ================================================================
@@ -21,7 +27,8 @@ add_subdirectory(Modules/MemoryHijack)
 set(PROFILER_SHIM_SOURCES
         ProfilerShim.hpp ProfilerShim.cpp
         Handlers/Common.hpp
-        ProfilerArgs.hpp
+        Args/ProfilerArgs.hpp
+        ProfilerFeatures.hpp
         ProfilerProviders.hpp)
 
 if (SIGMA_HAS_CUDA)
@@ -30,18 +37,18 @@ if (SIGMA_HAS_CUDA)
             Handlers/CUPTI.cpp)
 endif ()
 
-if (RDMA_CORE_FOUND)
+if (SIGMA_HAS_RDMA_CORE)
     list(APPEND PROFILER_SHIM_SOURCES
             Handlers/IBV/IBVCommon.hpp
             Handlers/IBV/Ibverbs.cpp
             Handlers/IBV/Mlx5dv.cpp)
 endif ()
 
-if (LIBFABRIC_FOUND)
+if (SIGMA_HAS_LIBFABRIC)
     list(APPEND PROFILER_SHIM_SOURCES Handlers/Libfabric.cpp)
 endif ()
 
-if (UCX_FOUND)
+if (SIGMA_HAS_UCX)
     list(APPEND PROFILER_SHIM_SOURCES Handlers/UCX.cpp)
 endif ()
 
@@ -88,7 +95,7 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
         # Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
     endif ()
 
-    if (RDMA_CORE_FOUND)
+    if (SIGMA_HAS_RDMA_CORE)
         # Internal headers copied from NVSHMEM/rdma-core tree
         target_include_directories(${ProfilerShimTarget} SYSTEM PRIVATE "mlx5/include")
 
@@ -99,11 +106,11 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
         Sigma_profiler_link_provider(${ProfilerShimTarget} Mlx5dvTraceShared)
     endif ()
 
-    if (LIBFABRIC_FOUND)
+    if (SIGMA_HAS_LIBFABRIC)
         Sigma_profiler_link_provider(${ProfilerShimTarget} LibfabricTraceShared)
     endif ()
 
-    if (UCX_FOUND)
+    if (SIGMA_HAS_UCX)
         Sigma_profiler_link_provider(${ProfilerShimTarget} UcxTraceShared)
     endif ()
 

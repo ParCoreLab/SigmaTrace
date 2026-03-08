@@ -2,8 +2,6 @@ option(SIGMA_ENABLE_NVSHMEM "Enable NVSHMEM" ON)
 option(BUILD_NVSHMEM "Build bundled NVSHMEM" OFF)
 set(NVSHMEM_ROOT "" CACHE PATH "Prefix where system NVSHMEM is installed")
 
-set(NVSHMEM_FOUND FALSE)
-
 if (NOT SIGMA_ENABLE_NVSHMEM)
     message(STATUS "[Sigma] NVSHMEM: disabled by user")
     return()
@@ -98,17 +96,17 @@ if (BUILD_NVSHMEM)
     add_dependencies(nvshmem::nvshmem_host nvshmem_external)
 
 
-    set(NVSHMEM_FOUND TRUE)
+    Sigma_enable_feature(NVSHMEM)
 else ()
     # TODO: Version might break it
     # Bit of a hack to get NVSHMEM from nvhpc toolkit
     find_package(NVSHMEM QUIET PATHS "${NVSHMEM_ROOT}" "${CUDAToolkit_LIBRARY_ROOT}/../../comm_libs/nvshmem")
     if (NVSHMEM_FOUND)
-        set(NVSHMEM_FOUND TRUE)
+        Sigma_enable_feature(NVSHMEM)
     endif ()
 endif ()
 
-if (NVSHMEM_FOUND)
+if (SIGMA_HAS_NVSHMEM)
     message(STATUS "[Sigma] NVSHMEM: found")
 else ()
     message(STATUS "[Sigma] NVSHMEM: not found, disabling NVSHMEM support")

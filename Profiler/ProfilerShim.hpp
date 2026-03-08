@@ -19,21 +19,21 @@
 #include "Modules/MemoryHijack/MemoryRepeater.hpp"
 
 // Event providers
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
 #include "CUDAEventSource.hpp"
 #endif
-#ifdef SIGMA_HAS_RDMA_CORE
+#if SIGMA_HAS_RDMA_CORE
 #include "IbverbsEventSource.hpp"
 #include "Mlx5dvEventSource.hpp"
 #endif
-#ifdef SIGMA_HAS_UCX
+#if SIGMA_HAS_UCX
 #include "UcxEventSource.hpp"
 #endif
-#ifdef SIGMA_HAS_LIBFABRIC
+#if SIGMA_HAS_LIBFABRIC
 #include "LibfabricEventSource.hpp"
 #endif
 
-#include "ProfilerArgs.hpp"
+#include "Args/ProfilerArgs.hpp"
 
 // ================================================
 using AddrType = uint64_t;
@@ -132,7 +132,7 @@ struct ProfilerCtx {
     // std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations{};
     // ================================================
 
-#ifdef SIGMA_HAS_RDMA_CORE
+#if SIGMA_HAS_RDMA_CORE
     std::mutex m_mlx5_umem_mutex;
     // TODO: boost::multi_index is better than this mess
     // Address registered with umem_reg -> gpu id
@@ -221,37 +221,37 @@ struct ProfilerCtx {
     std::unique_ptr<Events::EventRecorder<>> m_event_recorder{nullptr};
 
     // Provider handles
-#ifdef SIGMA_HAS_RDMA_CORE
+#if SIGMA_HAS_RDMA_CORE
     ProviderHandle<ibv::Profiler> m_ibv_profiler;
     ProviderHandle<mlx5dv::Profiler> m_mlx5dv_profiler;
 #endif
 
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
     ProviderHandle<cuda_trace::NvbitProfiler> m_cuda_profiler;
     ProviderHandle<cuda_trace::CUPTIEventSource> m_cupti_profiler;
 #endif
 
-#ifdef SIGMA_HAS_UCX
+#if SIGMA_HAS_UCX
     ProviderHandle<ucx::Profiler> m_ucx_profiler;
 #endif
-#ifdef SIGMA_HAS_LIBFABRIC
+#if SIGMA_HAS_LIBFABRIC
     ProviderHandle<libfabric::Profiler> m_libfabric_profiler;
 #endif
 
     // Handlers and Providers
-#ifdef SIGMA_HAS_RDMA_CORE
+#if SIGMA_HAS_RDMA_CORE
     void load_ibv(const std::filesystem::path& shim_dir) noexcept;
     void load_mlx5dv(const std::filesystem::path& shim_dir);
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
     void load_doorbell_hijack();
 #endif
 #endif
 
-#ifdef SIGMA_HAS_CUDA
+#if SIGMA_HAS_CUDA
     void load_cupti(const std::filesystem::path& shim_dir);
 #endif
 
-#ifdef SIGMA_HAS_UCX
+#if SIGMA_HAS_UCX
     // Thread-local correlation: set during UCX operations for cross-layer mapping
     // TODO: not really used properly right now
     static inline thread_local uint64_t tls_active_ucp_ep{0};
@@ -259,7 +259,7 @@ struct ProfilerCtx {
     void load_ucx(const std::filesystem::path& shim_dir);
 #endif
 
-#ifdef SIGMA_HAS_LIBFABRIC
+#if SIGMA_HAS_LIBFABRIC
     // Thread-local correlation: set during libfabric operations for cross-layer mapping
     // TODO: not really used properly right now
     static inline thread_local uint64_t tls_active_fi_ep{0};

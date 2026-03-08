@@ -1,83 +1,73 @@
 #pragma once
 
 #include <concepts>
-#include <cstdlib>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-namespace Profiler {
+#include "../ProfilerFeatures.hpp"
 
-    /*
-     * TODO: needs testing
-     */
+namespace Profiler {
     struct ProfilerArgs {
         static constexpr int CheckVal{123};
         static constexpr std::string_view EnvPrefix{"SIGMA_ENV_"};
 
         std::filesystem::path ShimDir{};
 
-        // Providers
-#ifdef SIGMA_HAS_RDMA_CORE
+        // Provider flags — always present regardless of which backends were compiled in.
+        // The CLI parser owns defaults; to_env/from_env are guarded by feature macros
+        // because those paths are only meaningful when the corresponding backend exists.
+
+        // TODO: this should be in feature-guarded wrapper objects
         bool LoadIbtrace{true};
         bool LoadMlx5dv{true};
+        bool LoadCupti{true};
+        bool LoadLibfabric{true};
+        bool LoadUcx{true};
+
         bool EnableDoorbellHijack{false};
-#endif
-#ifdef SIGMA_HAS_CUDA
-        bool LoadCupti{false};
-#endif
-#ifdef SIGMA_HAS_LIBFABRIC
-        bool LoadLibfabric{false};
-#endif
-#ifdef SIGMA_HAS_UCX
-        bool LoadUcx{false};
-#endif
 
         int Check{CheckVal};
 
         [[nodiscard]] std::vector<std::string> to_env() const {
             std::vector<std::string> env;
             env.push_back(make_env_entry("ShimPath", ShimDir));
-#ifdef SIGMA_HAS_RDMA_CORE
-            env.push_back(make_env_entry("LoadIbtrace", LoadIbtrace));
-            env.push_back(make_env_entry("LoadMlx5dv", LoadMlx5dv));
-            env.push_back(make_env_entry("EnableDoorbellHijack", EnableDoorbellHijack));
-#endif
-#ifdef SIGMA_HAS_CUDA
-            env.push_back(make_env_entry("LoadCupti", LoadCupti));
-#endif
-#ifdef SIGMA_HAS_LIBFABRIC
-            env.push_back(make_env_entry("LoadLibfabric", LoadLibfabric));
-#endif
-#ifdef SIGMA_HAS_UCX
-            env.push_back(make_env_entry("LoadUcx", LoadUcx));
-#endif
+            if constexpr (Features::HasRdmaCore) {
+                env.push_back(make_env_entry("LoadIbtrace", LoadIbtrace));
+                env.push_back(make_env_entry("LoadMlx5dv", LoadMlx5dv));
+                env.push_back(make_env_entry("EnableDoorbellHijack", EnableDoorbellHijack));
+            }
+
+            if constexpr (Features::HasCUDA) {
+                env.push_back(make_env_entry("LoadCupti", LoadCupti));
+            }
+
+            if constexpr (Features::HasLibfabric) {
+                env.push_back(make_env_entry("LoadLibfabric", LoadLibfabric));
+            }
+
+            if constexpr (Features::HasUCX) {
+                env.push_back(make_env_entry("LoadUcx", LoadUcx));
+            }
+
             env.push_back(make_env_entry("Check", Check));
             return env;
         }
 
-        // TODO: check Check
         [[nodiscard]] static ProfilerArgs from_env() {
-            ProfilerArgs args;
-            args.ShimDir = parse_env<std::filesystem::path>("ShimPath", {});
-#ifdef SIGMA_HAS_RDMA_CORE
-            args.LoadIbtrace = parse_env("LoadIbtrace", true);
-            args.LoadMlx5dv = parse_env("LoadMlx5dv", true);
-            args.EnableDoorbellHijack = parse_env("EnableDoorbellHijack", false);
-#endif
-#ifdef SIGMA_HAS_CUDA
-            args.LoadCupti = parse_env("LoadCupti", true);
-#endif
-#ifdef SIGMA_HAS_LIBFABRIC
-            args.LoadLibfabric = parse_env("LoadLibfabric", false);
-#endif
-#ifdef SIGMA_HAS_UCX
-            args.LoadUcx = parse_env("LoadUcx", false);
-#endif
-            args.Check = parse_env("Check", 0);
-            return args;
+            return {
+                    .ShimDir{parse_env<std::filesystem::path>("ShimPath", {})},
+                    .LoadIbtrace = parse_env("LoadIbtrace", true),
+                    .LoadMlx5dv = parse_env("LoadMlx5dv", true),
+                    .LoadCupti = parse_env("LoadCupti", true),
+                    .LoadLibfabric = parse_env("LoadLibfabric", false),
+                    .LoadUcx = parse_env("LoadUcx", false),
+                    .EnableDoorbellHijack = parse_env("EnableDoorbellHijack", false),
+                    .Check = parse_env("Check", 0),
+            };
         }
 
     private:
@@ -85,7 +75,7 @@ namespace Profiler {
             return value;
         }
 
-        [[nodiscard]] static std::string value_to_string(bool value) {
+        [[nodiscard]] static std::string value_to_string(const bool value) {
             return value ? "1" : "0";
         }
 

@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 4.0)
 
+# For whatever reason project() sets CMAKE_CUDA_ARCHITECTURES to 75
+if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES "native")
+endif ()
+
 project(Thing LANGUAGES C CXX)
+
+# Feature flag system must be loaded before other config
+include(cmake/Features.cmake)
 
 # CXX standard, GPU backend, compiler flags
 include(cmake/CompilerConfig.cmake)
@@ -17,45 +25,21 @@ if (SIGMA_HAS_CUDA)
 endif ()
 
 # Dependencies
-# TODO: don't pollute CMAKE_MODULE_PATH
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Imports")
 include(Abseil)
+include(Boost)
 include(RDMA_CORE)
 include(NCCL)
 include(NVSHMEM)
 include(NVBIT)
+include(Protobuf)
 include(Perfetto)
 include(UCX)
 include(Libfabric)
 
 # ================================================================
-# Feature flags interface target
-# All Sigma targets automatically link this via Sigma_apply_compile_options
-add_library(sigma_feature_flags INTERFACE)
-if (SIGMA_HAS_CUDA)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_CUDA)
-endif ()
-if (SIGMA_HAS_HIP)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_HIP)
-endif ()
-if (RDMA_CORE_FOUND)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_RDMA_CORE)
-endif ()
-if (NCCL_FOUND)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_NCCL)
-endif ()
-if (NVSHMEM_FOUND)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_NVSHMEM)
-endif ()
-if (NVBIT_FOUND)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_NVBIT)
-endif ()
-if (UCX_FOUND)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_UCX)
-endif ()
-if (LIBFABRIC_FOUND)
-    target_compile_definitions(sigma_feature_flags INTERFACE SIGMA_HAS_LIBFABRIC)
-endif ()
+# Load feature flags that are enabled by this point
+Sigma_load_feature_flags()
 # ================================================================
 
 # Modules
@@ -64,7 +48,7 @@ add_subdirectory(Modules)
 # "Main" Test Executable
 # Excluded because ncclMemAlloc is broken on some systems
 # TODO: move this out of here
-if (SIGMA_HAS_CUDA AND RDMA_CORE_FOUND AND NCCL_FOUND)
+if (SIGMA_HAS_CUDA AND SIGMA_HAS_RDMA_CORE AND SIGMA_HAS_NCCL)
     Sigma_add_executable(Thing EXCLUDE_FROM_ALL main.cu)
     target_link_libraries(Thing PRIVATE SigmaHelpers)
     #target_link_libraries(Thing PRIVATE CUDA::cudart)
@@ -74,7 +58,7 @@ if (SIGMA_HAS_CUDA AND RDMA_CORE_FOUND AND NCCL_FOUND)
     target_link_libraries(Thing PRIVATE nccl)
 endif ()
 
-if (SIGMA_HAS_CUDA AND NVSHMEM_FOUND)
+if (SIGMA_HAS_CUDA AND SIGMA_HAS_NVSHMEM)
     Sigma_add_executable(ThingNVSHMEM main_nvshmem.cu)
     set_cuda_rpath(ThingNVSHMEM)
 
@@ -107,18 +91,18 @@ add_subdirectory(Launcher)
 add_subdirectory(Hook)
 
 # IB Trace library
-if (RDMA_CORE_FOUND)
+if (SIGMA_HAS_RDMA_CORE)
     add_subdirectory(Ibtrace)
     add_subdirectory(Mlx5dvTrace)
 endif ()
 
 # UCX Trace library
-if (UCX_FOUND)
+if (SIGMA_HAS_UCX)
     add_subdirectory(UcxTrace)
 endif ()
 
 # libfabric Trace library
-if (LIBFABRIC_FOUND)
+if (SIGMA_HAS_LIBFABRIC)
     add_subdirectory(LibfabricTrace)
 endif ()
 
@@ -139,11 +123,11 @@ add_subdirectory(Apps)
 message(STATUS "")
 message(STATUS "===== SigmaTrace Configuration =====")
 message(STATUS "  GPU backend:  ${SIGMA_GPU_BACKEND}")
-message(STATUS "  RDMA-core:    ${RDMA_CORE_FOUND}")
-message(STATUS "  NCCL:         ${NCCL_FOUND}")
-message(STATUS "  NVSHMEM:      ${NVSHMEM_FOUND}")
-message(STATUS "  NVBit:        ${NVBIT_FOUND}")
-message(STATUS "  UCX:          ${UCX_FOUND}")
-message(STATUS "  libfabric:    ${LIBFABRIC_FOUND}")
+message(STATUS "  RDMA-core:    ${SIGMA_HAS_RDMA_CORE}")
+message(STATUS "  NCCL:         ${SIGMA_HAS_NCCL}")
+message(STATUS "  NVSHMEM:      ${SIGMA_HAS_NVSHMEM}")
+message(STATUS "  NVBit:        ${SIGMA_HAS_NVBIT}")
+message(STATUS "  UCX:          ${SIGMA_HAS_UCX}")
+message(STATUS "  libfabric:    ${SIGMA_HAS_LIBFABRIC}")
 message(STATUS "====================================")
 message(STATUS "")
