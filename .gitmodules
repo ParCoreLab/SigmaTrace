@@ -16,8 +16,12 @@
 [submodule "Imports/abseil-cpp"]
 	path = Imports/abseil-cpp
 	url = https://github.com/abseil/abseil-cpp.git
-	branch = lts_2026_01_07
+	tag = 20260107.0
 [submodule "Imports/boost"]
 	path = Imports/boost
 	url = https://github.com/boostorg/boost.git
 	tag = boost-1.90.0
+[submodule "Imports/protobuf"]
+	path = Imports/protobuf
+	url = https://github.com/protocolbuffers/protobuf.git
+	tag = v34.0
