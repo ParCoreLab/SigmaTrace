@@ -53,7 +53,7 @@ namespace Profiler {
         providers.add_options()
         ("load-ibtrace", po::value<bool>()->default_value(true)->implicit_value(true), "Load the ibverbs trace provider [RDMA_CORE] (default: true)")
         ("load-mlx5dv", po::value<bool>()->default_value(true)->implicit_value(true), "Load the mlx5dv trace provider [RDMA_CORE] (default: true)")
-        ("enable-doorbell-hijack", po::value<bool>()->default_value(false)->implicit_value(true), "Enable doorbell hijacking [RDMA_CORE] (default: false)")
+        ("enable-doorbell-hijack", po::bool_switch()->default_value(false), "Enable doorbell hijacking [RDMA_CORE] (default: false)")
         ("load-cupti", po::value<bool>()->default_value(true)->implicit_value(true), "Load the CUPTI trace provider [CUDA] (default: true)")
         ("load-libfabric", po::value<bool>()->default_value(true)->implicit_value(true), "Load the libfabric trace provider [LIBFABRIC] (default: true)")
         ("load-ucx", po::value<bool>()->default_value(true)->implicit_value(true), "Load the UCX trace provider [UCX] (default: true)");
