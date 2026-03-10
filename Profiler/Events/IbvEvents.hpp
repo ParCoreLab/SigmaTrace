@@ -2,14 +2,124 @@
 
 #include <cstdint>
 
-#include <infiniband/verbs.h>
-
 #include "Common.hpp"
 #include "EventTrait.hpp"
 
 // TODO: compile these into an .so or something so future readers can reliably read back maybe
 
 namespace Profiler::Events {
+    // We want to be able to have these types without pulling verbs.h
+    // Might want to compile with no libibverbs available
+    namespace types {
+        // From verbs.h
+        enum ibv_node_type {
+            IBV_NODE_UNKNOWN = -1,
+            IBV_NODE_CA = 1,
+            IBV_NODE_SWITCH,
+            IBV_NODE_ROUTER,
+            IBV_NODE_RNIC,
+            IBV_NODE_USNIC,
+            IBV_NODE_USNIC_UDP,
+            IBV_NODE_UNSPECIFIED,
+        };
+
+        enum ibv_transport_type {
+            IBV_TRANSPORT_UNKNOWN = -1,
+            IBV_TRANSPORT_IB = 0,
+            IBV_TRANSPORT_IWARP,
+            IBV_TRANSPORT_USNIC,
+            IBV_TRANSPORT_USNIC_UDP,
+            IBV_TRANSPORT_UNSPECIFIED,
+        };
+
+        // Originally a union
+        struct ibv_gid {
+            uint64_t subnet_prefix;
+            uint64_t interface_id;
+        };
+
+        enum ibv_port_state {
+            IBV_PORT_NOP = 0,
+            IBV_PORT_DOWN = 1,
+            IBV_PORT_INIT = 2,
+            IBV_PORT_ARMED = 3,
+            IBV_PORT_ACTIVE = 4,
+            IBV_PORT_ACTIVE_DEFER = 5
+        };
+
+        enum ibv_wc_status {
+            IBV_WC_SUCCESS,
+            IBV_WC_LOC_LEN_ERR,
+            IBV_WC_LOC_QP_OP_ERR,
+            IBV_WC_LOC_EEC_OP_ERR,
+            IBV_WC_LOC_PROT_ERR,
+            IBV_WC_WR_FLUSH_ERR,
+            IBV_WC_MW_BIND_ERR,
+            IBV_WC_BAD_RESP_ERR,
+            IBV_WC_LOC_ACCESS_ERR,
+            IBV_WC_REM_INV_REQ_ERR,
+            IBV_WC_REM_ACCESS_ERR,
+            IBV_WC_REM_OP_ERR,
+            IBV_WC_RETRY_EXC_ERR,
+            IBV_WC_RNR_RETRY_EXC_ERR,
+            IBV_WC_LOC_RDD_VIOL_ERR,
+            IBV_WC_REM_INV_RD_REQ_ERR,
+            IBV_WC_REM_ABORT_ERR,
+            IBV_WC_INV_EECN_ERR,
+            IBV_WC_INV_EEC_STATE_ERR,
+            IBV_WC_FATAL_ERR,
+            IBV_WC_RESP_TIMEOUT_ERR,
+            IBV_WC_GENERAL_ERR,
+            IBV_WC_TM_ERR,
+            IBV_WC_TM_RNDV_INCOMPLETE,
+        };
+
+        enum ibv_wc_opcode {
+            IBV_WC_SEND,
+            IBV_WC_RDMA_WRITE,
+            IBV_WC_RDMA_READ,
+            IBV_WC_COMP_SWAP,
+            IBV_WC_FETCH_ADD,
+            IBV_WC_BIND_MW,
+            IBV_WC_LOCAL_INV,
+            IBV_WC_TSO,
+            IBV_WC_FLUSH,
+            IBV_WC_ATOMIC_WRITE = 9,
+            /*
+             * Set value of IBV_WC_RECV so consumers can test if a completion is a
+             * receive by testing (opcode & IBV_WC_RECV).
+             */
+            IBV_WC_RECV = 1 << 7,
+            IBV_WC_RECV_RDMA_WITH_IMM,
+
+            IBV_WC_TM_ADD,
+            IBV_WC_TM_DEL,
+            IBV_WC_TM_SYNC,
+            IBV_WC_TM_RECV,
+            IBV_WC_TM_NO_TAG,
+            IBV_WC_DRIVER1,
+            IBV_WC_DRIVER2,
+            IBV_WC_DRIVER3,
+        };
+
+        enum ibv_wr_opcode {
+            IBV_WR_RDMA_WRITE,
+            IBV_WR_RDMA_WRITE_WITH_IMM,
+            IBV_WR_SEND,
+            IBV_WR_SEND_WITH_IMM,
+            IBV_WR_RDMA_READ,
+            IBV_WR_ATOMIC_CMP_AND_SWP,
+            IBV_WR_ATOMIC_FETCH_AND_ADD,
+            IBV_WR_LOCAL_INV,
+            IBV_WR_BIND_MW,
+            IBV_WR_SEND_WITH_INV,
+            IBV_WR_TSO,
+            IBV_WR_DRIVER1,
+            IBV_WR_FLUSH = 14,
+            IBV_WR_ATOMIC_WRITE = 15,
+        };
+    } // namespace types
+
     // Non trace
     EVENT_STRUCT IbvDeviceRegistration {
         uint64_t context_addr;
@@ -21,17 +131,17 @@ namespace Profiler::Events {
         char dev_path[256]{};
         char ibdev_path[256]{};
 
-        ibv_node_type node_type;
-        ibv_transport_type transport_type;
+        types::ibv_node_type node_type;
+        types::ibv_transport_type transport_type;
     };
 
     // Non trace
     EVENT_STRUCT IbvPortRegistration {
         uint8_t port_num;
         uint16_t lid;
-        ibv_port_state state;
+        types::ibv_port_state state;
         uint8_t link_layer;
-        ibv_gid gid;
+        types::ibv_gid gid;
     };
 
     EVENT_STRUCT IbvOpenDevice {
@@ -60,7 +170,12 @@ namespace Profiler::Events {
         uint32_t qp_num;
 
         // Just record everything, why not :)
-        ibv_qp_attr attr;
+        // ibv_qp_attr attr;
+
+        uint32_t dest_qp_num;
+
+        uint16_t ah_attr_dlid;
+        types::ibv_gid ah_attr_grh_dgid;
 
         /*
         uint32_t dest_qp_num;
@@ -74,8 +189,6 @@ namespace Profiler::Events {
         uint8_t port_num;
         */
     };
-    // TODO: event system should do this
-    static_assert(std::is_trivial_v<ibv_qp_attr> && std::is_standard_layout_v<ibv_qp_attr>);
 
     enum class IbvMemoryRegType : uint16_t {
         Unknown = 0,
@@ -108,7 +221,7 @@ namespace Profiler::Events {
         uint32_t qp_num;
         int32_t num_sge;
         uint32_t send_flags;
-        ibv_wr_opcode opcode;
+        types::ibv_wr_opcode opcode;
     };
 
     EVENT_STRUCT IbvPostSendSg {
@@ -146,8 +259,8 @@ namespace Profiler::Events {
         uint64_t context_addr;
         uint64_t wr_id;
         uint32_t qp_num;
-        ibv_wc_opcode opcode;
-        ibv_wc_status status;
+        types::ibv_wc_opcode opcode;
+        types::ibv_wc_status status;
         uint32_t byte_len;
     };
 

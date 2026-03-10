@@ -4,6 +4,8 @@
 
 #include <iostream>
 
+#include <infiniband/verbs.h>
+
 #include "../../Events/IbvEvents.hpp"
 
 #include "Dlsym.hpp"
@@ -95,10 +97,11 @@ static Profiler::Events::IbvOpenDevice register_nic(Events::EventRecorder<>* eve
             std::abort();
         }
 
-        Profiler::Events::IbvPortRegistration port_event{
+        using Profiler::Events::IbvPortRegistration;
+        IbvPortRegistration port_event{
                 .port_num = p,
                 .lid = port_attrs.lid,
-                .state = port_attrs.state,
+                .state = static_cast<decltype(IbvPortRegistration::state)>(port_attrs.state),
                 .link_layer = port_attrs.link_layer,
                 .gid = {},
         };
@@ -115,13 +118,15 @@ static Profiler::Events::IbvOpenDevice register_nic(Events::EventRecorder<>* eve
     }
     // smart_dlsym::real_dlclose(libibverbs_handle);
 
+    using Profiler::Events::IbvDeviceRegistration;
+
     // This isn't traced and should precede other ibv events
-    Profiler::Events::IbvDeviceRegistration device_registration_event{
+    IbvDeviceRegistration device_registration_event{
             .context_addr = PtrToUint(ctx),
             .node_guid = attrs.node_guid,
             .sys_image_guid = attrs.sys_image_guid,
-            .node_type = device->node_type,
-            .transport_type = device->transport_type,
+            .node_type = static_cast<decltype(IbvDeviceRegistration::node_type)>(device->node_type),
+            .transport_type = static_cast<decltype(IbvDeviceRegistration::transport_type)>(device->transport_type),
     };
 
     snprintf(device_registration_event.name, sizeof device->name, "%s", device->name);

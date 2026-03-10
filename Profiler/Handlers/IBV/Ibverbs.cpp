@@ -52,11 +52,19 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
 
         const auto context_addr = reinterpret_cast<uint64_t>(qp->context);
 
-        const Profiler::Events::IbvModifyQp event{
+        using Profiler::Events::IbvModifyQp;
+        const IbvModifyQp event{
                 .context_addr = context_addr,
                 .qp_num = qp->qp_num,
-                .attr = *attr,
+                .dest_qp_num = attr->dest_qp_num,
+                .ah_attr_dlid = attr->ah_attr.dlid,
+                .ah_attr_grh_dgid =
+                        {
+                                .subnet_prefix = attr->ah_attr.grh.dgid.global.subnet_prefix,
+                                .interface_id = attr->ah_attr.grh.dgid.global.interface_id,
+                        },
         };
+
         instance().m_event_recorder->Record(event, ts_start, ts_end);
 
         // Extract and record QP connection info
@@ -131,13 +139,14 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
         // TODO: probably an ibv lib function for this
         for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
             post_send_event.num_wrs += 1;
-            const Profiler::Events::IbvPostSendWr wr_event{
+            using Profiler::Events::IbvPostSendWr;
+            const IbvPostSendWr wr_event{
                     .context_addr = context_addr,
                     .wr_id = wr_it->wr_id,
                     .qp_num = qp->qp_num,
                     .num_sge = wr_it->num_sge,
                     .send_flags = wr_it->send_flags,
-                    .opcode = wr_it->opcode,
+                    .opcode = static_cast<decltype(IbvPostSendWr::opcode)>(wr_it->opcode),
             };
             instance().m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
 
@@ -213,12 +222,13 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
         for (auto i = 0; i < out_ret; i++) {
             const auto& wc_entry = wc[i];
 
+            using Profiler::Events::IbvCompletion;
             const Profiler::Events::IbvCompletion completion_event{
                     .context_addr = PtrToUint(cq->context),
                     .wr_id = wc_entry.wr_id,
                     .qp_num = wc_entry.qp_num,
-                    .opcode = wc_entry.opcode,
-                    .status = wc_entry.status,
+                    .opcode = static_cast<decltype(IbvCompletion::opcode)>(wc_entry.opcode),
+                    .status = static_cast<decltype(IbvCompletion::status)>(wc_entry.status),
                     .byte_len = wc_entry.byte_len,
             };
             instance().m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);

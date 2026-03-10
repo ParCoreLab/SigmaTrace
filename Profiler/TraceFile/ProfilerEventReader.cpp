@@ -890,17 +890,16 @@ public:
                ProfilerEvents::IbvModifyQp&& event) {
         auto* slice = visit_ibv(file_header, std::forward<EventHeader&&>(header), std::forward<decltype(event)>(event));
 
-        const auto attr = event.attr;
-        const auto dest_qp_num = attr.dest_qp_num;
+        const auto dest_qp_num = event.dest_qp_num;
 
         // NO!!! NOT THIS
         m_qp_dest_map.emplace(event.qp_num, dest_qp_num);
 
-        const auto dgid = attr.ah_attr.grh.dgid;
-        const auto interface_id = be64toh(dgid.global.interface_id);
-        const auto subnet_prefix = be64toh(dgid.global.subnet_prefix);
+        const auto dgid = event.ah_attr_grh_dgid;
+        const auto interface_id = be64toh(dgid.interface_id);
+        const auto subnet_prefix = be64toh(dgid.subnet_prefix);
 
-        const auto dlid = attr.ah_attr.dlid;
+        const auto dlid = event.ah_attr_dlid;
 
         m_builder.add_annotation(slice, "QP Num", event.qp_num);
         m_builder.add_annotation(slice, "Dest QP Num", dest_qp_num);
@@ -1050,7 +1049,7 @@ public:
         m_builder.add_annotation("Byte Len", event.byte_len);
 
         // Emit bandwidth counters for recv completions
-        if ((event.opcode & IBV_WC_RECV) && event.byte_len > 0) {
+        if ((event.opcode & Profiler::Events::types::ibv_wc_opcode::IBV_WC_RECV) && event.byte_len > 0) {
             const auto node_id = register_node(file_header.hostname);
             auto& local_storage = process_local_storage(file_header);
             const auto ctx_nic_it = local_storage.ibv_context_to_nic_id.find(event.context_addr);
