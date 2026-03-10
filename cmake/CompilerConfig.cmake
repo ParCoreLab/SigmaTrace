@@ -97,6 +97,10 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(SIGMA_COMPILER_IS_CLANG TRUE)
     message(STATUS "Compiler: Clang ${CMAKE_CXX_COMPILER_VERSION}")
+else ()
+    message(WARNING "[Sigma] Unsupported compiler: ${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER}). "
+            "Only GCC and Clang are supported. Compiler wrappers (e.g. Cray CC) may inject "
+            "unwanted libraries that break LD_PRELOAD interposition.")
 endif ()
 
 # ================================================================
