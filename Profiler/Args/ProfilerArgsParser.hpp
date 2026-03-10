@@ -4,9 +4,9 @@
 
 #include <boost/program_options.hpp>
 
+#include "../../Events/EventRecorderConfig.hpp"
 #include "../ProfilerFeatures.hpp"
 
-#include "../../Events/EventRecorderConfig.hpp"
 #include "ProfilerArgs.hpp"
 
 namespace po = boost::program_options;
@@ -91,13 +91,39 @@ namespace Profiler {
 
         // Parse
         po::variables_map vm;
+        int program_argv_index = -1;
         try {
-            auto parsed =
+            po::parsed_options parsed =
                     po::command_line_parser(argc, argv)
                             .options(all)
                             .positional(positional)
+                            .allow_unregistered()
                             .style(po::command_line_style::unix_style | po::command_line_style::allow_long_disguise)
                             .run();
+
+            auto program_option_it = parsed.options.end();
+            int argv_cursor = 1;
+
+            // Remove program options that showed up after the program
+            // For example ./Profiler -f ./app --load-ucx
+            for (auto it = parsed.options.begin(); it != parsed.options.end(); ++it) {
+                if (it->string_key == "program") {
+                    program_argv_index = argv_cursor;
+                    program_option_it = it;
+                    break;
+                }
+
+                for (const auto& token: it->original_tokens) {
+                    if (argv_cursor < argc && token == argv[argv_cursor]) {
+                        ++argv_cursor;
+                    }
+                }
+            }
+
+            if (program_option_it != parsed.options.end()) {
+                parsed.options.erase(std::next(program_option_it), parsed.options.end());
+            }
+
             po::store(parsed, vm);
             po::notify(vm);
         } catch (const po::error& e) {
@@ -122,7 +148,11 @@ namespace Profiler {
         std::string program_bin = vm["program"].as<std::string>();
 
         std::vector<std::string> program_args{};
-        if (vm.contains("program-args")) {
+        if (program_argv_index >= 0) {
+            for (int i = program_argv_index + 1; i < argc; ++i) {
+                program_args.emplace_back(argv[i]);
+            }
+        } else if (vm.contains("program-args")) {
             program_args = vm["program-args"].as<std::vector<std::string>>();
         }
 
