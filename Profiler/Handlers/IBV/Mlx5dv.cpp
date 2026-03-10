@@ -48,6 +48,10 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
             return;
         }
 
+        if (!instance().is_cuda_loaded) {
+            return;
+        }
+
         // TODO
         // std::scoped_lock lock(m_ibv_allocations_mutex);
 
@@ -268,7 +272,26 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
     m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
             [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, size_t size,
                [[maybe_unused]] uint32_t access, const auto ts_start, const auto ts_end) {
+        instance().m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
+                {
+                        .context_addr = PtrToUint(ctx),
+                        .umem_addr = PtrToUint(out_umem),
+                        .addr = PtrToUint(addr),
+                        .size = size,
+                        .mem_id = out_umem->umem_id,
+                },
+                ts_start, ts_end);
+    });
+
 #if SIGMA_HAS_CUDA
+    // CUDA stuff
+    m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
+            [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, size_t size,
+               [[maybe_unused]] uint32_t access, auto...) {
+        if (!instance().is_cuda_loaded) {
+            return;
+        }
+
         cudaPointerAttributes addr_attrs{};
         CUDA_CHECK(cudaPointerGetAttributes(&addr_attrs, addr));
 
@@ -293,18 +316,8 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
 
             instance().m_mlx5_umem_to_entry.insert_or_assign(out_umem->umem_id, entry);
         }
-#endif
-
-        instance().m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
-                {
-                        .context_addr = PtrToUint(ctx),
-                        .umem_addr = PtrToUint(out_umem),
-                        .addr = PtrToUint(addr),
-                        .size = size,
-                        .mem_id = out_umem->umem_id,
-                },
-                ts_start, ts_end);
     });
+#endif
 
     // We can't do register_pre because the pointer will be gone
     m_mlx5dv_profiler->register_pre<mlx5dv::devx_umem_dereg_tag>([](mlx5dv_devx_umem* umem, const auto ts_start) {

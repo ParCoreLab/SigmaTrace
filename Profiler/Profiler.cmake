@@ -82,17 +82,18 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     # target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerGPUMemoryRepeater)
 
     if (SIGMA_HAS_CUDA)
-        target_include_directories(
-                ${ProfilerShimTarget}
-                PRIVATE
-                $<TARGET_PROPERTY:CUDATrace,INTERFACE_INCLUDE_DIRECTORIES>)
+        target_link_libraries(${ProfilerShimTarget} INTERFACE CUDATrace)
 
-        target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cuda_driver)
-        target_link_libraries(${ProfilerShimTarget} PRIVATE CUDA::cudart)
+        Sigma_add_headers(${ProfilerShimTarget} CUDA::cudart SYSTEM)
+        Sigma_add_headers(${ProfilerShimTarget} CUDA::cuda_driver SYSTEM)
 
         Sigma_profiler_link_provider(${ProfilerShimTarget} CuptiEventProvider)
         # Sigma_profiler_link_provider(${ProfilerShimTarget} NvbitMemoryTrackerShared)
         # Sigma_profiler_link_provider(${ProfilerShimTarget} SanitizerMemoryTracker)
+    endif ()
+
+    if (SIGMA_HAS_HIP)
+        Sigma_add_headers(${ProfilerShimTarget} hip::host SYSTEM)
     endif ()
 
     if (SIGMA_HAS_RDMA_CORE)

@@ -15,6 +15,10 @@
 
 #include "ProfilerShim.hpp"
 
+#if SIGMA_HAS_CUDA
+#include "ExportTableOverwrite.hpp"
+#endif
+
 #if SIGMA_HAS_RDMA_CORE
 #include "Events/IbvEvents.hpp"
 #endif
@@ -102,6 +106,67 @@ void ProfilerCtx::LateLoad() {
     m_event_recorder->Record(calibration, 0);
 }
 
+// ================================================================================================
+// Late loading dynamic libs
+
+// Promote a library that is already loaded (RTLD_LOCAL) into global symbol scope
+// so that our lazy-bound references to its symbols resolve correctly.
+static void promote_to_global(const char* name) {
+    // Just try
+    std::ignore = smart_dlsym::real_dlopen(name, RTLD_LAZY | RTLD_GLOBAL | RTLD_NOLOAD);
+}
+
+void ProfilerCtx::LateLoadCUDA() {
+#if !SIGMA_HAS_CUDA
+    std::cerr << "Built without CUDA support" << std::endl;
+    std::abort();
+#endif
+
+    if (is_cuda_loaded) {
+        return;
+    }
+
+    // The target process has libcuda/libcudart loaded (possibly with RTLD_LOCAL).
+    // Promote them to RTLD_GLOBAL so our direct symbol references resolve.
+    promote_to_global("libcuda.so");
+    promote_to_global("libcudart.so");
+
+    is_cuda_loaded.store(true);
+
+    if (m_args.LoadCupti) {
+        load_cupti(m_args.ShimDirectory);
+    }
+}
+
+void ProfilerCtx::LateLoadHIP() {
+#if !SIGMA_HAS_HIP
+    std::cerr << "Built without HIP support" << std::endl;
+    std::abort();
+#endif
+
+    if (is_hip_loaded) {
+        return;
+    }
+
+    promote_to_global("libamdhip64.so");
+
+    is_hip_loaded.store(true);
+}
+
+extern "C" CUresult cuInit(unsigned int Flags) {
+    auto* real_cuInit = reinterpret_cast<decltype(cuInit)*>(Profiler::CudaExportTable::get_real_cu_func("cuInit"));
+    if (!real_cuInit) {
+        std::cerr << "No real_cuInit" << std::endl;
+        std::abort();
+    }
+    const auto res = real_cuInit(Flags);
+
+    g_ProfilerInstance->LateLoadCUDA();
+
+    return res;
+}
+// ================================================================================================
+
 /*
  * WARNING: Some calls are unsafe in this function.
  * Do not use std::cout or related functions that may depend on libc
@@ -115,6 +180,11 @@ ProfilerCtx::ProfilerCtx() {
             .OutputDirectory = m_args.OutputDirectory,
             .OverwriteOutputDir = m_args.OutputOverwrite,
     };
+
+#if SIGMA_HAS_CUDA
+    // We need to wait for the target application to load cuda to bootstrap our own libs
+    Profiler::CudaExportTable::register_overwrite("cuInit", reinterpret_cast<void*>(cuInit));
+#endif
 
 #if SIGMA_HAS_RDMA_CORE
     if (m_args.LoadIbtrace) {
@@ -135,12 +205,6 @@ ProfilerCtx::ProfilerCtx() {
 #if SIGMA_HAS_CUDA
         load_doorbell_hijack();
 #endif
-    }
-#endif
-
-#if SIGMA_HAS_CUDA
-    if (m_args.LoadCupti) {
-        load_cupti(m_args.ShimDirectory);
     }
 #endif
 

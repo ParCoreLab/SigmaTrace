@@ -24,6 +24,10 @@ if (SIGMA_HAS_CUDA)
     endfunction()
 endif ()
 
+if (SIGMA_HAS_HIP)
+    find_package(hip REQUIRED)
+endif ()
+
 # Dependencies
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Imports")
 include(Abseil)

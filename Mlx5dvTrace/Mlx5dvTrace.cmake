@@ -13,10 +13,7 @@ foreach (Mlx5dvTraceTarget IN ITEMS Mlx5dvTraceShared Mlx5dvTraceStatic)
     )
 
     # Headers without linking
-    target_include_directories(
-            ${Mlx5dvTraceTarget}
-            PRIVATE
-            $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
+    Sigma_add_headers(${Mlx5dvTraceTarget} SmartDlsym)
 
     # Headers only - no runtime link dependency on libmlx5
     target_link_libraries(${Mlx5dvTraceTarget} PRIVATE mlx5_headers)

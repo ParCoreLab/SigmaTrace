@@ -14,10 +14,7 @@ foreach (LibfabricTraceTarget IN ITEMS LibfabricTraceShared LibfabricTraceStatic
     )
 
     # Headers without linking
-    target_include_directories(
-            ${LibfabricTraceTarget}
-            PRIVATE
-            $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
+    Sigma_add_headers(${LibfabricTraceTarget} SmartDlsym)
 
     target_link_libraries(${LibfabricTraceTarget} PUBLIC HookLib)
 

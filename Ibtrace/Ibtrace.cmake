@@ -16,10 +16,7 @@ foreach (IbverbsTraceTarget IN ITEMS IbverbsTraceShared IbverbsTraceStatic)
     )
 
     # Headers without linking
-    target_include_directories(
-            ${IbverbsTraceTarget}
-            PRIVATE
-            $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
+    Sigma_add_headers(${IbverbsTraceTarget} SmartDlsym)
 
     # Headers only - no runtime link dependency on libibverbs
     target_link_libraries(${IbverbsTraceTarget} PRIVATE ibverbs_headers)

@@ -9,26 +9,39 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ================================================================
 # GPU Backend Selection
 # ================================================================
-set(SIGMA_GPU_BACKEND "auto" CACHE STRING "GPU backend: CUDA, HIP, or NONE (auto-detect by default)")
-set_property(CACHE SIGMA_GPU_BACKEND PROPERTY STRINGS "auto" "CUDA" "HIP" "NONE")
+# SIGMA_GPU_BACKEND is a semicolon-separated list: "auto", "CUDA", "HIP", "NONE", or "CUDA;HIP"
+set(SIGMA_GPU_BACKEND "auto" CACHE STRING "GPU backends to enable (auto, CUDA, HIP, NONE, or CUDA;HIP)")
 
 include(CheckLanguage)
 
+# Auto-detect: enable every available backend
 if (SIGMA_GPU_BACKEND STREQUAL "auto")
+    set(SIGMA_GPU_BACKEND "")
+
     check_language(CUDA)
     if (CMAKE_CUDA_COMPILER)
-        set(SIGMA_GPU_BACKEND "CUDA")
-    else ()
-        check_language(HIP)
-        if (CMAKE_HIP_COMPILER)
-            set(SIGMA_GPU_BACKEND "HIP")
-        else ()
-            set(SIGMA_GPU_BACKEND "NONE")
-        endif ()
+        list(APPEND SIGMA_GPU_BACKEND "CUDA")
+    endif ()
+
+    check_language(HIP)
+    if (CMAKE_HIP_COMPILER)
+        list(APPEND SIGMA_GPU_BACKEND "HIP")
+    endif ()
+
+    if (NOT SIGMA_GPU_BACKEND)
+        set(SIGMA_GPU_BACKEND "NONE")
     endif ()
 endif ()
 
-if (SIGMA_GPU_BACKEND STREQUAL "CUDA")
+# Validate entries
+foreach (_backend IN LISTS SIGMA_GPU_BACKEND)
+    if (NOT _backend MATCHES "^(CUDA|HIP|NONE)$")
+        message(FATAL_ERROR "Unknown SIGMA_GPU_BACKEND entry: ${_backend}. Must be CUDA, HIP, or NONE.")
+    endif ()
+endforeach ()
+
+# Enable each backend independently
+if ("CUDA" IN_LIST SIGMA_GPU_BACKEND)
     enable_language(CUDA)
     Sigma_enable_feature(CUDA)
     set(CMAKE_CUDA_STANDARD 20)
@@ -37,14 +50,16 @@ if (SIGMA_GPU_BACKEND STREQUAL "CUDA")
         set(CMAKE_CUDA_ARCHITECTURES "80;90")
     endif ()
     message(STATUS "[Sigma] GPU backend: CUDA (architectures: ${CMAKE_CUDA_ARCHITECTURES})")
-elseif (SIGMA_GPU_BACKEND STREQUAL "HIP")
+endif ()
+
+if ("HIP" IN_LIST SIGMA_GPU_BACKEND)
     enable_language(HIP)
     Sigma_enable_feature(HIP)
     message(STATUS "[Sigma] GPU backend: HIP")
-elseif (SIGMA_GPU_BACKEND STREQUAL "NONE")
+endif ()
+
+if (SIGMA_GPU_BACKEND STREQUAL "NONE")
     message(STATUS "[Sigma] GPU backend: NONE")
-else ()
-    message(FATAL_ERROR "Unknown SIGMA_GPU_BACKEND: ${SIGMA_GPU_BACKEND}. Must be CUDA, HIP, or NONE.")
 endif ()
 
 # ================================================================
@@ -52,6 +67,8 @@ endif ()
 # ================================================================
 set(SIGMA_PROVIDER_VAR_PREFIX "SIGMA_PROVIDER_")
 set(SIGMA_PROVIDER_PATHS_TARGET "sigma_provider_paths")
+
+add_library(${SIGMA_PROVIDER_PATHS_TARGET} INTERFACE)
 
 set(SIGMA_TARGET_DIR_FULL "${CMAKE_BINARY_DIR}/target")
 set(SIGMA_PROFILER_PROVIDERS_DIR "./providers")
@@ -239,6 +256,18 @@ endfunction()
 # ================================================================
 # Wrapper Functions
 # ================================================================
+# Include headers without actually linking
+function(Sigma_add_headers target library)
+    set(_system "")
+    if ("SYSTEM" IN_LIST ARGN)
+        set(_system SYSTEM)
+    endif ()
+
+    target_include_directories(${target} ${_system} PRIVATE
+            $<TARGET_PROPERTY:${library},INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endfunction()
+
 # Sigma_add_executable(name [EXCLUDE_FROM_ALL] source1 ...)
 function(Sigma_add_executable name)
     add_executable(${name} ${ARGN})
@@ -269,11 +298,6 @@ endfunction()
 
 function(Sigma_profiler_link_provider name provider)
     set(provider_defs_target ${SIGMA_PROVIDER_PATHS_TARGET})
-
-    # Create interface target for this provider's definitions if it doesn't exist
-    if (NOT TARGET ${provider_defs_target})
-        add_library(${provider_defs_target} INTERFACE)
-    endif ()
 
     target_include_directories(
             ${name}

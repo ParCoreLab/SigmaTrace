@@ -6,11 +6,7 @@ set_target_properties(ProfilerExportTableOverwrite PROPERTIES
 
 target_include_directories(ProfilerExportTableOverwrite PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
-# Headers without linking
-target_include_directories(
-        ProfilerExportTableOverwrite
-        PRIVATE
-        $<TARGET_PROPERTY:SmartDlsym,INTERFACE_INCLUDE_DIRECTORIES>)
+Sigma_add_headers(ProfilerExportTableOverwrite SmartDlsym)
 
-target_link_libraries(ProfilerExportTableOverwrite PRIVATE CUDA::cuda_driver)
-target_link_libraries(ProfilerExportTableOverwrite PRIVATE CUDA::cudart)
+Sigma_add_headers(ProfilerExportTableOverwrite CUDA::cudart SYSTEM)
+#target_link_libraries(ProfilerExportTableOverwrite PRIVATE CUDA::cuda_driver)

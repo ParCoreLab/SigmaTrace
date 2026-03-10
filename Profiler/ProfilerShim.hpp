@@ -193,6 +193,12 @@ struct ProfilerCtx {
     // Event module will interface with the filesystem and may print to stderr
     void LateLoad();
 
+    // They fail if !SIGMA_HAS_X
+    std::atomic<bool> is_cuda_loaded{false};
+    void LateLoadCUDA();
+    std::atomic<bool> is_hip_loaded{false};
+    void LateLoadHIP();
+
     /*
      * WARNING: Some calls are unsafe in this function.
      * Do not use std::cout or related functions that may depend on libc

@@ -4,6 +4,7 @@ find_package(CUDAToolkit REQUIRED)
 Sigma_add_provider_library(CuptiEventProvider SHARED CUPTITrace.cpp)
 
 target_link_libraries(CuptiEventProvider PRIVATE CUDA::cupti)
+
 target_link_libraries(CuptiEventProvider PUBLIC CUDATrace)
 
 set_target_properties(CuptiEventProvider PROPERTIES
