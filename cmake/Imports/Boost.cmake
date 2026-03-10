@@ -3,6 +3,9 @@ set(BOOST_ROOT "" CACHE PATH "Prefix where system Boost is installed")
 
 set(_boost_components program_options)
 
+# Force find_package to use static libs
+set(Boost_USE_STATIC_LIBS ON)
+
 if (NOT BUILD_BOOST)
     if (BOOST_ROOT)
         find_package(Boost REQUIRED PATHS "${BOOST_ROOT}" NO_DEFAULT_PATH COMPONENTS ${_boost_components})
