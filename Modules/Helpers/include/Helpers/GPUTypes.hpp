@@ -14,6 +14,8 @@ namespace Helpers::GPU {
     using MemoryType = cudaMemoryType;
 } // namespace Helpers::GPU
 
+/*
+ * HIP is broken because I don't know how HIP works
 #elif SIGMA_HAS_HIP
 // TODO: HIP equivalents
 #include <hip/hip_runtime.h>
@@ -21,6 +23,8 @@ namespace Helpers::GPU {
     using Context = hipCtx_t;
     using MemoryType = hipMemoryType;
 } // namespace Helpers::GPU
+*/
+
 #else
 // Just in case
 namespace Helpers::GPU {
