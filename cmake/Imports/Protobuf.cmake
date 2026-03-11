@@ -1,9 +1,11 @@
-option(BUILD_PROTOBUF "Build bundled Protobuf" ON)
-set(PROTOBUF_ROOT "" CACHE PATH "Prefix where system Protobuf is installed")
+include(Common)
 
-if (BUILD_PROTOBUF)
-    # We can't use ExternalProject on Protobuf because it needs
-    # configure time targets (absl). See cmake/Imports/Abseil.cmake
+sigma_import_options(PROTOBUF)
+
+# We can't use ExternalProject on Protobuf because it needs
+# configure time targets (absl). See cmake/Imports/Abseil.cmake
+
+macro(_sigma_protobuf_build_from_source)
     set(PROTOBUF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Imports/protobuf")
 
     # Configure Protobuf to use our Abseil
@@ -38,11 +40,41 @@ if (BUILD_PROTOBUF)
     else ()
         message(FATAL_ERROR "[Sigma] Protobuf: failed to create targets")
     endif ()
-else ()
-    if (PROTOBUF_ROOT)
-        find_package(Protobuf CONFIG REQUIRED PATHS "${PROTOBUF_ROOT}" NO_DEFAULT_PATH)
+endmacro()
+
+if (BUILD_PROTOBUF)
+    # Prefer building from source; fall back to system if source unavailable
+    sigma_source_available("${CMAKE_CURRENT_SOURCE_DIR}/Imports/protobuf" _can_build)
+    if (_can_build)
+        _sigma_protobuf_build_from_source()
     else ()
-        find_package(Protobuf CONFIG REQUIRED)
+        message(WARNING "[Sigma] Protobuf: source not available (Imports/protobuf missing), trying system")
+        if (PROTOBUF_ROOT)
+            find_package(Protobuf CONFIG QUIET PATHS "${PROTOBUF_ROOT}" NO_DEFAULT_PATH)
+        else ()
+            find_package(Protobuf CONFIG QUIET)
+        endif ()
+        if (Protobuf_FOUND)
+            message(STATUS "[Sigma] Protobuf: found system installation")
+        else ()
+            message(FATAL_ERROR "[Sigma] Protobuf: source unavailable and system not found")
+        endif ()
     endif ()
-    message(STATUS "[Sigma] Protobuf: found system installation")
+else ()
+    # Default: try system first, fall back to building from source
+    if (PROTOBUF_ROOT)
+        find_package(Protobuf CONFIG QUIET PATHS "${PROTOBUF_ROOT}" NO_DEFAULT_PATH)
+    else ()
+        find_package(Protobuf CONFIG QUIET)
+    endif ()
+    if (Protobuf_FOUND)
+        message(STATUS "[Sigma] Protobuf: found system installation")
+    else ()
+        sigma_source_available("${CMAKE_CURRENT_SOURCE_DIR}/Imports/protobuf" _can_build)
+        if (_can_build)
+            _sigma_protobuf_build_from_source()
+        else ()
+            message(FATAL_ERROR "[Sigma] Protobuf: not found in system and source not available (Imports/protobuf missing)")
+        endif ()
+    endif ()
 endif ()
