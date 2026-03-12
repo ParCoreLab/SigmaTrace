@@ -140,6 +140,7 @@ void ProfilerCtx::LateLoadCUDA() {
 
 // TODO: this might miss the real first initialization
 // However, an actual symbol override can break things
+// This should also be done on cuGetExportTable or something
 extern "C" CUresult Fake_cuInit(unsigned int Flags) {
     auto* real_cuInit = reinterpret_cast<decltype(cuInit)*>(Profiler::CudaExportTable::get_real_cu_func("cuInit"));
     if (!real_cuInit) {

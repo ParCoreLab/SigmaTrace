@@ -1,4 +1,5 @@
 #include <cassert>
+#include <dlfcn.h>
 #include <sys/mman.h>
 
 #include <iostream>
@@ -20,6 +21,11 @@ CuGetExportTable_t real_cuGetExportTable = nullptr;
 CuGetProcAddress_v2_t real_cuGetProcAddress_v2 = nullptr;
 
 namespace Profiler::CudaExportTable {
+    // TODO: hack
+    static void promote_cuda() {
+        smart_dlsym::real_dlopen("libcuda.so", RTLD_LAZY | RTLD_GLOBAL | RTLD_NOLOAD);
+    }
+
     struct OverwriteEntry {
         CallbackType overwrite_callback;
         void* real_cu_func{nullptr};
@@ -59,6 +65,8 @@ using Profiler::CudaExportTable::RegisteredOverwrites;
 extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* pExportTableId) {
     // Never seen it not loaded with dlsym, but just in case
     if (!real_cuGetExportTable) {
+        Profiler::CudaExportTable::promote_cuda();
+
         real_cuGetExportTable = reinterpret_cast<CuGetExportTable_t>(
                 smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_NEXT, "cuGetExportTable"));
 
@@ -141,6 +149,8 @@ extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* p
 extern "C" CUresult cuGetProcAddress_v2(const char* symbol, void** pfn, int cudaVersion, cuuint64_t flags,
                                         CUdriverProcAddressQueryResult* symbolStatus) {
     if (!real_cuGetProcAddress_v2) {
+        Profiler::CudaExportTable::promote_cuda();
+
         real_cuGetProcAddress_v2 = reinterpret_cast<CuGetProcAddress_v2_t>(
                 smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_NEXT, "cuGetProcAddress_v2"));
 
