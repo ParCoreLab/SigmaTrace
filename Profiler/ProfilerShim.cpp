@@ -111,46 +111,31 @@ void ProfilerCtx::LateLoad() {
 
 // Promote a library that is already loaded (RTLD_LOCAL) into global symbol scope
 // so that our lazy-bound references to its symbols resolve correctly.
-static void promote_to_global(const char* name) {
+static void* promote_to_global(const char* name) {
     // Just try
-    std::ignore = smart_dlsym::real_dlopen(name, RTLD_LAZY | RTLD_GLOBAL | RTLD_NOLOAD);
+    return smart_dlsym::real_dlopen(name, RTLD_LAZY | RTLD_GLOBAL | RTLD_NOLOAD);
 }
 
+#if SIGMA_HAS_CUDA
 void ProfilerCtx::LateLoadCUDA() {
-#if !SIGMA_HAS_CUDA
-    std::cerr << "Built without CUDA support" << std::endl;
-    std::abort();
-#endif
-
     if (is_cuda_loaded) {
         return;
     }
 
     // The target process has libcuda/libcudart loaded (possibly with RTLD_LOCAL).
     // Promote them to RTLD_GLOBAL so our direct symbol references resolve.
-    promote_to_global("libcuda.so");
+    auto* libcuda_handle = promote_to_global("libcuda.so");
     promote_to_global("libcudart.so");
+
+    if (libcuda_handle) {
+        m_libcuda_handle = libcuda_handle;
+    }
 
     is_cuda_loaded.store(true);
 
     if (m_args.LoadCupti) {
         load_cupti(m_args.ShimDirectory);
     }
-}
-
-void ProfilerCtx::LateLoadHIP() {
-#if !SIGMA_HAS_HIP
-    std::cerr << "Built without HIP support" << std::endl;
-    std::abort();
-#endif
-
-    if (is_hip_loaded) {
-        return;
-    }
-
-    promote_to_global("libamdhip64.so");
-
-    is_hip_loaded.store(true);
 }
 
 extern "C" CUresult cuInit(unsigned int Flags) {
@@ -165,6 +150,19 @@ extern "C" CUresult cuInit(unsigned int Flags) {
 
     return res;
 }
+#endif
+
+#if SIGMA_HAS_HIP
+void ProfilerCtx::LateLoadHIP() {
+    if (is_hip_loaded) {
+        return;
+    }
+
+    promote_to_global("libamdhip64.so");
+
+    is_hip_loaded.store(true);
+}
+#endif
 // ================================================================================================
 
 /*
@@ -225,7 +223,7 @@ ProfilerCtx::ProfilerCtx() {
  * The move constructor is for reinitializing the profiler on fork
  * We selectively move some things and destroy the rest
  */
-ProfilerCtx::ProfilerCtx(ProfilerCtx&& o) noexcept {
+ProfilerCtx::ProfilerCtx([[maybe_unused]] ProfilerCtx&& o) noexcept {
     m_args = Profiler::ProfilerArgs::from_env();
     m_event_recorder_config = {};
 
@@ -242,6 +240,14 @@ ProfilerCtx::ProfilerCtx(ProfilerCtx&& o) noexcept {
     if (m_cupti_profiler) {
         m_cupti_profiler->subscribe_cupti();
     }
+#endif
+
+#if SIGMA_HAS_UCX
+    this->m_ucx_profiler = std::move(o.m_ucx_profiler);
+#endif
+
+#if SIGMA_HAS_LIBFABRIC
+    this->m_libfabric_profiler = std::move(o.m_libfabric_profiler);
 #endif
 }
 
