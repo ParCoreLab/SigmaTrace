@@ -1,4 +1,4 @@
-option(SIGMA_ENABLE_NVBIT "Enable NVBit" ON)
+option(SIGMA_ENABLE_NVBIT "Enable NVBit" OFF)
 
 if (NOT SIGMA_ENABLE_NVBIT)
     message(STATUS "[Sigma] NVBit: disabled by user")
