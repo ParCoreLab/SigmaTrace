@@ -60,6 +60,11 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
             OUTPUT_NAME "${ProfilerShimTarget}"
     )
 
+    # Might fix something that's not broken yet
+    # target_link_options(${ProfilerShimTarget} PRIVATE
+    #         "LINKER:--unresolved-symbols=ignore-all"
+    # )
+
     # For dlopen/dlsym/dlvsym. Providers make use of the library but only one unit can have the symbols
     target_link_libraries(${ProfilerShimTarget} PUBLIC
             -Wl,--whole-archive

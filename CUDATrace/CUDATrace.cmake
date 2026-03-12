@@ -11,5 +11,10 @@ target_include_directories(CUDATrace INTERFACE
 )
 
 add_subdirectory(CUPTI)
-add_subdirectory(Sanitizer)
-add_subdirectory(Nvbit)
+
+# Unused for now (and possibly forever)
+# add_subdirectory(Sanitizer)
+
+if (SIGMA_ENABLE_NVBIT)
+    add_subdirectory(Nvbit)
+endif ()

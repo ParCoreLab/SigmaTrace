@@ -39,6 +39,14 @@ namespace cuda_trace {
         // Timestamp at trace initialization time.
         // Will be used  to normalize other timestamps
         static uint64_t g_cupti_start_timestamp;
+
+#if CUPTI_API_VERSION >= 130000
+        using CUpti_ActivityKernel = CUpti_ActivityKernel10;
+#elif CUPTI_API_VERSION >= 19
+        using CUpti_ActivityKernel = CUpti_ActivityKernel9;
+#else
+        using CUpti_ActivityKernel = CUpti_ActivityKernel8;
+#endif
     } // namespace detail
 
     static void CUPTIAPI on_cupti_callback(void*, CUpti_CallbackDomain domain_id, CUpti_CallbackId,
@@ -92,7 +100,7 @@ namespace cuda_trace {
             }
             case CUPTI_ACTIVITY_KIND_KERNEL:
             case CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL: {
-                const auto* kernel = reinterpret_cast<CUpti_ActivityKernel10*>(record);
+                const auto* kernel = reinterpret_cast<detail::CUpti_ActivityKernel*>(record);
 
                 const auto device_id = kernel->deviceId;
                 const auto* kernel_name = kernel->name;

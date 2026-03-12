@@ -138,7 +138,9 @@ void ProfilerCtx::LateLoadCUDA() {
     }
 }
 
-extern "C" CUresult cuInit(unsigned int Flags) {
+// TODO: this might miss the real first initialization
+// However, an actual symbol override can break things
+extern "C" CUresult Fake_cuInit(unsigned int Flags) {
     auto* real_cuInit = reinterpret_cast<decltype(cuInit)*>(Profiler::CudaExportTable::get_real_cu_func("cuInit"));
     if (!real_cuInit) {
         std::cerr << "No real_cuInit" << std::endl;
@@ -181,7 +183,7 @@ ProfilerCtx::ProfilerCtx() {
 
 #if SIGMA_HAS_CUDA
     // We need to wait for the target application to load cuda to bootstrap our own libs
-    Profiler::CudaExportTable::register_overwrite("cuInit", reinterpret_cast<void*>(cuInit));
+    Profiler::CudaExportTable::register_overwrite("cuInit", reinterpret_cast<void*>(Fake_cuInit));
 #endif
 
 #if SIGMA_HAS_RDMA_CORE
