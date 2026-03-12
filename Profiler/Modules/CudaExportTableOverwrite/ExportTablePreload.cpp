@@ -62,7 +62,7 @@ extern "C" CUresult cuGetExportTable(const void** ppExportTable, const CUuuid* p
                 smart_dlsym::real_dlsym(smart_dlsym::DL_RTLD_NEXT, "cuGetExportTable"));
 
         if (!real_cuGetExportTable) {
-            std::cerr << "Could not find cuGetProcAddress_v2" << std::endl;
+            std::cerr << "Could not find cuGetExportTable" << std::endl;
             std::abort();
         }
     }

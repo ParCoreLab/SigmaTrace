@@ -182,7 +182,7 @@ namespace Profiler {
                 std::cout << "[Profiler] Overwriting " << profiler_args.OutputDirectory << std::endl;
             } else {
                 std::cerr << profiler_args.OutputDirectory << " is not empty " << std::endl;
-                std::cerr << "[Profiler] Please either pass --output-dir or --output-overwrite" << std::endl;
+                std::cerr << "[Profiler] Please either pass --output-dir or --output-overwrite (-f)" << std::endl;
                 return {ProfilerParseResult::Failed, {}};
             }
         }
