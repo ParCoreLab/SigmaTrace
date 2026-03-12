@@ -249,6 +249,10 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
     // Memory tracking
     m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
             [](mlx5dv_devx_uar* out_uar, ibv_context* ctx, uint32_t flags, const auto ts_start, const auto ts_end) {
+        if (!out_uar) {
+            return;
+        }
+
         Profiler::Events::Mlx5dvUarAlloc event{
                 .context_addr = PtrToUint(ctx),
                 .uar_addr = PtrToUint(out_uar),
@@ -272,6 +276,10 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
     m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
             [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, size_t size,
                [[maybe_unused]] uint32_t access, const auto ts_start, const auto ts_end) {
+        if (!out_umem) {
+            return;
+        }
+
         instance().m_event_recorder->Record<Profiler::Events::Mlx5dvMemoryRegistration>(
                 {
                         .context_addr = PtrToUint(ctx),
@@ -288,6 +296,10 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
     m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
             [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, size_t size,
                [[maybe_unused]] uint32_t access, auto...) {
+        if (!out_umem) {
+            return;
+        }
+
         if (!instance().is_cuda_loaded) {
             return;
         }
