@@ -129,15 +129,19 @@ endforeach ()
 
 # ================================================================
 # Trace results reader
-Sigma_add_executable(ProfilerEventReader "TraceFile/ProfilerEventReader.cpp")
-set_target_properties(ProfilerEventReader PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
+if (SIGMA_HAS_PERFETTO)
+    Sigma_add_executable(ProfilerEventReader "TraceFile/ProfilerEventReader.cpp")
+    set_target_properties(ProfilerEventReader PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SIGMA_TARGET_DIR_FULL}")
 
-target_link_libraries(ProfilerEventReader PRIVATE EventsLib)
-target_include_directories(ProfilerEventReader PRIVATE "${CMAKE_SOURCE_DIR}/Events")
+    target_link_libraries(ProfilerEventReader PRIVATE EventsLib)
+    target_include_directories(ProfilerEventReader PRIVATE "${CMAKE_SOURCE_DIR}/Events")
 
-target_link_libraries(ProfilerEventReader PRIVATE PerfettoProto)
-target_link_libraries(ProfilerEventReader PRIVATE
-        absl::hash
-        absl::flat_hash_map
-        absl::flat_hash_set)
+    target_link_libraries(ProfilerEventReader PRIVATE PerfettoProto)
+    target_link_libraries(ProfilerEventReader PRIVATE
+            absl::hash
+            absl::flat_hash_map
+            absl::flat_hash_set)
+else ()
+    message(WARNING "Did not build ProfilerEventReader. Make sure Imports/perfetto is up to date or PERFETTO_ROOT is set")
+endif ()
 # ================================================================

@@ -1,10 +1,26 @@
-set(PERFETTO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Imports/perfetto" CACHE PATH "Path to Perfetto source")
+include(Common)
+
+sigma_import_options(PERFETTO WITH_ENABLE)
+
+if (NOT SIGMA_ENABLE_PERFETTO)
+    message(STATUS "[Sigma] Perfetto: disabled by user")
+    return()
+endif ()
+
+set(PERFETTO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Imports/perfetto")
 
 # Directory where proto files are located
 set(PERFETTO_PROTOS_DIR "${PERFETTO_ROOT}/protos")
 
 # The merged proto file contains all Perfetto trace definitions in one file
 set(PERFETTO_TRACE_PROTO "${PERFETTO_PROTOS_DIR}/perfetto/trace/perfetto_trace.proto")
+
+if (NOT EXISTS "${PERFETTO_TRACE_PROTO}")
+    message(WARNING "${PERFETTO_TRACE_PROTO} does not exist. Make sure to pull the repo or set PERFETTO_ROOT")
+    return()
+else()
+    set(SIGMA_HAS_PERFETTO ON)
+endif ()
 
 # Create the library target
 add_library(PerfettoProto STATIC)
