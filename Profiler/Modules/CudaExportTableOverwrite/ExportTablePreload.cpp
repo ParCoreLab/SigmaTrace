@@ -1,6 +1,7 @@
 #include <cassert>
 #include <sys/mman.h>
 
+#include <iostream>
 #include <string>
 #include <tuple>
 #include <unordered_map>
