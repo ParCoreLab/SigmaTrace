@@ -187,7 +187,8 @@ namespace Profiler::hijack {
 
                 // TODO: better size calculation
                 // this is kinda random
-                thread_local uint8_t host_wqe_buf[1024 * WQEBB_SIZE * 64]{};
+                // TODO: static?
+                static uint8_t host_wqe_buf[1024 * WQEBB_SIZE * 64]{};
 
                 // Handle ring wrap-around with two copies
                 if (start_slot + num_wqebbs_total <= wq_slots) {
