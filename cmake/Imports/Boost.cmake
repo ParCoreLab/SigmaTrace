@@ -5,7 +5,8 @@ sigma_import_options(BOOST)
 set(_boost_components program_options)
 
 # Force find_package to use static libs
-set(Boost_USE_STATIC_LIBS ON)
+# TODO: warn and switch automatically
+option(Boost_USE_STATIC_LIBS ON)
 
 macro(_sigma_boost_build)
     set(BOOST_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Imports/boost")
