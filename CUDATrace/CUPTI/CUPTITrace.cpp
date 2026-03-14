@@ -155,8 +155,12 @@ namespace cuda_trace {
     }
 
     void CUPTIEventSource::subscribe_cupti() {
-        // Just in case
-        CUPTI_CHECK(cuptiFinalize());
+        // We need to finalize if this module is reloaded, for example in a fork
+        static std::atomic<bool> cupti_initialized{false};
+        bool expected = false;
+        if (!cupti_initialized.compare_exchange_strong(expected, true)) {
+            CUPTI_CHECK(cuptiFinalize());
+        }
 
         CUPTI_CHECK(cuptiActivityRegisterTimestampCallback(Helpers::TS::RdtscTimestampSource::Now));
 
