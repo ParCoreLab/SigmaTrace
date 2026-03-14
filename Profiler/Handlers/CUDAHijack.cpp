@@ -180,28 +180,44 @@ namespace Profiler::hijack {
                     CU_CHECK(cuCtxPushCurrent(qp_info.gpu_ctx));
                     CU_CHECK(cuStreamCreate(&s, CU_STREAM_NON_BLOCKING));
 
-                    CUcontext empty;
-                    CU_CHECK(cuCtxPopCurrent(&empty));
+                    // CUcontext empty;
+                    // CU_CHECK(cuCtxPopCurrent(&empty));
                     return s;
                 });
 
                 // TODO: better size calculation
-                // this is kinda random
-                // TODO: static?
-                static uint8_t host_wqe_buf[1024 * WQEBB_SIZE * 64]{};
+                // what even is this
+                struct CuMemHostDeleter {
+                    void operator()(uint8_t* ptr) const {
+                        if (ptr) {
+                            // cuMemFreeHost is safe to call, but usually a good idea
+                            // to wrap in your custom error checker if you log those.
+                            CU_CHECK(cuMemFreeHost(ptr));
+                        }
+                    }
+                };
+                using CuHostMemPtr = std::unique_ptr<uint8_t[], CuMemHostDeleter>;
+                thread_local CuHostMemPtr host_wqe_buf{nullptr};
+                if (!host_wqe_buf) {
+                    void* raw_ptr = nullptr;
+                    // Apparently faster to async copy than regular memory
+                    CU_CHECK(cuMemAllocHost(&raw_ptr, 1024 * WQEBB_SIZE * 64));
+
+                    host_wqe_buf.reset(static_cast<uint8_t*>(raw_ptr));
+                }
 
                 // Handle ring wrap-around with two copies
                 if (start_slot + num_wqebbs_total <= wq_slots) {
-                    CU_CHECK(cuMemcpyDtoHAsync(host_wqe_buf,
+                    CU_CHECK(cuMemcpyDtoHAsync(host_wqe_buf.get(),
                                                reinterpret_cast<CUdeviceptr>(qp_info.sq_base) + start_slot * WQEBB_SIZE,
                                                num_wqebbs_total * WQEBB_SIZE, cu_stream));
                 } else {
                     const uint32_t tail = wq_slots - start_slot;
                     const uint32_t head = num_wqebbs_total - tail;
-                    CU_CHECK(cuMemcpyDtoHAsync(host_wqe_buf,
+                    CU_CHECK(cuMemcpyDtoHAsync(host_wqe_buf.get(),
                                                reinterpret_cast<CUdeviceptr>(qp_info.sq_base) + start_slot * WQEBB_SIZE,
                                                tail * WQEBB_SIZE, cu_stream));
-                    CU_CHECK(cuMemcpyDtoHAsync(host_wqe_buf + tail * WQEBB_SIZE,
+                    CU_CHECK(cuMemcpyDtoHAsync(host_wqe_buf.get() + tail * WQEBB_SIZE,
                                                reinterpret_cast<CUdeviceptr>(qp_info.sq_base), head * WQEBB_SIZE,
                                                cu_stream));
                 }
@@ -213,7 +229,7 @@ namespace Profiler::hijack {
                 std::unordered_map<uint32_t, uint64_t> wqe_bytes_by_end_prod_id;
 
                 for (uint32_t i = 0, prod_id = prod_id_start; prod_id < prod_id_end;) {
-                    const uint8_t* wqe = host_wqe_buf + i * WQEBB_SIZE;
+                    const uint8_t* wqe = host_wqe_buf.get() + i * WQEBB_SIZE;
                     const auto* ctrl = reinterpret_cast<const mlx5_wqe_ctrl_seg*>(wqe);
 
                     const uint32_t wqe_qpn_ds = be32toh(ctrl->qpn_ds);
@@ -276,10 +292,12 @@ namespace Profiler::hijack {
                     wqe_bytes_by_end_prod_id[prod_id] = wqe_bytes;
                 }
 
-                // Accumulate doorbell-path bytes
-                if (batch_bytes_sent > 0) {
+                // Accumulate doorbell-path bytes and send count
+                {
                     std::scoped_lock lock(profiler.m_qp_traffic_mutex);
-                    profiler.m_qp_traffic[dbr_qpn].bytes_sent += batch_bytes_sent;
+                    auto& traffic = profiler.m_qp_traffic[dbr_qpn];
+                    traffic.bytes_sent += batch_bytes_sent;
+                    traffic.send_count += static_cast<uint32_t>(wqe_bytes_by_end_prod_id.size());
                 }
 
                 // Emit per-doorbell DoorbellRing events with their original timestamps and computed bytes
