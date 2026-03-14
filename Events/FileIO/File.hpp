@@ -24,6 +24,11 @@
  * - Error handling/tolerance
  */
 namespace FileIO {
+    static constexpr std::size_t align_to_page(const std::size_t size) {
+        constexpr std::size_t PAGE_SIZE = 4096;
+        return (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    }
+
     // TODO: rename this
     // TODO: add file header so we don't have to get the event ID from the filename
     template<Serializable FileHeader, template<typename, std::size_t, std::size_t> class Impl, std::size_t ElementSize,
@@ -159,7 +164,7 @@ namespace FileIO {
             static_assert(std::is_trivially_copyable_v<FileHeader>);
 
             // Pre-allocate initial chunk using fallocate (faster than ftruncate, no zeroing)
-            m_mapped_size = ChunkBytes + FileHeaderSize;
+            m_mapped_size = align_to_page(ChunkBytes + FileHeaderSize);
             if (fallocate(m_fd, 0, 0, static_cast<off_t>(m_mapped_size)) < 0) {
                 if (ftruncate(m_fd, static_cast<off_t>(m_mapped_size)) < 0) {
                     close(m_fd);
@@ -216,7 +221,7 @@ namespace FileIO {
             }
 
             // Grow file first
-            const std::size_t new_size = m_mapped_size + ChunkBytes;
+            const std::size_t new_size = align_to_page(m_mapped_size + ChunkBytes);
             if (fallocate(m_fd, 0, 0, static_cast<off_t>(new_size)) < 0) {
                 if (ftruncate(m_fd, static_cast<off_t>(new_size)) < 0) {
                     throw std::runtime_error("Failed to resize file");
