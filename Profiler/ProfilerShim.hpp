@@ -265,16 +265,12 @@ struct ProfilerCtx {
 #if SIGMA_HAS_UCX
     // Thread-local correlation: set during UCX operations for cross-layer mapping
     // TODO: not really used properly right now
-    static inline thread_local uint64_t tls_active_ucp_ep{0};
-
     void load_ucx(const std::filesystem::path& shim_dir);
 #endif
 
 #if SIGMA_HAS_LIBFABRIC
     // Thread-local correlation: set during libfabric operations for cross-layer mapping
     // TODO: not really used properly right now
-    static inline thread_local uint64_t tls_active_fi_ep{0};
-
     void load_libfabric(const std::filesystem::path& shim_dir);
 #endif
 };
