@@ -230,11 +230,33 @@ namespace FileIO {
 
             // Extend mapping in-place using mremap. Linux-specific
             void* new_base = mremap(m_base, m_mapped_size, new_size, MREMAP_MAYMOVE);
+
+            // TODO: this might be slow but it's probably better than crashing...
+            // TODO: perror
             if (new_base == MAP_FAILED) {
-                throw std::runtime_error("mremap failed");
+                // We need to manually unmap and remap.
+                // Some systems don't let you mremap for "security"
+
+                // Flush existing changes to be safe before tearing down
+                msync(m_base, m_mapped_size, MS_ASYNC);
+
+                // Unmap the old region
+                if (munmap(m_base, m_mapped_size) != 0) {
+                    close(m_fd);
+                    throw std::runtime_error("mremap failed, and fallback munmap failed");
+                }
+
+                // Map the new, larger region
+                new_base = mmap(nullptr, new_size, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd, 0);
+                if (new_base == MAP_FAILED) {
+                    close(m_fd);
+                    throw std::runtime_error("mremap failed, and fallback mmap failed (ENOMEM)");
+                }
             }
 
             m_base = static_cast<uint8_t*>(new_base);
+
+            // Re-apply madvise to the NEW section of the file
             madvise(m_base + m_mapped_size, ChunkBytes, MADV_SEQUENTIAL);
 #ifdef MADV_HUGEPAGE
             madvise(m_base + m_mapped_size, ChunkBytes, MADV_HUGEPAGE);
