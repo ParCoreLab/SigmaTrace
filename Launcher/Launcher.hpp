@@ -53,7 +53,11 @@ namespace Launcher {
 
         // Convert args range to vector with null terminator
         std::vector<const char*> args_vec;
-        args_vec.reserve(program_args.size() + 1);
+        args_vec.reserve(program_args.size() + 2);
+
+        // First arg must be the bin
+        args_vec.push_back(program_bin.c_str());
+
         std::transform(std::cbegin(program_args), std::cend(program_args), std::back_inserter(args_vec),
                        [](const std::string& str) {
             return str.c_str();

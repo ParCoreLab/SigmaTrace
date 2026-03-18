@@ -24,8 +24,22 @@ namespace Launcher {
 
         // Parent
         int status = 0;
-        waitpid(pid, &status, 0);
+        const auto res = waitpid(pid, &status, 0);
+        if (res == -1) {
+            perror("[Launcher] waitpid failed");
+            return 1;
+        }
 
-        return WEXITSTATUS(status);
+        if (!WIFEXITED(status)) {
+            perror("[Launcher] Child process terminated abnormally");
+            return 255;
+        }
+
+        const auto exit_code = WEXITSTATUS(status);
+        if (exit_code != 0) {
+            std::cerr << "[Launcher] Child process exited with code " << exit_code << std::endl;
+        }
+
+        return exit_code;
     }
 } // namespace Launcher
