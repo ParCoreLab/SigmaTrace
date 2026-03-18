@@ -33,20 +33,24 @@ ProfilerCtx::~ProfilerCtx() {
 
     std::cout << "[Profiler] doorbell_submitted: " << std::dec << doorbell_submitted << std::endl;
     std::cout << "[Profiler] doorbell_skipped: " << std::dec << doorbell_skipped << std::endl;
-
-    emit_communication_summaries();
 #endif
 }
 
 #if SIGMA_HAS_RDMA_CORE
 // Emit CommunicationSummary events on exit
+// TODO: make this more generic. It shouldn't be just ibv
 void ProfilerCtx::emit_communication_summaries() {
     if (!m_event_recorder) {
         return;
     }
 
-    std::scoped_lock lock(m_qp_traffic_mutex);
-    for (const auto& [qpn, stats]: m_qp_traffic) {
+    // Merge all per-thread traffic accumulators into one map
+    auto merged_traffic = m_traffic_registry.merge_all();
+
+    // Track which QPs we've already emitted summaries for
+    std::unordered_set<uint32_t> emitted_qpns;
+
+    for (const auto& [qpn, stats]: merged_traffic) {
         uint32_t dest_qpn = 0;
         uint16_t dest_lid = 0;
         GpuId_T gpu_id = Profiler::Events::UnknownDeviceId;
@@ -68,14 +72,48 @@ void ProfilerCtx::emit_communication_summaries() {
         const Profiler::Events::CommunicationSummary summary{
                 .src_qpn = qpn,
                 .dest_qpn = dest_qpn,
-                .bytes_sent = stats.bytes_sent.load(),
-                .bytes_recv = stats.bytes_recv.load(),
+                .bytes_sent = stats.bytes_sent,
+                .bytes_recv = stats.bytes_recv,
                 .send_count = stats.send_count,
                 .recv_count = stats.recv_count,
                 .src_node_guid = 0,
                 .dest_node_guid = 0,
                 .gpu_id = gpu_id,
                 .dest_lid = dest_lid,
+        };
+        m_event_recorder->Record(summary, 0);
+        emitted_qpns.insert(qpn);
+    }
+
+    // Emit zero-traffic summaries for QPs known from connection info but with no
+    // traffic. This happens for passive receive-side QPs in one-sided RDMA (e.g.
+    // NVSHMEM RDMA writes) where the remote QP never calls ibv_post_recv/poll_cq.
+    // Without these entries, the dest_qpn in edges won't resolve to any node.
+    for (const auto& [qpn, conn]: m_qp_connections) {
+        if (emitted_qpns.contains(qpn)) {
+            continue;
+        }
+
+        GpuId_T gpu_id = Profiler::Events::UnknownDeviceId;
+        {
+            std::scoped_lock qp_lock(m_mlx5_qp_mutex);
+            const auto qp_it = m_mlx5_qp_info.find(qpn);
+            if (qp_it != m_mlx5_qp_info.end()) {
+                gpu_id = qp_it->second.gpu_id;
+            }
+        }
+
+        const Profiler::Events::CommunicationSummary summary{
+                .src_qpn = qpn,
+                .dest_qpn = conn.dest_qpn,
+                .bytes_sent = 0,
+                .bytes_recv = 0,
+                .send_count = 0,
+                .recv_count = 0,
+                .src_node_guid = 0,
+                .dest_node_guid = 0,
+                .gpu_id = gpu_id,
+                .dest_lid = conn.dest_lid,
         };
         m_event_recorder->Record(summary, 0);
     }
@@ -104,6 +142,10 @@ void ProfilerCtx::LateLoad() {
             .tsc_freq_hz = snapshot.tsc_freq_hz,
     };
     m_event_recorder->Record(calibration, 0);
+
+    if constexpr (Profiler::Features::HasCUDA) {
+        smart_dlsym::real_dlopen("libcuda.so", RTLD_LAZY | RTLD_GLOBAL);
+    }
 }
 
 // ================================================================================================
@@ -288,6 +330,14 @@ static void profiler_finalize() {
     };
     g_ProfilerInstance->m_event_recorder->Record(calibration, 0);
 
+    // TODO: this is ugly...
+#if SIGMA_HAS_RDMA_CORE
+#if SIGMA_HAS_CUDA
+    g_ProfilerInstance->flush_pending_doorbells();
+#endif
+    g_ProfilerInstance->emit_communication_summaries();
+#endif
+
     // Flush and truncate all mmap'd event files before destroying the profiler.
     // thread_local destructors won't run for threads still alive at shutdown.
     Events::ThreadBufferRegistry::finalize_all();
@@ -343,6 +393,11 @@ static void profiler_atfork_child() {
     // Reset CUDA doorbell hijack namespace globals
     // They should probably not be globals to begin with
     Profiler::hijack::reset();
+#endif
+
+    // Abandon thread_local stuff. They don't survive fork
+#if SIGMA_HAS_RDMA_CORE
+    g_ProfilerInstance->m_traffic_registry.reset();
 #endif
 
     /*

@@ -18,7 +18,6 @@ if (SIGMA_HAS_CUDA)
     add_subdirectory(Modules/CudaExportTableOverwrite)
 endif ()
 add_subdirectory(Modules/MemoryHijack)
-add_subdirectory(Modules/BackgroundProcessor)
 #add_subdirectory(Modules/GPUMemoryHijack)
 # ================================================================
 
@@ -85,7 +84,6 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
 
     # Profiler modules
     target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerMemoryRepeater)
-    target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerBackgroundProcessor)
     # target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerGPUMemoryRepeater)
 
     if (SIGMA_HAS_CUDA)

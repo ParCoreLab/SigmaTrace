@@ -8,7 +8,7 @@ namespace Profiler::Features {
     inline constexpr bool HasCUDA{SIGMA_HAS_CUDA};
     inline constexpr bool HasHIP{SIGMA_HAS_HIP};
 
-    // Libraries
+    // Providers
     inline constexpr bool HasRdmaCore{SIGMA_HAS_RDMA_CORE};
     inline constexpr bool HasNCCL{SIGMA_HAS_NCCL};
     inline constexpr bool HasNVSHMEM{SIGMA_HAS_NVSHMEM};

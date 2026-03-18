@@ -233,7 +233,7 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
 
             // Store connection for shutdown summary
             {
-                std::scoped_lock lock(profiler.m_qp_traffic_mutex);
+                std::scoped_lock lock(profiler.m_qp_connections_mutex);
                 profiler.m_qp_connections[qp_qpn] = ProfilerCtx::QpConnectionEntry{
                         .context_addr = 0,
                         .dest_qpn = qp_remote_qpn,
@@ -294,7 +294,7 @@ void ProfilerCtx::load_mlx5dv(const std::filesystem::path& shim_dir) {
 #if SIGMA_HAS_CUDA
     // CUDA stuff
     m_mlx5dv_profiler->register_post<mlx5dv::devx_umem_reg_tag>(
-            [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, size_t size,
+            [](mlx5dv_devx_umem* out_umem, [[maybe_unused]] ibv_context* ctx, void* addr, [[maybe_unused]] size_t size,
                [[maybe_unused]] uint32_t access, auto...) {
         if (!out_umem) {
             return;
