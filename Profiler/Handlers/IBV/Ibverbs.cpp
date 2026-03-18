@@ -124,6 +124,47 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
         instance().m_event_recorder->Record(event, ts_start, ts_end);
     });
 
+    /*
+     * Prototype ended up being slower...
+    m_ibv_profiler->register_post<ibv::post_send_tag>(
+            [](int, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr**, const auto ts_start, const auto ts_end) {
+        auto& profiler = instance();
+        const auto context_addr = PtrToUint(qp->context);
+
+        uint32_t num_wrs = 0;
+
+        // Hot path: iterate WRs, pre-sum SGE bytes, enqueue snapshots
+        for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
+            num_wrs++;
+
+            uint64_t sge_bytes = 0;
+            for (auto sg_idx = 0; sg_idx < wr_it->num_sge; sg_idx++) {
+                sge_bytes += wr_it->sg_list[sg_idx].length;
+            }
+
+            profiler.m_send_wr_processor->enqueue(SendWrSnapshot{
+                    .context_addr = context_addr,
+                    .wr_id = wr_it->wr_id,
+                    .qp_num = qp->qp_num,
+                    .num_sge = wr_it->num_sge,
+                    .send_flags = wr_it->send_flags,
+                    .opcode = static_cast<uint8_t>(wr_it->opcode),
+                    .total_sge_bytes = sge_bytes,
+                    .ts_start = ts_start,
+                    .ts_end = ts_end,
+            });
+        }
+
+        // Envelope event stays on hot path (single Record call)
+        const Profiler::Events::IbvPostSend post_send_event{
+                .context_addr = context_addr,
+                .num_wrs = num_wrs,
+                .qp_num = qp->qp_num,
+        };
+        profiler.m_event_recorder->Record(post_send_event, ts_start, ts_end);
+    });
+    */
+
     m_ibv_profiler->register_post<ibv::post_send_tag>(
             [](int, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr**, const auto ts_start, const auto ts_end) {
         const auto context_addr = PtrToUint(qp->context);
@@ -219,6 +260,29 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
             return;
         }
 
+        auto& profiler = instance();
+        const auto context_addr = PtrToUint(cq->context);
+
+        /*
+        for (auto i = 0; i < out_ret; i++) {
+            const auto& wc_entry = wc[i];
+
+            profiler.m_completion_processor->enqueue(CompletionSnapshot{
+                    .out_ret = out_ret,
+                    .wc = wc,
+                    .context_addr = context_addr,
+                    // .wr_id = wc_entry.wr_id,
+                    // .qp_num = wc_entry.qp_num,
+                    // .opcode = static_cast<uint8_t>(wc_entry.opcode),
+                    // .status = static_cast<uint8_t>(wc_entry.status),
+                    // .byte_len = wc_entry.byte_len,
+                    // .is_recv = static_cast<bool>(wc_entry.opcode & IBV_WC_RECV),
+                    .ts_start = ts_start,
+                    .ts_end = ts_end,
+            });
+        }
+        */
+
         for (auto i = 0; i < out_ret; i++) {
             const auto& wc_entry = wc[i];
 
@@ -246,3 +310,91 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
 
     std::cout << "[Profiler] loaded Ibverbs Trace" << std::endl;
 }
+
+/*
+// Background processor consumer functions.
+static void process_send_wr(const SendWrSnapshot& snap) {
+    using Profiler::Events::IbvPostSendWr;
+    const IbvPostSendWr wr_event{
+            .context_addr = snap.context_addr,
+            .wr_id = snap.wr_id,
+            .qp_num = snap.qp_num,
+            .num_sge = snap.num_sge,
+            .send_flags = snap.send_flags,
+            .opcode = static_cast<Profiler::Events::types::ibv_wr_opcode>(snap.opcode),
+    };
+    instance().m_event_recorder->Record(wr_event, snap.ts_start + 1, snap.ts_end - 1);
+
+    // Traffic accumulation
+    if (snap.total_sge_bytes > 0) {
+        auto& stats = instance().m_traffic_registry.get_thread_local()[snap.qp_num];
+        stats.bytes_sent += snap.total_sge_bytes;
+        stats.send_count++;
+    }
+}
+
+static void process_recv_wr(const RecvWrSnapshot& snap) {
+    const Profiler::Events::IbvPostRecvWr recv_wr_event{
+            .context_addr = snap.context_addr,
+            .qp_num = snap.qp_num,
+            .wr_id = snap.wr_id,
+            .num_sge = snap.num_sge,
+    };
+    instance().m_event_recorder->Record(recv_wr_event, snap.ts_start + 1, snap.ts_end - 1);
+}
+
+static void process_completion(const CompletionSnapshot& snap) {
+    using Profiler::Events::IbvCompletion;
+
+    for (auto i = 0; i < snap.out_ret; i++) {
+        const auto& wc_entry = snap.wc[i];
+
+        const IbvCompletion completion_event{
+                .context_addr = snap.context_addr,
+                .wr_id = wc_entry.wr_id,
+                .qp_num = wc_entry.qp_num,
+                .opcode = static_cast<Profiler::Events::types::ibv_wc_opcode>(wc_entry.opcode),
+                .status = static_cast<Profiler::Events::types::ibv_wc_status>(wc_entry.status),
+                .byte_len = wc_entry.byte_len,
+        };
+        instance().m_event_recorder->Record(completion_event, snap.ts_start + 1, snap.ts_end - 1);
+    }
+
+    // // Recv traffic accumulation on consumer thread
+    // if (snap.is_recv) {
+    //     auto& stats = instance().m_traffic_registry.get_thread_local()[snap.qp_num];
+    //     stats.bytes_recv += snap.byte_len;
+    //     stats.recv_count++;
+    // }
+}
+
+void ProfilerCtx::init_ibv_processors() {
+    m_send_wr_processor = std::make_unique<Profiler::BackgroundProcessor<SendWrSnapshot>>(process_send_wr);
+    m_recv_wr_processor = std::make_unique<Profiler::BackgroundProcessor<RecvWrSnapshot>>(process_recv_wr);
+    m_completion_processor = std::make_unique<Profiler::BackgroundProcessor<CompletionSnapshot>>(process_completion);
+}
+
+[[maybe_unused]] void ProfilerCtx::shutdown_ibv_processors() {
+    if (m_send_wr_processor) {
+        m_send_wr_processor->shutdown();
+    }
+    if (m_recv_wr_processor) {
+        m_recv_wr_processor->shutdown();
+    }
+    if (m_completion_processor) {
+        m_completion_processor->shutdown();
+    }
+}
+
+[[maybe_unused]] void ProfilerCtx::abandon_ibv_processors() {
+    if (m_send_wr_processor) {
+        m_send_wr_processor->abandon();
+    }
+    if (m_recv_wr_processor) {
+        m_recv_wr_processor->abandon();
+    }
+    if (m_completion_processor) {
+        m_completion_processor->abandon();
+    }
+}
+*/

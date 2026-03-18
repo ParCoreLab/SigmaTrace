@@ -1,0 +1,3 @@
+add_library(ProfilerBackgroundProcessor INTERFACE)
+target_include_directories(ProfilerBackgroundProcessor INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ProfilerBackgroundProcessor INTERFACE Boost::headers)

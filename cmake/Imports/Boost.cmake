@@ -31,7 +31,7 @@ macro(_sigma_boost_build)
             -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
             -DCMAKE_CXX_FLAGS=-w
             -DCMAKE_C_FLAGS=-w
-            -DBOOST_INCLUDE_LIBRARIES=program_options
+            -DBOOST_INCLUDE_LIBRARIES=program_options$<SEMICOLON>lockfree
             -DBUILD_SHARED_LIBS=OFF
             -DBUILD_TESTING=OFF
             BUILD_BYPRODUCTS

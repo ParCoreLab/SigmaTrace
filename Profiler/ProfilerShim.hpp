@@ -16,6 +16,7 @@
 #include "Events/Common.hpp"
 
 // Profiler-specific modules
+#include "BackgroundProcessor.hpp"
 #include "Modules/MemoryHijack/MemoryRepeater.hpp"
 
 // Event providers
@@ -187,6 +188,20 @@ struct ProfilerCtx {
 
     // Emit CommunicationSummary events - must be called before EventRecorder destruction
     void emit_communication_summaries();
+
+    /*
+     * // Background processors for offloading hot-path work
+     * // Ended up having too much overhead for these but might be useful in the future
+     * std::unique_ptr<Profiler::BackgroundProcessor<SendWrSnapshot>> m_send_wr_processor;
+     * std::unique_ptr<Profiler::BackgroundProcessor<RecvWrSnapshot>> m_recv_wr_processor;
+     * std::unique_ptr<Profiler::BackgroundProcessor<CompletionSnapshot>> m_completion_processor;
+     *
+     * void init_ibv_processors();
+     * void shutdown_ibv_processors();
+     *
+     * // post-fork: detach dead consumer threads
+     * void abandon_ibv_processors();
+     */
 #endif // SIGMA_HAS_RDMA_CORE
 
     // See Note[late_load]
