@@ -14,14 +14,21 @@
 // ================================================================
 DEFINE_OBJECT_OPS_HOOK(ibv, post_send, "ibv_post_send", int, ibv_qp*, ibv_send_wr*, ibv_send_wr**);
 DEFINE_OBJECT_OPS_HOOK(ibv, post_recv, "ibv_post_recv", int, ibv_qp*, ibv_recv_wr*, ibv_recv_wr**);
-DEFINE_OBJECT_OPS_HOOK(ibv, poll_cq, "ibv_poll_cq", int, ibv_cq*, int, ibv_wc*);
+DEFINE_OBJECT_OPS_HOOK_PRED(ibv, poll_cq, "ibv_poll_cq", [](int out_ret, ibv_cq*, int, ibv_wc*) {
+    // Most polls won't have anything
+    if (out_ret == 1) [[likely]] {
+        return false;
+    }
+
+    return true;
+}, int, ibv_cq*, int, ibv_wc*);
 DEFINE_OBJECT_OPS_HOOK(ibv, req_notify_cq, "ibv_req_notify_cq", int, ibv_cq*, int);
 DEFINE_OBJECT_OPS_HOOK(ibv, post_srq_recv, "ibv_post_srq_recv", int, ibv_srq*, ibv_recv_wr*, ibv_recv_wr**);
 
-// // ================================================================
-// // Preload hooks (LD_PRELOAD / dlsym style)
-// // These are installed via LD_PRELOAD interception
-// // ================================================================
+// ================================================================
+// Preload hooks (LD_PRELOAD / dlsym style)
+// These are installed via LD_PRELOAD interception
+// ================================================================
 DEFINE_PRELOAD_HOOK(ibv, open_device, "ibv_open_device", ibv_context*, ibv_device*);
 DEFINE_PRELOAD_HOOK(ibv, close_device, "ibv_close_device", int, ibv_context*);
 DEFINE_PRELOAD_HOOK(ibv, query_device, "ibv_query_device", int, ibv_context*, ibv_device_attr*);

@@ -2,7 +2,10 @@
 
 #include <atomic>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -16,7 +19,6 @@
 #include "Events/Common.hpp"
 
 // Profiler-specific modules
-#include "BackgroundProcessor.hpp"
 #include "Modules/MemoryHijack/MemoryRepeater.hpp"
 
 // Event providers
@@ -47,11 +49,56 @@ using MemoryRepeaterHandle = Profiler::MemoryRepeater::MemoryRepeaterHandle;
 using Helpers::PtrToUint;
 using Profiler::Events::GpuId_T;
 
+using Timestamp = Helpers::TS::Timestamp;
+
 struct QpTrafficStats {
-    std::atomic<uint64_t> bytes_sent{0};
-    std::atomic<uint64_t> bytes_recv{0};
+    uint64_t bytes_sent{0};
+    uint64_t bytes_recv{0};
     uint32_t send_count{0};
     uint32_t recv_count{0};
+};
+
+// Per-thread traffic accumulators merged at shutdown.
+// The mutex is only taken on thread registration (first access per thread)
+struct ThreadTrafficRegistry {
+    using TrafficMap = std::unordered_map<uint32_t, QpTrafficStats>;
+
+    TrafficMap& get_thread_local() {
+        thread_local TrafficMap* cached = nullptr;
+        if (cached) [[likely]] {
+            return *cached;
+        }
+
+        // First call on this thread
+        auto map = std::make_shared<TrafficMap>();
+        cached = map.get();
+        std::scoped_lock lock(mutex);
+        accumulators.push_back(std::move(map));
+        return *cached;
+    }
+
+    TrafficMap merge_all() {
+        TrafficMap merged;
+        std::scoped_lock lock(mutex);
+        for (const auto& acc: accumulators) {
+            for (const auto& [qpn, stats]: *acc) {
+                auto& m = merged[qpn];
+                m.bytes_sent += stats.bytes_sent;
+                m.bytes_recv += stats.bytes_recv;
+                m.send_count += stats.send_count;
+                m.recv_count += stats.recv_count;
+            }
+        }
+        return merged;
+    }
+
+    void reset() {
+        std::scoped_lock lock(mutex);
+        accumulators.clear();
+    }
+
+    std::mutex mutex;
+    std::vector<std::shared_ptr<TrafficMap>> accumulators;
 };
 
 struct PendingDoorbell {
@@ -161,10 +208,12 @@ struct ProfilerCtx {
 
     // ================================================
     // QP traffic statistics for communication graph
-    std::mutex m_qp_traffic_mutex;
-    std::unordered_map<uint32_t /*qpn*/, QpTrafficStats> m_qp_traffic;
+    // TODO: make this more generic. It shouldn't be just ibv
+    ThreadTrafficRegistry m_traffic_registry;
 
     // QP connection info: src_qpn -> {dest_qpn, context_addr, node_guid}
+    // Low-frequency updates (only during QP setup), separate mutex is fine
+    std::mutex m_qp_connections_mutex;
     struct QpConnectionEntry {
         uint64_t context_addr;
         uint32_t dest_qpn;
@@ -188,20 +237,6 @@ struct ProfilerCtx {
 
     // Emit CommunicationSummary events - must be called before EventRecorder destruction
     void emit_communication_summaries();
-
-    /*
-     * // Background processors for offloading hot-path work
-     * // Ended up having too much overhead for these but might be useful in the future
-     * std::unique_ptr<Profiler::BackgroundProcessor<SendWrSnapshot>> m_send_wr_processor;
-     * std::unique_ptr<Profiler::BackgroundProcessor<RecvWrSnapshot>> m_recv_wr_processor;
-     * std::unique_ptr<Profiler::BackgroundProcessor<CompletionSnapshot>> m_completion_processor;
-     *
-     * void init_ibv_processors();
-     * void shutdown_ibv_processors();
-     *
-     * // post-fork: detach dead consumer threads
-     * void abandon_ibv_processors();
-     */
 #endif // SIGMA_HAS_RDMA_CORE
 
     // See Note[late_load]
@@ -270,6 +305,7 @@ struct ProfilerCtx {
     void load_mlx5dv(const std::filesystem::path& shim_dir);
 #if SIGMA_HAS_CUDA
     void load_doorbell_hijack();
+    void flush_pending_doorbells();
 #endif
 #endif
 

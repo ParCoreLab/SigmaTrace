@@ -117,6 +117,26 @@ namespace hook {
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__) noexcept;                                                            \
         using RetType = ret_type;                                                                                      \
+        using RunPredicateFn = bool (*)(ret_type, __VA_ARGS__);                                                        \
+        static constexpr RunPredicateFn predicate_fn = nullptr;                                                        \
+        using PreCallback = void (*)(__VA_ARGS__, const Timestamp);                                                    \
+        using PostCallback = void (*)(ret_type, __VA_ARGS__, const Timestamp, const Timestamp);                        \
+        static constexpr hook::HookType type = hook::HookType::Preload;                                                \
+        static constexpr const char* name = #hook_name;                                                                \
+        static constexpr const char* symbol_name = sym_name;                                                           \
+        static constexpr auto arg_names = VA_ARGS_TO_STRING_TUPLE(__VA_ARGS__);                                        \
+    }
+
+#define DEFINE_PRELOAD_HOOK_PRED(ns, hook_name, sym_name, hook_pred_fn, ret_type, ...)                                 \
+    namespace ns {                                                                                                     \
+        struct hook_name##_tag {};                                                                                     \
+    }                                                                                                                  \
+    template<>                                                                                                         \
+    struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
+        using FuncPtr = ret_type (*)(__VA_ARGS__) noexcept;                                                            \
+        using RetType = ret_type;                                                                                      \
+        using RunPredicateFn = bool (*)(ret_type, __VA_ARGS__);                                                        \
+        static constexpr RunPredicateFn predicate_fn = hook_pred_fn;                                                   \
         using PreCallback = void (*)(__VA_ARGS__, const Timestamp);                                                    \
         using PostCallback = void (*)(ret_type, __VA_ARGS__, const Timestamp, const Timestamp);                        \
         static constexpr hook::HookType type = hook::HookType::Preload;                                                \
@@ -143,6 +163,26 @@ namespace hook {
     struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
         using FuncPtr = ret_type (*)(__VA_ARGS__) /* noexcept */;                                                      \
         using RetType = ret_type;                                                                                      \
+        using RunPredicateFn = bool (*)(ret_type, __VA_ARGS__);                                                        \
+        static constexpr RunPredicateFn predicate_fn = nullptr;                                                        \
+        using PreCallback = void (*)(__VA_ARGS__, const Timestamp);                                                    \
+        using PostCallback = void (*)(ret_type, __VA_ARGS__, const Timestamp, const Timestamp);                        \
+        static constexpr hook::HookType type = hook::HookType::ObjectOps;                                              \
+        static constexpr const char* name = #hook_name;                                                                \
+        static constexpr const char* symbol_name = sym_name;                                                           \
+        static constexpr auto arg_names = VA_ARGS_TO_STRING_TUPLE(__VA_ARGS__);                                        \
+    }
+
+#define DEFINE_OBJECT_OPS_HOOK_PRED(ns, hook_name, sym_name, hook_pred_fn, ret_type, ...)                              \
+    namespace ns {                                                                                                     \
+        struct hook_name##_tag {};                                                                                     \
+    }                                                                                                                  \
+    template<>                                                                                                         \
+    struct hook::HookTrait<ns::hook_name##_tag> {                                                                      \
+        using FuncPtr = ret_type (*)(__VA_ARGS__) /* noexcept */;                                                      \
+        using RetType = ret_type;                                                                                      \
+        using RunPredicateFn = bool (*)(ret_type, __VA_ARGS__);                                                        \
+        static constexpr RunPredicateFn predicate_fn = hook_pred_fn;                                                   \
         using PreCallback = void (*)(__VA_ARGS__, const Timestamp);                                                    \
         using PostCallback = void (*)(ret_type, __VA_ARGS__, const Timestamp, const Timestamp);                        \
         static constexpr hook::HookType type = hook::HookType::ObjectOps;                                              \

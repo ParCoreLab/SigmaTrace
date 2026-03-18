@@ -43,5 +43,13 @@ DEFINE_PRELOAD_HOOK(ucx, ucp_mem_unmap, "ucp_mem_unmap", ucs_status_t, ucp_conte
 // ================================================================
 // Progress hook
 // ================================================================
-DEFINE_PRELOAD_HOOK(ucx, ucp_worker_progress, "ucp_worker_progress", unsigned, ucp_worker_h);
+// DEFINE_PRELOAD_HOOK(ucx, ucp_worker_progress, "ucp_worker_progress", unsigned, ucp_worker_h);
+DEFINE_PRELOAD_HOOK_PRED(ucx, ucp_worker_progress, "ucp_worker_progress", [](unsigned num_progressed, ucp_worker_h) {
+    // Most polls won't have anything
+    if (num_progressed == 1) [[likely]] {
+        return false;
+    }
+
+    return true;
+}, unsigned, ucp_worker_h);
 // // clang-format on

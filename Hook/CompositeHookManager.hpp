@@ -252,12 +252,8 @@ namespace hook {
                 return real(std::forward<Args>(args)...);
             }
 
-            // Start timestamp as soon as the function hook is invoked
-            auto ts_start = mgr.m_timestamp.now();
-
-            mgr.template invoke_all_pre<Tag>(args..., ts_start);
-
             // First time here will always be null
+            // or will it?
             auto& real = mgr.template real_func<Tag>();
 
             // Lazy resolution: the real library may not have been loaded at registration time
@@ -270,8 +266,19 @@ namespace hook {
                 }
             }
 
+            auto ts_start = mgr.m_timestamp.now();
+
+            mgr.template invoke_all_pre<Tag>(args..., ts_start);
+
             // if constexpr (std::is_void_v<typename HookTrait<Tag>::RetType>) { ... }
             auto ret = real(args...);
+
+            // Skip post hooks if the predicate is false
+            if constexpr (HookTrait<Tag>::predicate_fn) {
+                if (!HookTrait<Tag>::predicate_fn(ret, args...)) {
+                    return ret;
+                }
+            }
 
             // End timestamp
             auto ts_end = mgr.m_timestamp.now();
@@ -339,24 +346,22 @@ namespace hook {
             // TODO: don't get timestamp if no hooks registered
             auto ts_start = mgr.m_timestamp.now();
 
-            // Get context from pre-allocated slot (no runtime lookup!)
+            // Get context from pre-allocated slot
             Context* ctx = ContextSlots::slots[CtxSlotIndex];
-
-            if (!ctx) {
-                // Fallback - shouldn't happen in normal operation
-                // TODO: maybe the callbacks should get an std::optional or std::expected
-                if constexpr (std::is_void_v<typename HookTrait<Tag>::RetType>) {
-                    return;
-                } else {
-                    return typename HookTrait<Tag>::RetType{};
-                }
-            }
+            assert(ctx && "ctx is null. This can't happen");
 
             // Pre-hooks with context
             mgr.template invoke_pre_with_context<Tag>(ctx, args..., ts_start);
 
             const auto& original = ctx->template original<Tag>();
             decltype(auto) ret = original(args...);
+
+            // Skip post hooks if the predicate is false
+            if constexpr (HookTrait<Tag>::predicate_fn) {
+                if (!HookTrait<Tag>::predicate_fn(ret, args...)) {
+                    return ret;
+                }
+            }
 
             // End timestamp
             auto ts_end = mgr.m_timestamp.now();
