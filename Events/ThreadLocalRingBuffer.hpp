@@ -28,7 +28,7 @@ namespace Events {
 
     public:
         explicit ThreadLocalRingBuffer(auto&& header, const std::string& file_path) :
-            m_current(0), m_file_buffer(std::forward<decltype(header)>(header), file_path) {}
+            m_file_buffer(std::forward<decltype(header)>(header), file_path) {}
 
         // Non-copyable, TODO: maybe movable
         ThreadLocalRingBuffer(const ThreadLocalRingBuffer&) = delete;
@@ -82,10 +82,18 @@ namespace Events {
             return SlotPtrWrapper{this, get_slot()};
         }
 
-        // TODO: overflow?
         void commit() noexcept {
-            m_current++;
             m_file_buffer.commit();
+        }
+
+        // Reserve space for N events. Single bounds check.
+        [[nodiscard]] uint8_t* reserve(std::size_t count) {
+            return m_file_buffer.reserve(count);
+        }
+
+        // Commit N events at once after writing them sequentially.
+        void commit_n(std::size_t count) {
+            m_file_buffer.commit_n(count);
         }
 
         void flush() {
@@ -96,11 +104,6 @@ namespace Events {
             m_file_buffer.finalize();
         }
 
-        auto current_idx() const noexcept {
-            return m_current;
-        }
-
-        // static constexpr auto size() noexcept { return Size; }
         static constexpr auto capacity() noexcept {
             return Capacity;
         }
@@ -114,9 +117,8 @@ namespace Events {
         // TODO: is alignas necessary?
         alignas(CACHE_LINE_SIZE) uint64_t m_current;
 
-        // Mmap: zero syscalls during recording, writes go to page cache via memory stores
-        // FileIO::StreamBackedBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
-        FileIO::MmapBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+        FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+        // FileIO::BackgroundStreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
     };
 
     // Type-safe wrapper for specific event types
@@ -156,36 +158,36 @@ namespace Events {
 
         // TODO: switch to span
         EventT* get_slot(const Timestamp ts_start, const Timestamp ts_end) noexcept {
-            if (m_buffer.current_idx() >= m_buffer.capacity()) {
-                m_dropped_count++;
-            }
-
             auto* slot = m_buffer.get_slot();
 
             // Write header
             auto* header = reinterpret_cast<EventHeader*>(slot);
+            header->timestamp_start = ts_start;
+            header->timestamp_end = ts_end;
 
-            // EventHeader has defaults. We construct with them and copy
-            *header = EventHeader(ts_start, ts_end);
-
-            // Write event data after header
-            // TODO: is this ok?
-            // TODO: maybe we could just move
-            auto* data = reinterpret_cast<EventT*>(static_cast<uint8_t*>(slot) + sizeof(EventHeader));
-
-            return data;
+            return reinterpret_cast<EventT*>(slot + sizeof(EventHeader));
         }
 
         TypedSlotPtrWrapper get_wrapped_slot(const Timestamp ts_start, const Timestamp ts_end) noexcept {
             TypedSlotPtrWrapper wrapped_slot{m_buffer.get_wrapped_slot()};
 
-            // Write header
+            // Write header fields directly (avoids temporary + copy)
             auto* header = wrapped_slot.get_header();
-
-            // EventHeader has defaults. We construct with them and copy
-            *header = EventHeader(ts_start, ts_end);
+            header->timestamp_start = ts_start;
+            header->timestamp_end = ts_end;
 
             return wrapped_slot;
+        }
+
+        // Reserve space for N events. Single bounds check for the batch.
+        // Returns pointer to first slot. Caller writes events sequentially
+        // at offsets of ElementSize, then calls commit_n(count).
+        uint8_t* reserve(std::size_t count) {
+            return m_buffer.reserve(count);
+        }
+
+        void commit_n(std::size_t count) {
+            m_buffer.commit_n(count);
         }
 
         // Record an event with provided timestamp
@@ -206,11 +208,6 @@ namespace Events {
             m_buffer.finalize();
         }
 
-        auto dropped_count() const noexcept {
-            return m_dropped_count;
-        }
-
-        // static constexpr auto size() noexcept { return Buffer::size(); }
         static constexpr auto capacity() noexcept {
             return Capacity;
         }
@@ -219,7 +216,6 @@ namespace Events {
         EventFileHeader m_event_header;
 
         Buffer m_buffer;
-        size_t m_dropped_count{0};
     };
 
 } // namespace Events
