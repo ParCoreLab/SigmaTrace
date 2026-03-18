@@ -40,6 +40,7 @@ include(Protobuf)
 include(Perfetto)
 include(UCX)
 include(Libfabric)
+include(Liburing)
 
 # ================================================================
 # Load feature flags that are enabled by this point
@@ -133,5 +134,6 @@ message(STATUS "  NVSHMEM:      ${SIGMA_HAS_NVSHMEM}")
 message(STATUS "  NVBit:        ${SIGMA_HAS_NVBIT}")
 message(STATUS "  UCX:          ${SIGMA_HAS_UCX}")
 message(STATUS "  libfabric:    ${SIGMA_HAS_LIBFABRIC}")
+message(STATUS "  liburing:     ${SIGMA_HAS_LIBURING}")
 message(STATUS "====================================")
 message(STATUS "")

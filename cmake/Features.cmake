@@ -14,6 +14,10 @@ endmacro()
 
 # Enables a feature
 macro(Sigma_enable_feature NAME)
+    if ("SIGMA_HAS_${NAME}" IN_LIST SIGMA_FEATURE_LIST)
+        message(FATAL_ERROR "SIGMA_HAS_${NAME} not a known feature. Declare it with Sigma_add_feature first")
+    endif ()
+
     message(STATUS "[Sigma] Enabled feature ${NAME}")
     set(SIGMA_HAS_${NAME} ON CACHE INTERNAL "" FORCE)
 endmacro()
@@ -48,5 +52,6 @@ Sigma_add_feature(NVSHMEM)
 Sigma_add_feature(NVBIT)
 Sigma_add_feature(UCX)
 Sigma_add_feature(LIBFABRIC)
+Sigma_add_feature(LIBURING)
 # ================================================================
 

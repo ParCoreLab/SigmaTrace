@@ -6,6 +6,9 @@
 #include "EventStorage.hpp"
 #include "EventTrait.hpp"
 #include "FileIO/File.hpp"
+#if SIGMA_HAS_LIBURING
+#include "FileIO/FileUring.hpp"
+#endif
 
 namespace Events {
 
@@ -109,13 +112,14 @@ namespace Events {
         }
 
     private:
-        // Cache-line aligned to avoid false sharing between producer and consumer
-        // alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> m_head;
-        // alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> m_tail;
-        // uint8_t *m_buffer;
-
-        // TODO: is alignas necessary?
-        alignas(CACHE_LINE_SIZE) uint64_t m_current;
+        /*
+        #if SIGMA_HAS_LIBURING
+                 FileIO::UringBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+        #else
+                // FileIO::MmapBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+                FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+        #endif
+        */
 
         FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
         // FileIO::BackgroundStreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;

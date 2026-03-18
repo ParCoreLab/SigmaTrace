@@ -22,4 +22,8 @@ target_include_directories(EventsLib INTERFACE
 
 target_link_libraries(EventsLib INTERFACE SigmaHelpers)
 
+if (SIGMA_HAS_LIBURING)
+    target_link_libraries(EventsLib INTERFACE liburing)
+endif ()
+
 #add_subdirectory(Tests)
