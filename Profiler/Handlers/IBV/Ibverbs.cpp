@@ -9,7 +9,7 @@
 
 #include "IBVCommon.hpp"
 
-void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
+void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir, const Profiler::ProfilerArgs& args) noexcept {
     m_ibv_profiler = load_provider<ibv::Profiler>(shim_dir / Profiler::SIGMA_IBVERBS_PROVIDER_PATH);
 
     m_ibv_profiler->register_post<ibv::open_device_tag>(
@@ -127,31 +127,31 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
     m_ibv_profiler->register_post<ibv::post_send_tag>(
             [](int, ibv_qp* qp, ibv_send_wr* wr, ibv_send_wr**, const auto ts_start, const auto ts_end) {
         const auto& profiler = instance();
+        static const auto trace_mode = profiler.m_args.TraceMode;
+
         const auto context_addr = PtrToUint(qp->context);
 
-        Profiler::Events::IbvPostSend post_send_event{
-                .context_addr = context_addr,
-                .num_wrs = 0,
-                .qp_num = qp->qp_num,
-        };
-
+        uint32_t num_wrs = 0;
         uint64_t total_bytes_sent = 0;
         for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
-            post_send_event.num_wrs += 1;
-            using Profiler::Events::IbvPostSendWr;
-            const IbvPostSendWr wr_event{
-                    .context_addr = context_addr,
-                    .wr_id = wr_it->wr_id,
-                    .qp_num = qp->qp_num,
-                    .num_sge = wr_it->num_sge,
-                    .send_flags = wr_it->send_flags,
-                    .opcode = static_cast<decltype(IbvPostSendWr::opcode)>(wr_it->opcode),
-            };
-            profiler.m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
+            num_wrs += 1;
 
             // Sum scatter-gather lengths for traffic accounting
             for (auto sg_idx = 0; sg_idx < wr_it->num_sge; sg_idx++) {
                 total_bytes_sent += wr_it->sg_list[sg_idx].length;
+            }
+
+            if (trace_mode == Profiler::ProfilerTraceMode::Full) {
+                using Profiler::Events::IbvPostSendWr;
+                const IbvPostSendWr wr_event{
+                        .context_addr = context_addr,
+                        .wr_id = wr_it->wr_id,
+                        .qp_num = qp->qp_num,
+                        .num_sge = wr_it->num_sge,
+                        .send_flags = wr_it->send_flags,
+                        .opcode = static_cast<decltype(IbvPostSendWr::opcode)>(wr_it->opcode),
+                };
+                profiler.m_event_recorder->Record(wr_event, ts_start + 1, ts_end - 1);
             }
         }
 
@@ -162,34 +162,50 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
             stats.send_count++;
         }
 
-        profiler.m_event_recorder->Record(post_send_event, ts_start, ts_end);
+        // Simple and Full record this
+        if (trace_mode >= Profiler::ProfilerTraceMode::Simple) {
+            Profiler::Events::IbvPostSend post_send_event{
+                    .context_addr = context_addr,
+                    .num_wrs = num_wrs,
+                    .qp_num = qp->qp_num,
+            };
+
+            profiler.m_event_recorder->Record(post_send_event, ts_start, ts_end);
+        }
     });
 
-    m_ibv_profiler->register_post<ibv::post_recv_tag>(
-            [](int, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr**, const auto ts_start, const auto ts_end) {
-        const auto& profiler = instance();
-        const auto context_addr = PtrToUint(qp->context);
+    // No aggregate here, only simple and above
+    if (args.TraceMode >= Profiler::ProfilerTraceMode::Simple) {
+        m_ibv_profiler->register_post<ibv::post_recv_tag>(
+                [](int, ibv_qp* qp, ibv_recv_wr* wr, ibv_recv_wr**, const auto ts_start, const auto ts_end) {
+            const auto& profiler = instance();
+            static const auto trace_mode = profiler.m_args.TraceMode;
 
-        uint64_t num_wrs = 0;
-        for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
-            num_wrs++;
+            const auto context_addr = PtrToUint(qp->context);
 
-            const Profiler::Events::IbvPostRecvWr recv_wr_event{
+            uint64_t num_wrs = 0;
+            for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
+                num_wrs++;
+
+                if (trace_mode >= Profiler::ProfilerTraceMode::Simple) {
+                    const Profiler::Events::IbvPostRecvWr recv_wr_event{
+                            .context_addr = context_addr,
+                            .qp_num = qp->qp_num,
+                            .wr_id = wr_it->wr_id,
+                            .num_sge = wr_it->num_sge,
+                    };
+                    profiler.m_event_recorder->Record(recv_wr_event, ts_start + 1, ts_end - 1);
+                }
+            }
+
+            const Profiler::Events::IbvPostRecv recv_event{
                     .context_addr = context_addr,
                     .qp_num = qp->qp_num,
-                    .wr_id = wr_it->wr_id,
-                    .num_sge = wr_it->num_sge,
+                    .num_wrs = num_wrs,
             };
-            profiler.m_event_recorder->Record(recv_wr_event, ts_start + 1, ts_end - 1);
-        }
-
-        const Profiler::Events::IbvPostRecv recv_event{
-                .context_addr = context_addr,
-                .qp_num = qp->qp_num,
-                .num_wrs = num_wrs,
-        };
-        profiler.m_event_recorder->Record(recv_event, ts_start, ts_end);
-    });
+            profiler.m_event_recorder->Record(recv_event, ts_start, ts_end);
+        });
+    }
 
     m_ibv_profiler->register_post<ibv::poll_cq_tag>(
             [](int out_ret, ibv_cq* cq, int num_entries, ibv_wc* wc, const auto ts_start, const auto ts_end) {
@@ -207,27 +223,28 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir) noexcept {
         //     m_event_recorder->Record(poll_cq_event, ts_start, ts_end);
         // }
 
-        // Most polls won't have anything
-        if (out_ret < 1) [[likely]] {
-            return;
-        }
+        static const auto& profiler = instance();
+        static const auto trace_mode = profiler.m_args.TraceMode;
 
-        const auto& profiler = instance();
         const auto context_addr = PtrToUint(cq->context);
 
         for (auto i = 0; i < out_ret; i++) {
             const auto& wc_entry = wc[i];
 
-            using Profiler::Events::IbvCompletion;
-            const IbvCompletion completion_event{
-                    .context_addr = context_addr,
-                    .wr_id = wc_entry.wr_id,
-                    .qp_num = wc_entry.qp_num,
-                    .opcode = static_cast<decltype(IbvCompletion::opcode)>(wc_entry.opcode),
-                    .status = static_cast<decltype(IbvCompletion::status)>(wc_entry.status),
-                    .byte_len = wc_entry.byte_len,
-            };
-            profiler.m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
+            // TODO: might need further optimizations...
+            // This is a const check
+            if (trace_mode == Profiler::ProfilerTraceMode::Full) {
+                using Profiler::Events::IbvCompletion;
+                const IbvCompletion completion_event{
+                        .context_addr = context_addr,
+                        .wr_id = wc_entry.wr_id,
+                        .qp_num = wc_entry.qp_num,
+                        .opcode = static_cast<decltype(IbvCompletion::opcode)>(wc_entry.opcode),
+                        .status = static_cast<decltype(IbvCompletion::status)>(wc_entry.status),
+                        .byte_len = wc_entry.byte_len,
+                };
+                profiler.m_event_recorder->Record(completion_event, ts_start + 1, ts_end - 1);
+            }
 
             // Recv traffic accumulation
             const auto is_recv = static_cast<bool>(wc_entry.opcode & IBV_WC_RECV);

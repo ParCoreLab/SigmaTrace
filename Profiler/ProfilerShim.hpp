@@ -301,7 +301,7 @@ struct ProfilerCtx {
 
     // Handlers and Providers
 #if SIGMA_HAS_RDMA_CORE
-    void load_ibv(const std::filesystem::path& shim_dir) noexcept;
+    void load_ibv(const std::filesystem::path& shim_dir, const Profiler::ProfilerArgs& args) noexcept;
     void load_mlx5dv(const std::filesystem::path& shim_dir);
 #if SIGMA_HAS_CUDA
     void load_doorbell_hijack();
@@ -316,7 +316,7 @@ struct ProfilerCtx {
 #if SIGMA_HAS_UCX
     // Thread-local correlation: set during UCX operations for cross-layer mapping
     // TODO: not really used properly right now
-    void load_ucx(const std::filesystem::path& shim_dir);
+    void load_ucx(const std::filesystem::path& shim_dir, const Profiler::ProfilerArgs& args);
 #endif
 
 #if SIGMA_HAS_LIBFABRIC

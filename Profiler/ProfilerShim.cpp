@@ -7,13 +7,11 @@
 #include "Dlsym.hpp"
 
 #include "EventRecorder.hpp"
-
 #include "Events/MetaEvents.hpp"
 #include "Helpers/TscCalibration.hpp"
 
 #include "Args/ProfilerArgs.hpp"
-
-#include "ProfilerShim.hpp"
+#include "ProfilerFeatures.hpp"
 
 #if SIGMA_HAS_CUDA
 #include "ExportTableOverwrite.hpp"
@@ -22,6 +20,8 @@
 #if SIGMA_HAS_RDMA_CORE
 #include "Events/IbvEvents.hpp"
 #endif
+
+#include "ProfilerShim.hpp"
 
 // Global Profiler instance
 ProfilerCtx* g_ProfilerInstance;
@@ -231,7 +231,7 @@ ProfilerCtx::ProfilerCtx() {
 
 #if SIGMA_HAS_RDMA_CORE
     if (m_args.LoadIbtrace) {
-        load_ibv(m_args.ShimDirectory);
+        load_ibv(m_args.ShimDirectory, m_args);
     }
 
     if (m_args.LoadMlx5dv) {
@@ -253,7 +253,7 @@ ProfilerCtx::ProfilerCtx() {
 
 #if SIGMA_HAS_UCX
     if (m_args.LoadUcx) {
-        load_ucx(m_args.ShimDirectory);
+        load_ucx(m_args.ShimDirectory, m_args);
     }
 #endif
 
@@ -269,7 +269,7 @@ ProfilerCtx::ProfilerCtx() {
  * We selectively move some things and destroy the rest
  */
 ProfilerCtx::ProfilerCtx([[maybe_unused]] ProfilerCtx&& o) noexcept {
-    m_args = Profiler::ProfilerArgs::from_env();
+    m_args = std::move(o.m_args);
     m_event_recorder_config = {};
 
 #if SIGMA_HAS_RDMA_CORE

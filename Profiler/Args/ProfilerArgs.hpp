@@ -2,19 +2,63 @@
 
 #include <concepts>
 #include <filesystem>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
-#include <vector>
-
-#include "../ProfilerFeatures.hpp"
 
 // Very ugly
 #define INTERNAL_PARSE_ENV_FIELD(field_name) .field_name = parse_env<decltype(field_name)>(#field_name)
 #define INTERNAL_CONVERT_FIELD_ENV(field_name) make_env_entry(#field_name, field_name)
 
 namespace Profiler {
+    enum class ProfilerTraceMode {
+        Error = 0,
+        Aggregate,
+        Simple,
+        Full,
+    };
+
+    inline std::istream& operator>>(std::istream& is, ProfilerTraceMode& target) {
+        std::string value;
+        is >> value;
+        if (is.fail()) {
+            is.setstate(std::ios::failbit);
+            return is;
+        }
+
+        if (value == "simple" || value == "default") {
+            target = ProfilerTraceMode::Simple;
+        } else if (value == "aggregate") {
+            target = ProfilerTraceMode::Aggregate;
+        } else if (value == "full") {
+            target = ProfilerTraceMode::Full;
+        } else {
+            is.setstate(std::ios::failbit);
+        }
+        return is;
+    }
+
+    inline std::ostream& operator<<(std::ostream& os, const ProfilerTraceMode& mode) {
+        switch (mode) {
+            case ProfilerTraceMode::Simple:
+                os << "simple";
+                break;
+            case ProfilerTraceMode::Aggregate:
+                os << "aggregate";
+                break;
+            case ProfilerTraceMode::Full:
+                os << "full";
+                break;
+            default:
+                os << "error";
+                break;
+        }
+        return os;
+    }
+
     struct ProfilerArgs {
         static constexpr int CheckVal{123};
         static constexpr std::string_view EnvPrefix{"SIGMA_ENV_"};
@@ -35,9 +79,11 @@ namespace Profiler {
         std::string OutputDirectory;
         bool OutputOverwrite;
 
+        ProfilerTraceMode TraceMode;
+
         int Check{CheckVal};
 
-        [[nodiscard]] std::array<std::string, 10> to_env() const {
+        [[nodiscard]] std::array<std::string, 11> to_env() const {
             return {
                     INTERNAL_CONVERT_FIELD_ENV(ShimDirectory),        //
                     INTERNAL_CONVERT_FIELD_ENV(LoadIbtrace),          //
@@ -48,7 +94,9 @@ namespace Profiler {
                     INTERNAL_CONVERT_FIELD_ENV(LoadUcx),              //
                     INTERNAL_CONVERT_FIELD_ENV(OutputDirectory),      //
                     INTERNAL_CONVERT_FIELD_ENV(OutputOverwrite),      //
+                    INTERNAL_CONVERT_FIELD_ENV(TraceMode),            //
                     INTERNAL_CONVERT_FIELD_ENV(Check),                //
+
             };
         }
 
@@ -64,11 +112,25 @@ namespace Profiler {
                     INTERNAL_PARSE_ENV_FIELD(EnableDoorbellHijack), //
                     INTERNAL_PARSE_ENV_FIELD(OutputDirectory),      //
                     INTERNAL_PARSE_ENV_FIELD(OutputOverwrite),      //
+                    INTERNAL_PARSE_ENV_FIELD(TraceMode),            //
                     INTERNAL_PARSE_ENV_FIELD(Check),                //
             };
         }
 
     private:
+        [[nodiscard]] static std::string value_to_string(const ProfilerTraceMode& mode) {
+            switch (mode) {
+                case ProfilerTraceMode::Simple:
+                    return "simple";
+                case ProfilerTraceMode::Aggregate:
+                    return "aggregate";
+                case ProfilerTraceMode::Full:
+                    return "full";
+                default:
+                    return "error";
+            }
+        }
+
         [[nodiscard]] static std::string value_to_string(std::string value) {
             return value;
         }
@@ -130,6 +192,14 @@ namespace Profiler {
                 }
             } else if constexpr (std::constructible_from<std::string, T>) {
                 return val_str_unwrapped;
+            } else if constexpr (requires(std::istream& is, T v) { is >> v; }) {
+                T parsed_val{};
+                std::istringstream iss{val_str_unwrapped};
+                if (!(iss >> parsed_val)) {
+                    throw std::runtime_error("Invalid value from " + env_name + ": " + std::string{val});
+                }
+
+                return parsed_val;
             } else {
                 // Failsafe if the class has unsupported types
                 // DR on some compilers (<= GCC 12)

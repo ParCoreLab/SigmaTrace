@@ -40,48 +40,93 @@ namespace Profiler {
         }
 
         // Feature is enabled, return whatever was parsed
+
+        // If this is set, providers are disabled by default
+        if (vm["load-none"].as<bool>()) {
+            if (vm[flag].defaulted()) {
+                return false;
+            }
+        }
+
         return vm[flag].as<bool>();
+    }
+
+    inline void validate(boost::any& v, const std::vector<std::string>& values, ProfilerTraceMode*, int) {
+        po::validators::check_first_occurrence(v);
+        const std::string& s = po::validators::get_single_string(values);
+
+        if (s.empty() || s == "simple") {
+            v = ProfilerTraceMode::Simple;
+        } else if (s == "aggregate") {
+            v = ProfilerTraceMode::Aggregate;
+        } else if (s == "full") {
+            v = ProfilerTraceMode::Full;
+        } else {
+            throw po::validation_error(po::validation_error::invalid_option_value);
+        }
     }
 
     inline std::pair<ProfilerParseResult, ProfilerParsedArgs> parse_args(int argc, char* argv[]) {
         po::options_description general("General options");
         general.add_options()("help,h", "Print this help message and exit");
 
-        // clang-format off
-        // Mention if the feature flag is off
+        // ================================================================
+        // Provider options
+        // TODO: Mention if the feature flag is off
         po::options_description providers("Provider options");
+        // clang-format off
         providers.add_options()
+        ("load-none", po::bool_switch()->default_value(false), "Load no trace providers by default (default: false)")
         ("load-ibtrace", po::value<bool>()->default_value(true)->implicit_value(true), "Load the ibverbs trace provider [RDMA_CORE] (default: true)")
         ("load-mlx5dv", po::value<bool>()->default_value(true)->implicit_value(true), "Load the mlx5dv trace provider [RDMA_CORE] (default: true)")
-        ("enable-doorbell-hijack", po::bool_switch()->default_value(false), "Enable doorbell hijacking [RDMA_CORE] (default: false)")
         ("load-cupti", po::value<bool>()->default_value(true)->implicit_value(true), "Load the CUPTI trace provider [CUDA] (default: true)")
         ("load-libfabric", po::value<bool>()->default_value(true)->implicit_value(true), "Load the libfabric trace provider [LIBFABRIC] (default: true)")
-        ("load-ucx", po::value<bool>()->default_value(true)->implicit_value(true), "Load the UCX trace provider [UCX] (default: true)");
+        ("load-ucx", po::value<bool>()->default_value(true)->implicit_value(true), "Load the UCX trace provider [UCX] (default: true)")
+        ("enable-doorbell-hijack", po::bool_switch()->default_value(false), "Enable doorbell hijacking [RDMA_CORE] (default: false)");
         // clang-format on
+        // ================================================================
 
+        // ================================================================
+        po::options_description profiler_trace_control("Profiler trace collection options");
+
+        ProfilerTraceMode profiler_trace_mode;
+        // clang-format off
+        profiler_trace_control.add_options()
+        ("trace-mode", po::value<ProfilerTraceMode>(&profiler_trace_mode)->default_value(ProfilerTraceMode::Simple), "Set Profiler trace mode (simple, aggregate, full)");
+        // clang-format off
+        // ================================================================
+
+        // ================================================================
+        // Output options
+        po::options_description opt_trace("Profiler trace output options");
         // For default values
         const Events::RuntimeConfig events_config{};
         // clang-format off
-        po::options_description opt_trace("Profiler trace options");
         opt_trace.add_options()
         ("output-dir,o", po::value<std::string>()->default_value(events_config.OutputDirectory), "Directory where traces will be recorded")
-        ("output-overwrite,f", po::bool_switch()->default_value(false), "Overwrite --output-dir if exists. Useful for multi-process schenarioasdaa");
+        ("output-overwrite,f", po::bool_switch()->default_value(false), "Overwrite --output-dir if exists. Useful for multi-process scenarios");
         // clang-format on
+        // ================================================================
 
+        // ================================================================
+        // Hidden options
         // clang-format off
         po::options_description hidden("Hidden options");
         hidden.add_options()
         ("program", po::value<std::string>(), "Program to run")
         ("program-args", po::value<std::vector<std::string>>(), "Arguments for the program");
         // clang-format on
+        // ================================================================
 
         po::options_description visible("Usage: profiler [options] <program> [program args]\n\nOptions");
         visible.add(general).add(providers);
+        visible.add(general).add(profiler_trace_control);
         visible.add(general).add(opt_trace);
 
         po::options_description all;
         all.add(general);
         all.add(providers);
+        all.add(profiler_trace_control);
         all.add(opt_trace);
         all.add(hidden);
 
@@ -175,6 +220,8 @@ namespace Profiler {
 
         profiler_args.OutputDirectory = vm["output-dir"].as<std::string>();
         profiler_args.OutputOverwrite = vm["output-overwrite"].as<bool>();
+
+        profiler_args.TraceMode = vm["trace-mode"].as<ProfilerTraceMode>();
 
         // Validation
         if (std::filesystem::exists(profiler_args.OutputDirectory)) {

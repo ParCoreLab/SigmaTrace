@@ -6,7 +6,7 @@
 #include "UcxEventSource.hpp"
 
 // ================================================================================================
-void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir) {
+void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler::ProfilerArgs& args) {
     m_ucx_profiler = load_provider<ucx::Profiler>(shim_dir / Profiler::SIGMA_UCX_PROVIDER_PATH);
 
     m_ucx_profiler->register_post<ucx::ucp_init_version_tag>(
@@ -154,19 +154,20 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir) {
         instance().m_event_recorder->Record(event, ts_start, ts_end);
     });
 
-    // TODO: this might spam
-    m_ucx_profiler->register_post<ucx::ucp_worker_progress_tag>(
-            [](unsigned int num_progressed, ucp_worker_h worker, const auto ts_start, const auto ts_end) {
-        if (num_progressed == 0) {
-            return;
-        }
+    if (args.TraceMode == Profiler::ProfilerTraceMode::Full) {
+        m_ucx_profiler->register_post<ucx::ucp_worker_progress_tag>(
+                [](unsigned int num_progressed, ucp_worker_h worker, const auto ts_start, const auto ts_end) {
+            if (num_progressed == 0) {
+                return;
+            }
 
-        const Profiler::Events::UcpWorkerProgress event{
-                .worker_addr = reinterpret_cast<uint64_t>(worker),
-                .num_progressed = num_progressed,
-        };
-        instance().m_event_recorder->Record(event, ts_start, ts_end);
-    });
+            const Profiler::Events::UcpWorkerProgress event{
+                    .worker_addr = reinterpret_cast<uint64_t>(worker),
+                    .num_progressed = num_progressed,
+            };
+            instance().m_event_recorder->Record(event, ts_start, ts_end);
+        });
+    }
 
     std::cout << "[Profiler] Loaded UCX Trace" << std::endl;
 }
