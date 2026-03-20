@@ -57,6 +57,14 @@ namespace Events {
             return event_thread_buffer.get_wrapped_slot(ts_start, ts_end);
         }
 
+        // Get a reference to the thread-local buffer for a given event type.
+        // Useful for hoisting the get_or_create lookup outside of tight loops.
+        template<HasEventTrait EventT, size_t Capacity = DefaultCapacity>
+        auto& GetBuffer() noexcept {
+            using BareT = BareType_t<EventT>;
+            return ThreadBufferRegistry::get_or_create<BareT, Capacity>(m_runtime_config);
+        }
+
         // Convenience: Record with in-place construction
         // Usage: recorder.emplace<MyEvent>(arg1, arg2);
         template<HasEventTrait EventT, typename... Args>

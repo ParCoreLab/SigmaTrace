@@ -9,7 +9,8 @@
 #include "CUDAEventSource.hpp"
 #include "Helpers/CudaHelpers.hpp"
 
-static constexpr size_t BUF_SIZE = 8 * 1024;
+// Something like 8MB
+static constexpr size_t BUF_SIZE = 8 * 1024 * 1024;
 static constexpr size_t ALIGN_SIZE = 8;
 
 #define ALIGN_BUFFER(buffer, align)                                                                                    \
