@@ -86,6 +86,7 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     # Profiler modules
     target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerMemoryRepeater)
     # target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerGPUMemoryRepeater)
+    target_link_libraries(${ProfilerShimTarget} PRIVATE ProfilerRankDetector)
 
     if (SIGMA_HAS_CUDA)
         target_link_libraries(${ProfilerShimTarget} INTERFACE CUDATrace)

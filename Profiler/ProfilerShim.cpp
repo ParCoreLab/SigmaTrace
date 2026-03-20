@@ -21,7 +21,7 @@
 #include "Events/IbvEvents.hpp"
 #endif
 
-#include "Modules/RankDetector/RankDetection.hpp"
+#include "Modules/RankDetector/RankDetector.hpp"
 
 #include "ProfilerShim.hpp"
 

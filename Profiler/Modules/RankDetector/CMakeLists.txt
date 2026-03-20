@@ -1,0 +1,2 @@
+add_library(ProfilerRankDetector INTERFACE)
+target_include_directories(ProfilerRankDetector INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
