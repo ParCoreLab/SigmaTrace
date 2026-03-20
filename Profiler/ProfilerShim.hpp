@@ -56,37 +56,57 @@ struct QpTrafficStats {
     uint64_t bytes_recv{0};
     uint32_t send_count{0};
     uint32_t recv_count{0};
+
+    QpTrafficStats& operator+=(const QpTrafficStats& o) {
+        bytes_sent += o.bytes_sent;
+        bytes_recv += o.bytes_recv;
+        send_count += o.send_count;
+        recv_count += o.recv_count;
+        return *this;
+    }
+};
+
+struct EndpointTrafficStats {
+    uint64_t bytes_sent{0};
+    uint64_t bytes_recv{0};
+    uint32_t send_count{0};
+    uint32_t recv_count{0};
+
+    EndpointTrafficStats& operator+=(const EndpointTrafficStats& o) {
+        bytes_sent += o.bytes_sent;
+        bytes_recv += o.bytes_recv;
+        send_count += o.send_count;
+        recv_count += o.recv_count;
+        return *this;
+    }
 };
 
 // Per-thread traffic accumulators merged at shutdown.
 // The mutex is only taken on thread registration (first access per thread)
-struct ThreadTrafficRegistry {
-    using TrafficMap = std::unordered_map<uint32_t, QpTrafficStats>;
+template<typename Key, typename Stats>
+struct ThreadLocalRegistry {
+    using Map = std::unordered_map<Key, Stats>;
 
-    TrafficMap& get_thread_local() {
-        thread_local TrafficMap* cached = nullptr;
+    Map& get_thread_local() {
+        thread_local Map* cached = nullptr;
         if (cached) [[likely]] {
             return *cached;
         }
 
         // First call on this thread
-        auto map = std::make_shared<TrafficMap>();
+        auto map = std::make_shared<Map>();
         cached = map.get();
         std::scoped_lock lock(mutex);
         accumulators.push_back(std::move(map));
         return *cached;
     }
 
-    TrafficMap merge_all() {
-        TrafficMap merged;
+    Map merge_all() {
+        Map merged;
         std::scoped_lock lock(mutex);
         for (const auto& acc: accumulators) {
-            for (const auto& [qpn, stats]: *acc) {
-                auto& m = merged[qpn];
-                m.bytes_sent += stats.bytes_sent;
-                m.bytes_recv += stats.bytes_recv;
-                m.send_count += stats.send_count;
-                m.recv_count += stats.recv_count;
+            for (const auto& [key, stats]: *acc) {
+                merged[key] += stats;
             }
         }
         return merged;
@@ -98,8 +118,10 @@ struct ThreadTrafficRegistry {
     }
 
     std::mutex mutex;
-    std::vector<std::shared_ptr<TrafficMap>> accumulators;
+    std::vector<std::shared_ptr<Map>> accumulators;
 };
+
+using ThreadTrafficRegistry = ThreadLocalRegistry<uint32_t, QpTrafficStats>;
 
 struct PendingDoorbell {
     uint32_t prod_id;
@@ -173,12 +195,12 @@ struct ProviderHandle {
 };
 
 struct ProfilerCtx {
-    // ================================================
+    // ================================================================
     // GPU memory allocations
     // addr -> { size, gpu_id }
     // TODO: Make the value a proper struct so we don't have to do std::get<whatever->second>
     // std::map<uintptr_t, std::tuple<size_t, int>> m_gpu_allocations{};
-    // ================================================
+    // ================================================================
 
 #if SIGMA_HAS_RDMA_CORE
     std::mutex m_mlx5_umem_mutex;
@@ -197,16 +219,16 @@ struct ProfilerCtx {
     std::mutex m_mlx5_qp_mutex;
     using QpId = uint32_t;
     std::unordered_map<QpId, QpInfo> m_mlx5_qp_info;
-    // ================================================
+    // ================================================================
 
-    // ================================================
+    // ================================================================
     // ibv memory tracking
     // address -> (size, device_id)
     // TODO: put this in a module with more info (memory type, device type) and better (binary) search
     std::map<uint64_t, std::tuple<uint64_t, GpuId_T>> m_ibv_memory_registrations;
-    // ================================================
+    // ================================================================
 
-    // ================================================
+    // ================================================================
     // QP traffic statistics for communication graph
     // TODO: make this more generic. It shouldn't be just ibv
     ThreadTrafficRegistry m_traffic_registry;
@@ -223,9 +245,9 @@ struct ProfilerCtx {
         uint8_t port_num;
     };
     std::unordered_map<uint32_t /*src_qpn*/, QpConnectionEntry> m_qp_connections;
-    // ================================================
+    // ================================================================
 
-    // ================================================
+    // ================================================================
     // Stats
     std::atomic<int> num_nic_accesses{0};
     std::atomic<int> num_nic_doorbell_accesses{0};
@@ -233,11 +255,24 @@ struct ProfilerCtx {
 
     std::atomic<int> doorbell_submitted{0};
     std::atomic<int> doorbell_skipped{0};
-    // ================================================
+    // ================================================================
 
     // Emit CommunicationSummary events - must be called before EventRecorder destruction
     void emit_communication_summaries();
 #endif // SIGMA_HAS_RDMA_CORE
+
+    // ================================================================
+    // UCX/Libfabric endpoint traffic statistics
+#if SIGMA_HAS_UCX
+    ThreadLocalRegistry<uint64_t, EndpointTrafficStats> m_ucx_send_registry; // keyed by ep_addr
+    ThreadLocalRegistry<uint64_t, EndpointTrafficStats> m_ucx_recv_registry; // keyed by worker_addr
+    void emit_ucx_summaries();
+#endif
+#if SIGMA_HAS_LIBFABRIC
+    ThreadLocalRegistry<uint64_t, EndpointTrafficStats> m_fi_traffic_registry; // keyed by ep_addr
+    void emit_fi_summaries();
+#endif
+    // ================================================================
 
     // See Note[late_load]
     // Event module will interface with the filesystem and may print to stderr

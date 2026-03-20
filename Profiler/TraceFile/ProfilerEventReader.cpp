@@ -590,6 +590,9 @@ public:
         // Flush windowed counters before writing
         flush_all_windowed_counters();
 
+        // Convert EP-level traffic (UCX/libfabric) into comm summaries
+        finalize_ep_traffic();
+
         // Write communication graph JSON
         write_comm_graph_json(m_output_path);
 
@@ -985,6 +988,11 @@ public:
         if (event.length > 0) {
             const auto node_id = register_node(file_header.hostname);
             auto& local_storage = process_local_storage(file_header);
+
+            // Node-level counters always emitted regardless of context resolution
+            emit_node_bw_sent(node_id, header.timestamp_start, event.length);
+            emit_node_bytes_sent(node_id, header.timestamp_start, event.length);
+
             const auto ctx_nic_it = local_storage.ibv_context_to_nic_id.find(event.context_addr);
             if (ctx_nic_it != local_storage.ibv_context_to_nic_id.end()) {
                 const auto nic_id = ctx_nic_it->second;
@@ -993,19 +1001,13 @@ public:
                 m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
 
                 emit_qp_send_counter(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.length);
+                emit_qp_bw_sent(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.length);
+                emit_nic_bw_sent(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.length);
+                emit_nic_bytes_sent(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.length);
 
                 const auto gpu_it = local_storage.qp_to_gpu.find(event.qp_num);
                 if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
                     emit_gpu_send_counter(node_id, gpu_it->second, header.timestamp_start, event.length);
-                }
-
-                // Windowed bandwidth counters
-                emit_qp_bw_sent(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.length);
-                emit_nic_bw_sent(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.length);
-                emit_nic_bytes_sent(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.length);
-                emit_node_bw_sent(node_id, header.timestamp_start, event.length);
-                emit_node_bytes_sent(node_id, header.timestamp_start, event.length);
-                if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
                     emit_gpu_bw_sent(node_id, gpu_it->second, header.timestamp_start, event.length);
                 }
             }
@@ -1078,6 +1080,11 @@ public:
         if ((event.opcode & Profiler::Events::types::ibv_wc_opcode::IBV_WC_RECV) && event.byte_len > 0) {
             const auto node_id = register_node(file_header.hostname);
             auto& local_storage = process_local_storage(file_header);
+
+            // Node-level counters always emitted regardless of context resolution
+            emit_node_bw_recv(node_id, header.timestamp_start, event.byte_len);
+            emit_node_bytes_recv(node_id, header.timestamp_start, event.byte_len);
+
             const auto ctx_nic_it = local_storage.ibv_context_to_nic_id.find(event.context_addr);
             if (ctx_nic_it != local_storage.ibv_context_to_nic_id.end()) {
                 const auto nic_id = ctx_nic_it->second;
@@ -1086,19 +1093,13 @@ public:
                 m_builder.register_subdevice_track(nic_track_uuid, qp_track_uuid, event.qp_num, "QP");
 
                 emit_qp_recv_counter(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.byte_len);
+                emit_qp_bw_recv(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.byte_len);
+                emit_nic_bw_recv(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.byte_len);
+                emit_nic_bytes_recv(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.byte_len);
 
                 const auto gpu_it = local_storage.qp_to_gpu.find(event.qp_num);
                 if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
                     emit_gpu_recv_counter(node_id, gpu_it->second, header.timestamp_start, event.byte_len);
-                }
-
-                // Windowed bandwidth counters
-                emit_qp_bw_recv(node_id, event.qp_num, qp_track_uuid, header.timestamp_start, event.byte_len);
-                emit_nic_bw_recv(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.byte_len);
-                emit_nic_bytes_recv(node_id, nic_id, nic_track_uuid, header.timestamp_start, event.byte_len);
-                emit_node_bw_recv(node_id, header.timestamp_start, event.byte_len);
-                emit_node_bytes_recv(node_id, header.timestamp_start, event.byte_len);
-                if (gpu_it != local_storage.qp_to_gpu.end() && gpu_it->second >= 0) {
                     emit_gpu_bw_recv(node_id, gpu_it->second, header.timestamp_start, event.byte_len);
                 }
             }
@@ -1142,18 +1143,46 @@ public:
         // m_builder.add_annotation(instant, "Dest LID", event.dest_lid);
     }
 
-    // Communication Summary - aggregate metrics per QP, emitted at profiler shutdown
+    // Communication Summary - aggregate metrics per QP/endpoint, emitted at profiler shutdown
     // Only used for JSON graph output, NOT emitted into Perfetto trace
     void visit(EventTrait<ProfilerEvents::CommunicationSummary>, const EventFileHeader& file_header, EventHeader&&,
                ProfilerEvents::CommunicationSummary&& event) {
         sigma_ignore_unused(register_node(file_header.hostname));
 
-        // Store for JSON graph output only
-        m_comm_summaries.push_back({file_header.hostname, event});
+        auto& local_storage = process_local_storage(file_header);
+
+        // Resolve NIC ID from qp_to_nic mapping
+        CommSummaryEntry entry{file_header.hostname, event};
+        const auto nic_it = local_storage.qp_to_nic.find(event.src_qpn);
+        if (nic_it != local_storage.qp_to_nic.end()) {
+            entry.nic_id = nic_it->second;
+            entry.has_nic = true;
+        }
+
+        // Use the layer field from the event if set, otherwise fall back to QP tracking
+        using Profiler::Events::CommLayer;
+        switch (event.layer) {
+            case CommLayer::UCX:
+                entry.layer = "ucx";
+                break;
+            case CommLayer::Libfabric:
+                entry.layer = "libfabric";
+                break;
+            case CommLayer::IBV:
+            default:
+                // Fall back to QP tracking sets for backward compatibility with old traces
+                if (m_ucx_qps.contains(event.src_qpn)) {
+                    entry.layer = "ucx";
+                } else if (m_fi_qps.contains(event.src_qpn)) {
+                    entry.layer = "libfabric";
+                }
+                break;
+        }
+
+        m_comm_summaries.push_back(std::move(entry));
 
         // Populate QP→GPU mapping for GPU-GPU track mode
         if (event.gpu_id >= 0) {
-            auto& local_storage = process_local_storage(file_header);
             local_storage.qp_to_gpu[event.src_qpn] = event.gpu_id;
         }
     }
@@ -1237,10 +1266,14 @@ public:
             emit_qp_send_counter(node_id, event.qp_num, track_uuid, header.timestamp_start, event.bytes_sent);
             emit_gpu_send_counter(node_id, gpu_id, header.timestamp_start, event.bytes_sent);
 
+            // Node-level counters always emitted
+            emit_node_bw_sent(node_id, header.timestamp_start, event.bytes_sent);
+            emit_node_bytes_sent(node_id, header.timestamp_start, event.bytes_sent);
+
             // Windowed bandwidth counters
             emit_qp_bw_sent(node_id, event.qp_num, track_uuid, header.timestamp_start, event.bytes_sent);
             emit_gpu_bw_sent(node_id, gpu_id, header.timestamp_start, event.bytes_sent);
-            // NIC/Node bandwidth if qp_to_nic lookup succeeds
+            // NIC-level bandwidth if qp_to_nic lookup succeeds
             auto& db_local_storage = process_local_storage(file_header);
             const auto nic_it = db_local_storage.qp_to_nic.find(event.qp_num);
             if (nic_it != db_local_storage.qp_to_nic.end()) {
@@ -1248,8 +1281,6 @@ public:
                         m_builder.register_device_track(TrackType::NIC, node_id, nic_it->second);
                 emit_nic_bw_sent(node_id, nic_it->second, nic_track_uuid, header.timestamp_start, event.bytes_sent);
                 emit_nic_bytes_sent(node_id, nic_it->second, nic_track_uuid, header.timestamp_start, event.bytes_sent);
-                emit_node_bw_sent(node_id, header.timestamp_start, event.bytes_sent);
-                emit_node_bytes_sent(node_id, header.timestamp_start, event.bytes_sent);
             }
         }
     }
@@ -1372,6 +1403,7 @@ public:
 
         // Bandwidth counters for fi_send
         if (event.total_iov_len > 0) {
+            accumulate_ep_send(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_sent(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_sent(node_id, header.timestamp_start, event.total_iov_len);
             auto info = resolve_ep_nic(local_storage, event.ep_addr, node_id, false);
@@ -1400,6 +1432,7 @@ public:
 
         // Bandwidth counters for fi_recv
         if (event.total_iov_len > 0) {
+            accumulate_ep_recv(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_recv(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_recv(node_id, header.timestamp_start, event.total_iov_len);
             auto& local_storage = process_local_storage(file_header);
@@ -1430,6 +1463,7 @@ public:
 
         // Bandwidth counters for fi_rdma_read (recv direction)
         if (event.total_iov_len > 0) {
+            accumulate_ep_recv(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_recv(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_recv(node_id, header.timestamp_start, event.total_iov_len);
             auto& local_storage = process_local_storage(file_header);
@@ -1460,6 +1494,7 @@ public:
 
         // Bandwidth counters for fi_rdma_write (send direction)
         if (event.total_iov_len > 0) {
+            accumulate_ep_send(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_sent(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_sent(node_id, header.timestamp_start, event.total_iov_len);
             auto& local_storage = process_local_storage(file_header);
@@ -1513,6 +1548,7 @@ public:
 
         // Bandwidth counters for fi_inject (send direction)
         if (event.len > 0) {
+            accumulate_ep_send(file_header, event.ep_addr, event.len, false);
             emit_fabric_node_bytes_sent(node_id, header.timestamp_start, event.len);
             emit_fabric_node_bw_sent(node_id, header.timestamp_start, event.len);
             auto& local_storage = process_local_storage(file_header);
@@ -1530,6 +1566,7 @@ public:
                ProfilerEvents::FiEndpointQpMapping&& event) {
         auto& local_storage = process_local_storage(file_header);
         local_storage.fi_ep_to_qp[event.ep_addr] = event.qp_num;
+        m_fi_qps.insert(static_cast<uint32_t>(event.qp_num));
     }
 
     // ========================================================================
@@ -1644,6 +1681,7 @@ public:
 
         // Bandwidth counters for ucp_tag_send
         if (event.size > 0) {
+            accumulate_ep_send(file_header, event.ep_addr, event.size, true);
             emit_ucx_node_bytes_sent(node_id, header.timestamp_start, event.size);
             emit_ucx_node_bw_sent(node_id, header.timestamp_start, event.size);
             auto info = resolve_ep_nic(local_storage, event.ep_addr, node_id, true);
@@ -1672,6 +1710,9 @@ public:
         m_builder.add_annotation(slice, "Request Addr", event.request_addr);
 
         // Bandwidth counters for ucp_tag_recv — no ep_addr, emit only node-level
+        // Note: recv has no ep_addr, so we can't accumulate per-EP recv here.
+        // Recv traffic will be attributed when the underlying ibv_poll_cq completion
+        // is matched, or remain node-level only.
         if (event.size > 0) {
             emit_ucx_node_bytes_recv(node_id, header.timestamp_start, event.size);
             emit_ucx_node_bw_recv(node_id, header.timestamp_start, event.size);
@@ -1694,6 +1735,7 @@ public:
 
         // Bandwidth counters for ucp_put (send direction)
         if (event.size > 0) {
+            accumulate_ep_send(file_header, event.ep_addr, event.size, true);
             emit_ucx_node_bytes_sent(node_id, header.timestamp_start, event.size);
             emit_ucx_node_bw_sent(node_id, header.timestamp_start, event.size);
             auto& local_storage = process_local_storage(file_header);
@@ -1723,6 +1765,7 @@ public:
 
         // Bandwidth counters for ucp_get (recv direction)
         if (event.size > 0) {
+            accumulate_ep_recv(file_header, event.ep_addr, event.size, true);
             emit_ucx_node_bytes_recv(node_id, header.timestamp_start, event.size);
             emit_ucx_node_bw_recv(node_id, header.timestamp_start, event.size);
             auto& local_storage = process_local_storage(file_header);
@@ -1754,6 +1797,7 @@ public:
         // Bandwidth counters for ucp_am_send (send direction)
         const uint64_t am_total = event.header_size + event.payload_size;
         if (am_total > 0) {
+            accumulate_ep_send(file_header, event.ep_addr, am_total, true);
             emit_ucx_node_bytes_sent(node_id, header.timestamp_start, am_total);
             emit_ucx_node_bw_sent(node_id, header.timestamp_start, am_total);
             auto& local_storage = process_local_storage(file_header);
@@ -1811,6 +1855,7 @@ public:
                ProfilerEvents::UcpEpQpMapping&& event) {
         auto& local_storage = process_local_storage(file_header);
         local_storage.ucp_ep_to_qp[event.ep_addr] = event.qp_num;
+        m_ucx_qps.insert(static_cast<uint32_t>(event.qp_num));
     }
 
     // ========================================================================
@@ -2411,8 +2456,101 @@ private:
     struct CommSummaryEntry {
         std::string hostname;
         ProfilerEvents::CommunicationSummary summary;
+        NicId nic_id{0};
+        bool has_nic{false};
+        std::string layer{"ibv"}; // "ibv", "ucx", or "libfabric"
     };
     std::vector<CommSummaryEntry> m_comm_summaries;
+
+    // Layer tracking: QP numbers that belong to UCX or libfabric (rest are raw ibv)
+    absl::flat_hash_set<uint32_t> m_ucx_qps;
+    absl::flat_hash_set<uint32_t> m_fi_qps;
+
+    // EP-level traffic accumulation for UCX and libfabric (reader-side aggregation)
+    struct EpTrafficKey {
+        std::string hostname;
+        ProcessId process_id;
+        uint64_t ep_addr;
+        bool is_ucx; // true = UCX, false = libfabric
+
+        bool operator==(const EpTrafficKey&) const = default;
+
+        template<typename H>
+        friend H AbslHashValue(H h, const EpTrafficKey& k) {
+            return H::combine(std::move(h), k.hostname, k.process_id, k.ep_addr, k.is_ucx);
+        }
+    };
+    struct EpTrafficStats {
+        uint64_t bytes_sent{0};
+        uint64_t bytes_recv{0};
+        uint32_t send_count{0};
+        uint32_t recv_count{0};
+    };
+    absl::flat_hash_map<EpTrafficKey, EpTrafficStats> m_ep_traffic;
+
+    void accumulate_ep_send(const EventFileHeader& fh, uint64_t ep_addr, uint64_t bytes, bool is_ucx) {
+        EpTrafficKey key{std::string(fh.hostname), fh.process_id, ep_addr, is_ucx};
+        auto& stats = m_ep_traffic[key];
+        stats.bytes_sent += bytes;
+        stats.send_count++;
+    }
+    void accumulate_ep_recv(const EventFileHeader& fh, uint64_t ep_addr, uint64_t bytes, bool is_ucx) {
+        EpTrafficKey key{std::string(fh.hostname), fh.process_id, ep_addr, is_ucx};
+        auto& stats = m_ep_traffic[key];
+        stats.bytes_recv += bytes;
+        stats.recv_count++;
+    }
+
+    // Convert accumulated EP traffic into CommSummaryEntry records
+    void finalize_ep_traffic() {
+        for (const auto& [key, stats]: m_ep_traffic) {
+            // Try to resolve EP → QP for cross-layer correlation
+            const auto node_id = register_node(key.hostname);
+            auto& local_storage = process_local_storage(node_id, key.process_id);
+
+            auto& ep_map = key.is_ucx ? local_storage.ucp_ep_to_qp : local_storage.fi_ep_to_qp;
+            const auto qp_it = ep_map.find(key.ep_addr);
+            const uint32_t qp_num = qp_it != ep_map.end() ? static_cast<uint32_t>(qp_it->second) : 0;
+
+            NicId nic_id = 0;
+            bool has_nic = false;
+            GpuId_T gpu_id = -1;
+            if (qp_num != 0) {
+                const auto nic_it = local_storage.qp_to_nic.find(qp_num);
+                if (nic_it != local_storage.qp_to_nic.end()) {
+                    nic_id = nic_it->second;
+                    has_nic = true;
+                }
+                const auto gpu_it = local_storage.qp_to_gpu.find(qp_num);
+                if (gpu_it != local_storage.qp_to_gpu.end()) {
+                    gpu_id = gpu_it->second;
+                }
+            }
+
+            // Build a synthetic CommunicationSummary for the EP
+            ProfilerEvents::CommunicationSummary summary{};
+            summary.src_qpn = qp_num;
+            summary.dest_qpn = 0; // EP-level: no dest QPN available
+            summary.bytes_sent = stats.bytes_sent;
+            summary.bytes_recv = stats.bytes_recv;
+            summary.send_count = stats.send_count;
+            summary.recv_count = stats.recv_count;
+            summary.gpu_id = gpu_id;
+
+            CommSummaryEntry entry{key.hostname, summary};
+            entry.nic_id = nic_id;
+            entry.has_nic = has_nic;
+            entry.layer = key.is_ucx ? "ucx" : "libfabric";
+
+            // Use ep_addr as a synthetic "QPN" when no real QP mapping exists
+            // so the node gets a unique ID in the graph
+            if (qp_num == 0) {
+                entry.summary.src_qpn = static_cast<uint32_t>(key.ep_addr & 0xFFFFFFFF);
+            }
+
+            m_comm_summaries.push_back(std::move(entry));
+        }
+    }
 
     // ================================================================
     // Local Storage
@@ -2474,6 +2612,12 @@ private:
             return;
         }
 
+        // Build reverse lookup: src_qpn -> (hostname, qpn) for resolving dest node IDs
+        absl::flat_hash_map<uint32_t, std::string> qpn_to_hostname;
+        for (const auto& entry: m_comm_summaries) {
+            qpn_to_hostname[entry.summary.src_qpn] = entry.hostname;
+        }
+
         // Build nodes and edges
         out << "{\n  \"nodes\": [\n";
         absl::flat_hash_set<std::string> emitted_nodes;
@@ -2490,8 +2634,15 @@ private:
                 out << ",\n";
             first_node = false;
 
-            out << "    {\"id\": \"" << node_id << "\", \"node\": \"" << entry.hostname << "\", \"qpn\": " << s.src_qpn
-                << ", \"gpu_id\": " << s.gpu_id << ", \"type\": \"" << (s.gpu_id >= 0 ? "gpu" : "cpu") << "\"}";
+            out << "    {\"id\": \"" << node_id << "\", \"hostname\": \"" << entry.hostname
+                << "\", \"qpn\": " << s.src_qpn << ", \"gpu_id\": " << s.gpu_id << ", \"type\": \""
+                << (s.gpu_id >= 0 ? "gpu" : "cpu") << "\"";
+
+            if (entry.has_nic) {
+                out << ", \"nic_id\": " << entry.nic_id;
+            }
+
+            out << ", \"layer\": \"" << entry.layer << "\"}";
         }
 
         out << "\n  ],\n  \"edges\": [\n";
@@ -2506,9 +2657,21 @@ private:
                 out << ",\n";
             first_edge = false;
 
+            // Resolve destination node ID
+            std::string dst_id;
+            const auto dst_it = qpn_to_hostname.find(s.dest_qpn);
+            if (dst_it != qpn_to_hostname.end()) {
+                dst_id = dst_it->second + "_qp" + std::to_string(s.dest_qpn);
+            }
+
             out << "    {"
-                << "\"src\": \"" << entry.hostname << "_qp" << s.src_qpn << "\""
-                << ", \"dst_qpn\": " << s.dest_qpn << ", \"bytes_sent\": " << s.bytes_sent
+                << "\"src\": \"" << entry.hostname << "_qp" << s.src_qpn << "\"";
+
+            if (!dst_id.empty()) {
+                out << ", \"dst\": \"" << dst_id << "\"";
+            }
+
+            out << ", \"dst_qpn\": " << s.dest_qpn << ", \"bytes_sent\": " << s.bytes_sent
                 << ", \"bytes_recv\": " << s.bytes_recv << ", \"send_count\": " << s.send_count
                 << ", \"recv_count\": " << s.recv_count << "}";
         }

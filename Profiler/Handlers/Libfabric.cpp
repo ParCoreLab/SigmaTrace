@@ -17,14 +17,21 @@ void ProfilerCtx::load_libfabric(const std::filesystem::path& shim_dir) {
                 total_len += msg->msg_iov[i].iov_len;
             }
         }
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::FiSend event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
                 .total_iov_len = total_len,
                 .flags = flags,
                 .dest_addr = msg ? msg->addr : 0,
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        if (total_len > 0) {
+            auto& stats = instance().m_fi_traffic_registry.get_thread_local()[ep_addr];
+            stats.bytes_sent += total_len;
+            stats.send_count++;
+        }
     });
 
     m_libfabric_profiler->register_post<fi::ep_msg_recvmsg_tag>(
@@ -35,13 +42,20 @@ void ProfilerCtx::load_libfabric(const std::filesystem::path& shim_dir) {
                 total_len += msg->msg_iov[i].iov_len;
             }
         }
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::FiRecv event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
                 .total_iov_len = total_len,
                 .flags = flags,
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        if (total_len > 0) {
+            auto& stats = instance().m_fi_traffic_registry.get_thread_local()[ep_addr];
+            stats.bytes_recv += total_len;
+            stats.recv_count++;
+        }
     });
 
     m_libfabric_profiler->register_post<fi::ep_rma_readmsg_tag>(
@@ -61,14 +75,21 @@ void ProfilerCtx::load_libfabric(const std::filesystem::path& shim_dir) {
             }
         }
 
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::FiRdmaRead event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
                 .total_iov_len = total_len,
                 .remote_addr = remote_addr,
                 .remote_key = remote_key,
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        if (total_len > 0) {
+            auto& stats = instance().m_fi_traffic_registry.get_thread_local()[ep_addr];
+            stats.bytes_sent += total_len;
+            stats.send_count++;
+        }
     });
 
     m_libfabric_profiler->register_post<fi::ep_rma_writemsg_tag>(
@@ -88,14 +109,21 @@ void ProfilerCtx::load_libfabric(const std::filesystem::path& shim_dir) {
             }
         }
 
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::FiRdmaWrite event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .context = msg ? reinterpret_cast<uint64_t>(msg->context) : 0,
                 .total_iov_len = total_len,
                 .remote_addr = remote_addr,
                 .remote_key = remote_key,
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        if (total_len > 0) {
+            auto& stats = instance().m_fi_traffic_registry.get_thread_local()[ep_addr];
+            stats.bytes_sent += total_len;
+            stats.send_count++;
+        }
     });
 
     std::cout << "[Profiler] Loaded Libfabric Trace" << std::endl;

@@ -274,6 +274,13 @@ namespace Profiler::Events {
         uint8_t port_num;
     };
 
+    // Layer identifiers for CommunicationSummary
+    enum class CommLayer : uint8_t {
+        IBV = 0,
+        UCX = 1,
+        Libfabric = 2
+    };
+
     EVENT_STRUCT CommunicationSummary {
         uint32_t src_qpn;
         uint32_t dest_qpn;
@@ -285,6 +292,8 @@ namespace Profiler::Events {
         uint64_t dest_node_guid; // 0 if unknown
         GpuId_T gpu_id;          // -1 if CPU-only
         uint16_t dest_lid;       // for same-subnet identification
+        uint64_t ep_addr;        // endpoint address (UCX/libfabric), 0 for IBV
+        CommLayer layer;         // 0=ibv, 1=ucx, 2=libfabric
     };
 
 } // namespace Profiler::Events

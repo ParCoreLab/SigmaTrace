@@ -38,11 +38,12 @@ ProfilerCtx::~ProfilerCtx() {
 
 #if SIGMA_HAS_RDMA_CORE
 // Emit CommunicationSummary events on exit
-// TODO: make this more generic. It shouldn't be just ibv
 void ProfilerCtx::emit_communication_summaries() {
     if (!m_event_recorder) {
         return;
     }
+
+    using Profiler::Events::CommLayer;
 
     // Merge all per-thread traffic accumulators into one map
     auto merged_traffic = m_traffic_registry.merge_all();
@@ -80,6 +81,8 @@ void ProfilerCtx::emit_communication_summaries() {
                 .dest_node_guid = 0,
                 .gpu_id = gpu_id,
                 .dest_lid = dest_lid,
+                .ep_addr = 0,
+                .layer = CommLayer::IBV,
         };
         m_event_recorder->Record(summary, 0);
         emitted_qpns.insert(qpn);
@@ -114,11 +117,71 @@ void ProfilerCtx::emit_communication_summaries() {
                 .dest_node_guid = 0,
                 .gpu_id = gpu_id,
                 .dest_lid = conn.dest_lid,
+                .ep_addr = 0,
+                .layer = CommLayer::IBV,
         };
         m_event_recorder->Record(summary, 0);
     }
 }
 #endif // SIGMA_HAS_RDMA_CORE
+
+#if SIGMA_HAS_UCX
+void ProfilerCtx::emit_ucx_summaries() {
+    if (!m_event_recorder) {
+        return;
+    }
+
+    using Profiler::Events::CommLayer;
+
+    auto merged_send = m_ucx_send_registry.merge_all();
+    for (const auto& [ep_addr, stats]: merged_send) {
+        const Profiler::Events::CommunicationSummary summary{
+                .bytes_sent = stats.bytes_sent,
+                .send_count = stats.send_count,
+                .gpu_id = Profiler::Events::UnknownDeviceId,
+                .ep_addr = ep_addr,
+                .layer = CommLayer::UCX,
+        };
+        m_event_recorder->Record(summary, 0);
+    }
+
+    auto merged_recv = m_ucx_recv_registry.merge_all();
+    for (const auto& [worker_addr, stats]: merged_recv) {
+        const Profiler::Events::CommunicationSummary summary{
+                .bytes_recv = stats.bytes_recv,
+                .recv_count = stats.recv_count,
+                .gpu_id = Profiler::Events::UnknownDeviceId,
+                .ep_addr = worker_addr,
+                .layer = CommLayer::UCX,
+        };
+        m_event_recorder->Record(summary, 0);
+    }
+}
+#endif // SIGMA_HAS_UCX
+
+#if SIGMA_HAS_LIBFABRIC
+void ProfilerCtx::emit_fi_summaries() {
+    if (!m_event_recorder) {
+        return;
+    }
+
+    using Profiler::Events::CommLayer;
+
+    auto merged = m_fi_traffic_registry.merge_all();
+    for (const auto& [ep_addr, stats]: merged) {
+        const Profiler::Events::CommunicationSummary summary{
+                .bytes_sent = stats.bytes_sent,
+                .bytes_recv = stats.bytes_recv,
+                .send_count = stats.send_count,
+                .recv_count = stats.recv_count,
+                .gpu_id = Profiler::Events::UnknownDeviceId,
+                .ep_addr = ep_addr,
+                .layer = CommLayer::Libfabric,
+        };
+        m_event_recorder->Record(summary, 0);
+    }
+}
+#endif // SIGMA_HAS_LIBFABRIC
 
 /*
  * See Note[late_load]
@@ -337,6 +400,12 @@ static void profiler_finalize() {
 #endif
     g_ProfilerInstance->emit_communication_summaries();
 #endif
+#if SIGMA_HAS_UCX
+    g_ProfilerInstance->emit_ucx_summaries();
+#endif
+#if SIGMA_HAS_LIBFABRIC
+    g_ProfilerInstance->emit_fi_summaries();
+#endif
 
     // Flush and truncate all mmap'd event files before destroying the profiler.
     // thread_local destructors won't run for threads still alive at shutdown.
@@ -398,6 +467,13 @@ static void profiler_atfork_child() {
     // Abandon thread_local stuff. They don't survive fork
 #if SIGMA_HAS_RDMA_CORE
     g_ProfilerInstance->m_traffic_registry.reset();
+#endif
+#if SIGMA_HAS_UCX
+    g_ProfilerInstance->m_ucx_send_registry.reset();
+    g_ProfilerInstance->m_ucx_recv_registry.reset();
+#endif
+#if SIGMA_HAS_LIBFABRIC
+    g_ProfilerInstance->m_fi_traffic_registry.reset();
 #endif
 
     /*

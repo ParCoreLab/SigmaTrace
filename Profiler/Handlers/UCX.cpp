@@ -71,63 +71,88 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
     m_ucx_profiler->register_post<ucx::ucp_tag_send_nbx_tag>([](ucs_status_ptr_t request, ucp_ep_h ep, const void*,
                                                                 size_t count, ucp_tag_t tag, const ucp_request_param_t*,
                                                                 const auto ts_start, const auto ts_end) {
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::UcpTagSend event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .tag = tag,
                 .size = count,
                 .request_addr = reinterpret_cast<uint64_t>(request),
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        auto& stats = instance().m_ucx_send_registry.get_thread_local()[ep_addr];
+        stats.bytes_sent += count;
+        stats.send_count++;
     });
 
     m_ucx_profiler->register_post<ucx::ucp_tag_recv_nbx_tag>(
             [](ucs_status_ptr_t request, ucp_worker_h worker, void*, size_t count, ucp_tag_t tag, ucp_tag_t tag_mask,
                const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+        const auto worker_addr = reinterpret_cast<uint64_t>(worker);
         const Profiler::Events::UcpTagRecv event{
-                .worker_addr = reinterpret_cast<uint64_t>(worker),
+                .worker_addr = worker_addr,
                 .tag = tag,
                 .tag_mask = tag_mask,
                 .size = count,
                 .request_addr = reinterpret_cast<uint64_t>(request),
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        auto& stats = instance().m_ucx_recv_registry.get_thread_local()[worker_addr];
+        stats.bytes_recv += count;
+        stats.recv_count++;
     });
 
     m_ucx_profiler->register_post<ucx::ucp_put_nbx_tag>(
             [](ucs_status_ptr_t request, ucp_ep_h ep, const void*, size_t count, uint64_t remote_addr, ucp_rkey_h,
                const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::UcpPut event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .size = count,
                 .remote_addr = remote_addr,
                 .request_addr = reinterpret_cast<uint64_t>(request),
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        auto& stats = instance().m_ucx_send_registry.get_thread_local()[ep_addr];
+        stats.bytes_sent += count;
+        stats.send_count++;
     });
 
     m_ucx_profiler->register_post<ucx::ucp_get_nbx_tag>([](ucs_status_ptr_t request, ucp_ep_h ep, void*, size_t count,
                                                            uint64_t remote_addr, ucp_rkey_h, const ucp_request_param_t*,
                                                            const auto ts_start, const auto ts_end) {
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::UcpGet event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .size = count,
                 .remote_addr = remote_addr,
                 .request_addr = reinterpret_cast<uint64_t>(request),
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        auto& stats = instance().m_ucx_send_registry.get_thread_local()[ep_addr];
+        stats.bytes_sent += count;
+        stats.send_count++;
     });
 
     m_ucx_profiler->register_post<ucx::ucp_am_send_nbx_tag>(
             [](ucs_status_ptr_t request, ucp_ep_h ep, unsigned int am_id, const void*, size_t header_length,
                const void*, size_t count, const ucp_request_param_t*, const auto ts_start, const auto ts_end) {
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::UcpAmSend event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
                 .am_id = am_id,
                 .header_size = header_length,
                 .payload_size = count,
                 .request_addr = reinterpret_cast<uint64_t>(request),
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        auto& stats = instance().m_ucx_send_registry.get_thread_local()[ep_addr];
+        stats.bytes_sent += header_length + count;
+        stats.send_count++;
     });
 
     m_ucx_profiler->register_post<ucx::ucp_mem_map_tag>([](ucs_status_t status, ucp_context_h context,
