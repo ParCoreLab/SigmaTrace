@@ -329,8 +329,8 @@ namespace FileIO {
             }
         }
 
-        std::size_t current_index() const noexcept {
-            return static_cast<std::size_t>(m_next_slot - m_base - FileHeaderSize) / ElementSize;
+        [[nodiscard]] std::size_t current_index() const noexcept {
+            return (m_next_slot - m_base - FileHeaderSize) / ElementSize;
         }
 
         void flush() const {

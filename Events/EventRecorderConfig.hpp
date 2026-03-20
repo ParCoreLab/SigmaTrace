@@ -226,8 +226,6 @@ namespace Events {
         // Third, why is it part of a
         template<HasEventTrait EventT>
         [[nodiscard]] EventFileHeader get_event_file_header() const noexcept {
-            // Note: this may be unsafe if the process forks after this function is called
-            // because of thread_local. See ProfilerShim
             thread_local EventFileHeader header = std::invoke([]() {
                 auto header_init = EventFileHeader{
                         .event_id = EventTrait<EventT>::id,
@@ -243,6 +241,14 @@ namespace Events {
 
                 return header_init;
             });
+
+            // Detect fork: PID changes but thread_local survives with stale values
+            const auto current_pid = get_process_id();
+            if (header.process_id != current_pid) {
+                header.process_id = current_pid;
+                header.thread_id = get_thread_id();
+                header.cpu_id = get_cpu_id();
+            }
 
             return header;
         }

@@ -78,6 +78,12 @@ namespace Events {
             return static_cast<Derived&>(*this);
         }
 
+        // Default: no transformation, use raw timestamp for merge ordering
+        // Derived classes override to convert TSC -> wall-clock ns
+        Timestamp transform_merge_timestamp(Timestamp ts, const EventFileHeader&) {
+            return ts;
+        }
+
         std::map<std::string_view, size_t> m_event_stats{};
 
     public:
@@ -204,6 +210,14 @@ namespace Events {
                 has_event = true;
             }
 
+            // Transform the raw timestamp for merge ordering (CRTP hook)
+            // Derived class can override to convert TSC -> wall-clock ns
+            void apply_merge_transform(Derived& d) {
+                if (has_event) {
+                    next_timestamp = d.transform_merge_timestamp(next_timestamp, file_header);
+                }
+            }
+
             static EventTypeId match_event_id(const EventId_T id) {
                 auto result = EventTypeId::Unknown;
                 std::ignore = ((id == static_cast<EventId_T>(EventTrait<EnabledEvents>::id)
@@ -271,6 +285,7 @@ namespace Events {
             // Initialize min-heap - Read one entry from each stream
             std::priority_queue<HeapEntry> heap;
             for (size_t i = 0; i < streams.size(); ++i) {
+                streams[i].apply_merge_transform(derived());
                 if (streams[i].has_event) {
                     heap.push({streams[i].next_timestamp, i});
                 }
@@ -297,6 +312,7 @@ namespace Events {
 
                 // Peek next from this stream
                 state.peek_next();
+                state.apply_merge_transform(derived());
                 if (state.has_event) {
                     heap.push({state.next_timestamp, idx});
                 }

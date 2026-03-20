@@ -430,6 +430,21 @@ public:
     }
 
     // ========================================================================
+    // Per-node sequence IDs to avoid cross-node timestamp ordering issues
+    // ========================================================================
+    void set_active_node(uint32_t node_id) {
+        auto [it, inserted] = m_node_sequence_ids.try_emplace(node_id, m_next_sequence_id);
+        if (inserted) {
+            ++m_next_sequence_id;
+        }
+        m_sequence_id = it->second;
+    }
+
+    void reset_active_node() {
+        m_sequence_id = 1; // Back to default (for track descriptors)
+    }
+
+    // ========================================================================
     // Serialization
     // ========================================================================
 
@@ -453,7 +468,9 @@ private:
     absl::flat_hash_set<uint64_t> m_registered_tracks;
     uint64_t m_next_flow_id{1};
     uint64_t m_next_correlation_id{1};
-    uint32_t m_sequence_id{1}; // Constant sequence ID (single-threaded writer)
+    uint32_t m_sequence_id{1}; // Default sequence ID (for track descriptors etc.)
+    absl::flat_hash_map<uint32_t /*node_id*/, uint32_t /*seq_id*/> m_node_sequence_ids;
+    uint32_t m_next_sequence_id{2}; // 1 is reserved for default
     bool m_emitted_first_packet{false};
 };
 
@@ -594,11 +611,20 @@ public:
         return m_output_path;
     }
 
+    // Convert raw TSC to wall-clock ns for correct cross-node merge ordering
+    Events::Timestamp transform_merge_timestamp(Events::Timestamp ts, const EventFileHeader& file_header) {
+        const auto node_id = register_node(file_header.hostname);
+        return tsc_to_ns(ts, node_id, file_header.process_id);
+    }
+
     template<typename EventT>
     void preprocess(EventTrait<EventT>, EventFileHeader& file_header, EventHeader& header, const EventT&) {
         const auto node_id = register_node(file_header.hostname);
-        header.timestamp_start = tsc_to_ns(header.timestamp_start, node_id);
-        header.timestamp_end = tsc_to_ns(header.timestamp_end, node_id);
+        header.timestamp_start = tsc_to_ns(header.timestamp_start, node_id, file_header.process_id);
+        header.timestamp_end = tsc_to_ns(header.timestamp_end, node_id, file_header.process_id);
+
+        // Set per-node Perfetto sequence ID to avoid cross-node ordering issues
+        m_builder.set_active_node(node_id);
     }
 
     void add_header_annotations(perfetto::protos::TrackEvent* event, const EventFileHeader& file_header) {
@@ -722,18 +748,18 @@ public:
 
         // std::cout << Meta::name << " " << std::hex << event.context_addr << std::dec << std::endl;
 
-        // const auto nic_it = local_storage.ibv_context_to_nic_id.find(event.context_addr);
-        // if (nic_it == local_storage.ibv_context_to_nic_id.end()) {
-        //     std::cerr << "WARNING: Unknown context_addr " << std::hex << event.context_addr << std::dec << " in "
-        //               << Meta::name << ", skipping" << std::endl;
-        //     return static_cast<perfetto::protos::TrackEvent*>(nullptr);
-        // }
-        // const auto nic_id = nic_it->second;
-
-        const auto nic_id = local_storage.ibv_context_to_nic_id.at(event.context_addr);
+        const auto nic_it = local_storage.ibv_context_to_nic_id.find(event.context_addr);
+        if (nic_it == local_storage.ibv_context_to_nic_id.end()) {
+            std::cerr << "WARNING: Unknown context_addr " << std::hex << event.context_addr << std::dec << " in "
+                      << Meta::name << ", placing on CPU track" << std::endl;
+        }
+        // Fallback: use 0 as nic_id when context is unknown (events placed on CPU track)
+        const auto nic_id = nic_it != local_storage.ibv_context_to_nic_id.end() ? nic_it->second : 0;
 
         const uint64_t cpu_track_uuid = m_builder.register_device_track(TrackType::CPU, node_id, cpu_id);
-        const uint64_t nic_track_uuid = m_builder.register_device_track(TrackType::NIC, node_id, nic_id);
+        const uint64_t nic_track_uuid = nic_it != local_storage.ibv_context_to_nic_id.end()
+                                                ? m_builder.register_device_track(TrackType::NIC, node_id, nic_id)
+                                                : cpu_track_uuid;
 
         const auto ts_start{header.timestamp_start};
         const auto ts_end{header.timestamp_end};
@@ -1163,16 +1189,24 @@ public:
 
         auto& local_storage = process_local_storage(file_header);
 
-        // Sometimes we see duplicate mem deregs
-        const auto context_addr = local_storage.mlx5dv_umem_addr_to_ctx.at(event.umem_addr);
+        // Sometimes we see duplicate mem deregs or out-of-order arrivals after merge reordering
+        const auto ctx_it = local_storage.mlx5dv_umem_addr_to_ctx.find(event.umem_addr);
+        if (ctx_it == local_storage.mlx5dv_umem_addr_to_ctx.end()) {
+            std::cerr << "WARNING: mlx5dv_umem_dereg for unknown umem_addr " << std::hex << event.umem_addr << std::dec
+                      << ", skipping" << std::endl;
+            return;
+        }
+        const auto context_addr = ctx_it->second;
 
         auto* slice =
                 m_builder.add_slice(track_uuid, header.timestamp_start, header.timestamp_end, Meta::name, "mlx5dv");
         add_header_annotations(slice, file_header);
 
-        const auto flow_id = local_storage.mlx5dv_pending_umem_flows.at({context_addr, event.mem_id});
-        slice->add_terminating_flow_ids(flow_id);
-        local_storage.mlx5dv_pending_umem_flows.erase({context_addr, event.mem_id});
+        const auto flow_it = local_storage.mlx5dv_pending_umem_flows.find({context_addr, event.mem_id});
+        if (flow_it != local_storage.mlx5dv_pending_umem_flows.end()) {
+            slice->add_terminating_flow_ids(flow_it->second);
+            local_storage.mlx5dv_pending_umem_flows.erase(flow_it);
+        }
     }
 
     void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader& file_header, EventHeader&& header,
@@ -1811,9 +1845,19 @@ public:
     void visit(EventTrait<ProfilerEvents::TscCalibration>, const EventFileHeader& file_header, EventHeader&&,
                ProfilerEvents::TscCalibration&& event) {
         const auto node_id = register_node(file_header.hostname);
+        const auto cal_key = CalibrationKey{node_id, file_header.process_id};
 
-        // Use the first calibration event per node as the start anchor
-        if (m_node_calibrations.contains(node_id)) {
+        // Always keep the earliest calibration (smallest tsc_start) per process.
+        // Multiple calibrations exist (startup + shutdown), and with stale PIDs
+        // after fork, different processes may share the same key. Using the earliest
+        // ensures all events have tsc >= tsc_start, avoiding clamping.
+        auto it = m_node_calibrations.find(cal_key);
+        if (it != m_node_calibrations.end()) {
+            if (event.tsc_value < it->second.tsc_start) {
+                it->second.tsc_start = event.tsc_value;
+                it->second.wall_start_ns = event.wall_ns;
+                it->second.tsc_freq_hz = event.tsc_freq_hz;
+            }
             return;
         }
 
@@ -1824,7 +1868,7 @@ public:
                 .has_calibration = true,
         };
 
-        m_node_calibrations.emplace(node_id, std::move(calibration));
+        m_node_calibrations.emplace(cal_key, std::move(calibration));
     }
 
 private:
@@ -1946,10 +1990,18 @@ private:
             state.window_start_ts = (ts / state.window_size_ns) * state.window_size_ns;
             state.initialized = true;
         }
-        while (ts >= state.window_start_ts + state.window_size_ns) {
+        if (ts >= state.window_start_ts + state.window_size_ns) {
+            // Emit the current window's bandwidth
             int64_t bw = state.bytes_in_window * 1'000'000'000LL / static_cast<int64_t>(state.window_size_ns);
             m_builder.emit_counter(state.track_uuid, state.window_start_ts + state.window_size_ns, bw);
-            state.window_start_ts += state.window_size_ns;
+
+            // Skip directly to the window containing ts, emitting a single zero
+            // point instead of iterating through potentially millions of empty windows
+            uint64_t target_window = (ts / state.window_size_ns) * state.window_size_ns;
+            if (target_window > state.window_start_ts + state.window_size_ns) {
+                m_builder.emit_counter(state.track_uuid, target_window, 0);
+            }
+            state.window_start_ts = target_window;
             state.bytes_in_window = 0;
         }
         state.bytes_in_window += bytes;
@@ -2377,19 +2429,27 @@ private:
         uint64_t tsc_freq_hz{0};
         bool has_calibration{false};
     };
-    absl::flat_hash_map<uint32_t /*node_id*/, NodeCalibration> m_node_calibrations;
+    using CalibrationKey = std::pair<uint32_t /*node_id*/, uint64_t /*process_id*/>;
+    absl::flat_hash_map<CalibrationKey, NodeCalibration> m_node_calibrations;
 
-    uint64_t tsc_to_ns(uint64_t tsc, uint32_t node_id) const {
+    uint64_t tsc_to_ns(uint64_t tsc, uint32_t node_id, uint64_t process_id) const {
+        // return tsc;
         if (tsc == 0) {
             return 0;
         }
 
-        auto it = m_node_calibrations.find(node_id);
+        auto it = m_node_calibrations.find({node_id, process_id});
         if (it == m_node_calibrations.end() || !it->second.has_calibration) {
             return tsc; // No calibration available, return raw
         }
 
         const auto& cal = it->second;
+
+        // Guard against unsigned underflow if tsc < calibration start
+        if (tsc < cal.tsc_start) {
+            return cal.wall_start_ns;
+        }
+
         const uint64_t tsc_delta = tsc - cal.tsc_start;
 
         // Split into seconds and remainder to avoid overflow
