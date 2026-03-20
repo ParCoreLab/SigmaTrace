@@ -92,6 +92,7 @@ namespace Profiler {
         ProfilerTraceMode profiler_trace_mode;
         // clang-format off
         profiler_trace_control.add_options()
+        ("rank-hint", po::value<uint32_t>(), "Communication rank hint for visualization")
         ("trace-mode", po::value<ProfilerTraceMode>(&profiler_trace_mode)->default_value(ProfilerTraceMode::Simple), "Set Profiler trace mode (simple, aggregate, full)");
         // clang-format off
         // ================================================================
@@ -222,6 +223,10 @@ namespace Profiler {
         profiler_args.OutputOverwrite = vm["output-overwrite"].as<bool>();
 
         profiler_args.TraceMode = vm["trace-mode"].as<ProfilerTraceMode>();
+
+        if (!vm["rank-hint"].empty()) {
+            profiler_args.RankHint.emplace(vm["rank-hint"].as<decltype(profiler_args.RankHint)::value_type>());
+        }
 
         // Validation
         if (std::filesystem::exists(profiler_args.OutputDirectory)) {

@@ -33,7 +33,7 @@ using ThreadId = std::uint64_t;
 using NicId = std::uint64_t;
 
 using EnabledEvents =
-        Events::TypeList<ProfilerEvents::TscCalibration,        //
+        Events::TypeList<ProfilerEvents::TscCalibration, ProfilerEvents::ProcessInfo, //
                          ProfilerEvents::IbvDeviceRegistration, // ProfilerEvents::IbvPortRegistration, //
                          ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,                             //
                          ProfilerEvents::IbvCreateQp, ProfilerEvents::IbvDestroyQp, ProfilerEvents::IbvModifyQp,    //
@@ -507,6 +507,8 @@ struct FlowEntry {
 struct ProcessLocalStorage {
     // TODO:
     // absl::flat_hash_map<ThreadId_T, ThreadStorage> thread_storage
+
+    int32_t rank{-1};
 
     absl::flat_hash_map<uint64_t, NicId> ibv_context_to_nic_id;
 
@@ -1151,6 +1153,40 @@ public:
 
         auto& local_storage = process_local_storage(file_header);
 
+        // Determine layer
+        std::string layer_str = "ibv";
+        using Profiler::Events::CommLayer;
+        switch (event.layer) {
+            case CommLayer::UCX:
+                layer_str = "ucx";
+                break;
+            case CommLayer::Libfabric:
+                layer_str = "libfabric";
+                break;
+            case CommLayer::IBV:
+            default:
+                // Fall back to QP tracking sets for backward compatibility with old traces
+                if (m_ucx_qps.contains(event.src_qpn)) {
+                    layer_str = "ucx";
+                } else if (m_fi_qps.contains(event.src_qpn)) {
+                    layer_str = "libfabric";
+                }
+                break;
+        }
+
+        // For UCX/libfabric with ep_addr but no real QPN, route to EP-level accumulation
+        // to avoid creating broken qp0 catch-all nodes
+        if (layer_str != "ibv" && event.ep_addr != 0 && event.src_qpn == 0) {
+            const bool is_ucx = (layer_str == "ucx");
+            EpTrafficKey key{std::string(file_header.hostname), file_header.process_id, event.ep_addr, is_ucx};
+            auto& ep_stats = m_ep_traffic[key];
+            ep_stats.bytes_sent += event.bytes_sent;
+            ep_stats.bytes_recv += event.bytes_recv;
+            ep_stats.send_count += event.send_count;
+            ep_stats.recv_count += event.recv_count;
+            return;
+        }
+
         // Resolve NIC ID from qp_to_nic mapping
         CommSummaryEntry entry{file_header.hostname, event};
         const auto nic_it = local_storage.qp_to_nic.find(event.src_qpn);
@@ -1159,25 +1195,10 @@ public:
             entry.has_nic = true;
         }
 
-        // Use the layer field from the event if set, otherwise fall back to QP tracking
-        using Profiler::Events::CommLayer;
-        switch (event.layer) {
-            case CommLayer::UCX:
-                entry.layer = "ucx";
-                break;
-            case CommLayer::Libfabric:
-                entry.layer = "libfabric";
-                break;
-            case CommLayer::IBV:
-            default:
-                // Fall back to QP tracking sets for backward compatibility with old traces
-                if (m_ucx_qps.contains(event.src_qpn)) {
-                    entry.layer = "ucx";
-                } else if (m_fi_qps.contains(event.src_qpn)) {
-                    entry.layer = "libfabric";
-                }
-                break;
-        }
+        entry.layer = layer_str;
+        entry.endpoint_id = (layer_str == "ibv") ? event.src_qpn : event.ep_addr;
+        entry.rank = local_storage.rank;
+        entry.process_id = file_header.process_id;
 
         m_comm_summaries.push_back(std::move(entry));
 
@@ -1916,6 +1937,16 @@ public:
         m_node_calibrations.emplace(cal_key, std::move(calibration));
     }
 
+    // ProcessInfo - stores rank information per process
+    void visit(EventTrait<ProfilerEvents::ProcessInfo>, const EventFileHeader& file_header, EventHeader&&,
+               ProfilerEvents::ProcessInfo&& event) {
+        sigma_ignore_unused(register_node(file_header.hostname));
+        auto& local_storage = process_local_storage(file_header);
+        if (event.rank >= 0) {
+            local_storage.rank = event.rank;
+        }
+    }
+
 private:
     // TODO: Set to true when we get the first ibv_open_device
     // Not used currently
@@ -2459,6 +2490,9 @@ private:
         NicId nic_id{0};
         bool has_nic{false};
         std::string layer{"ibv"}; // "ibv", "ucx", or "libfabric"
+        uint64_t endpoint_id{0};  // ep_addr for UCX/libfabric, src_qpn for IBV
+        int32_t rank{-1};
+        ProcessId process_id{0};
     };
     std::vector<CommSummaryEntry> m_comm_summaries;
 
@@ -2502,6 +2536,7 @@ private:
     }
 
     // Convert accumulated EP traffic into CommSummaryEntry records
+    // When EP -> QP mapping exists, merge into existing IBV entry
     void finalize_ep_traffic() {
         for (const auto& [key, stats]: m_ep_traffic) {
             // Try to resolve EP → QP for cross-layer correlation
@@ -2512,6 +2547,25 @@ private:
             const auto qp_it = ep_map.find(key.ep_addr);
             const uint32_t qp_num = qp_it != ep_map.end() ? static_cast<uint32_t>(qp_it->second) : 0;
 
+            // When a real QP mapping exists, merge into the existing IBV CommSummaryEntry
+            if (qp_num != 0) {
+                bool merged = false;
+                for (auto& existing: m_comm_summaries) {
+                    if (existing.hostname == key.hostname && existing.summary.src_qpn == qp_num &&
+                        existing.layer == "ibv") {
+                        existing.summary.bytes_sent += stats.bytes_sent;
+                        existing.summary.bytes_recv += stats.bytes_recv;
+                        existing.summary.send_count += stats.send_count;
+                        existing.summary.recv_count += stats.recv_count;
+                        merged = true;
+                        break;
+                    }
+                }
+                if (merged)
+                    continue;
+            }
+
+            // No QP mapping or no existing IBV entry — create standalone EP node
             NicId nic_id = 0;
             bool has_nic = false;
             GpuId_T gpu_id = -1;
@@ -2541,6 +2595,9 @@ private:
             entry.nic_id = nic_id;
             entry.has_nic = has_nic;
             entry.layer = key.is_ucx ? "ucx" : "libfabric";
+            entry.endpoint_id = key.ep_addr;
+            entry.rank = local_storage.rank;
+            entry.process_id = key.process_id;
 
             // Use ep_addr as a synthetic "QPN" when no real QP mapping exists
             // so the node gets a unique ID in the graph
@@ -2598,6 +2655,16 @@ private:
     }
     // ================================================================
 
+    // Helper: node ID prefix based on layer
+    static std::string make_node_id(const std::string& hostname, const std::string& layer, uint32_t src_qpn,
+                                    uint64_t endpoint_id) {
+        if (layer == "ibv") {
+            return hostname + "_qp" + std::to_string(src_qpn);
+        }
+        // UCX/libfabric: use _ep prefix with endpoint_id
+        return hostname + "_ep" + std::to_string(endpoint_id != 0 ? endpoint_id : src_qpn);
+    }
+
     // Write communication graph JSON
     void write_comm_graph_json(const std::filesystem::path& output_path) const {
         if (m_comm_summaries.empty())
@@ -2612,10 +2679,14 @@ private:
             return;
         }
 
-        // Build reverse lookup: src_qpn -> (hostname, qpn) for resolving dest node IDs
-        absl::flat_hash_map<uint32_t, std::string> qpn_to_hostname;
+        // Build reverse lookup: full node ID string -> exists, for resolving dest edges
+        absl::flat_hash_set<std::string> all_node_ids;
+        // Also: src_qpn -> list of node IDs (for dest resolution)
+        absl::flat_hash_map<uint32_t, std::vector<std::string>> qpn_to_node_ids;
         for (const auto& entry: m_comm_summaries) {
-            qpn_to_hostname[entry.summary.src_qpn] = entry.hostname;
+            std::string nid = make_node_id(entry.hostname, entry.layer, entry.summary.src_qpn, entry.endpoint_id);
+            all_node_ids.insert(nid);
+            qpn_to_node_ids[entry.summary.src_qpn].push_back(nid);
         }
 
         // Build nodes and edges
@@ -2625,7 +2696,7 @@ private:
 
         for (const auto& entry: m_comm_summaries) {
             const auto& s = entry.summary;
-            std::string node_id = entry.hostname + "_qp" + std::to_string(s.src_qpn);
+            std::string node_id = make_node_id(entry.hostname, entry.layer, s.src_qpn, entry.endpoint_id);
             if (emitted_nodes.contains(node_id))
                 continue;
             emitted_nodes.insert(node_id);
@@ -2634,15 +2705,28 @@ private:
                 out << ",\n";
             first_node = false;
 
-            out << "    {\"id\": \"" << node_id << "\", \"hostname\": \"" << entry.hostname
-                << "\", \"qpn\": " << s.src_qpn << ", \"gpu_id\": " << s.gpu_id << ", \"type\": \""
-                << (s.gpu_id >= 0 ? "gpu" : "cpu") << "\"";
+            out << R"(    {"id": ")" << node_id << R"(", "hostname": ")" << entry.hostname << "\"";
+
+            // Layer-specific fields
+            if (entry.layer == "ibv") {
+                out << ", \"qpn\": " << s.src_qpn;
+            } else {
+                out << ", \"endpoint_id\": " << entry.endpoint_id;
+            }
+
+            out << ", \"gpu_id\": " << s.gpu_id << ", \"type\": \"" << (s.gpu_id >= 0 ? "gpu" : "cpu") << "\"";
 
             if (entry.has_nic) {
                 out << ", \"nic_id\": " << entry.nic_id;
             }
 
-            out << ", \"layer\": \"" << entry.layer << "\"}";
+            out << R"(, "layer": ")" << entry.layer << "\"";
+
+            // Rank and process_id
+            out << ", \"rank\": " << entry.rank;
+            out << ", \"process_id\": " << entry.process_id;
+
+            out << "}";
         }
 
         out << "\n  ],\n  \"edges\": [\n";
@@ -2657,18 +2741,28 @@ private:
                 out << ",\n";
             first_edge = false;
 
-            // Resolve destination node ID
+            std::string src_id = make_node_id(entry.hostname, entry.layer, s.src_qpn, entry.endpoint_id);
+
+            // Resolve destination node ID by constructing candidate IDs
             std::string dst_id;
-            const auto dst_it = qpn_to_hostname.find(s.dest_qpn);
-            if (dst_it != qpn_to_hostname.end()) {
-                dst_id = dst_it->second + "_qp" + std::to_string(s.dest_qpn);
+            if (s.dest_qpn != 0) {
+                const auto dst_it = qpn_to_node_ids.find(s.dest_qpn);
+                if (dst_it != qpn_to_node_ids.end()) {
+                    // Pick the first matching node (there should only be one per unique QPN in practice)
+                    for (const auto& candidate: dst_it->second) {
+                        if (all_node_ids.contains(candidate)) {
+                            dst_id = candidate;
+                            break;
+                        }
+                    }
+                }
             }
 
             out << "    {"
-                << "\"src\": \"" << entry.hostname << "_qp" << s.src_qpn << "\"";
+                << R"("src": ")" << src_id << "\"";
 
             if (!dst_id.empty()) {
-                out << ", \"dst\": \"" << dst_id << "\"";
+                out << R"(, "dst": ")" << dst_id << "\"";
             }
 
             out << ", \"dst_qpn\": " << s.dest_qpn << ", \"bytes_sent\": " << s.bytes_sent

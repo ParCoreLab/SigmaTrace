@@ -19,6 +19,7 @@ if (SIGMA_HAS_CUDA)
 endif ()
 add_subdirectory(Modules/MemoryHijack)
 #add_subdirectory(Modules/GPUMemoryHijack)
+add_subdirectory(Modules/RankDetector)
 # ================================================================
 
 # ================================================================

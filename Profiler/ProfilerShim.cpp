@@ -21,6 +21,8 @@
 #include "Events/IbvEvents.hpp"
 #endif
 
+#include "Modules/RankDetector/RankDetection.hpp"
+
 #include "ProfilerShim.hpp"
 
 // Global Profiler instance
@@ -205,6 +207,25 @@ void ProfilerCtx::LateLoad() {
             .tsc_freq_hz = snapshot.tsc_freq_hz,
     };
     m_event_recorder->Record(calibration, 0);
+
+    // Get rank from user args or the environment and record ProcessInfo event
+    Profiler::Events::ProcessInfo process_info{};
+    if (m_args.RankHint.has_value()) {
+        const auto rank_hint = m_args.RankHint.value();
+        process_info = {
+                .rank = rank_hint,
+                .local_rank = rank_hint,
+                .world_size = rank_hint,
+        };
+    } else {
+        const auto rank_info = Profiler::GetRankInfo();
+        process_info = {
+                .rank = rank_info.rank,
+                .local_rank = rank_info.local_rank,
+                .world_size = rank_info.world_size,
+        };
+    }
+    m_event_recorder->Record(process_info, 0);
 
     if constexpr (Profiler::Features::HasCUDA) {
         smart_dlsym::real_dlopen("libcuda.so", RTLD_LAZY | RTLD_GLOBAL);

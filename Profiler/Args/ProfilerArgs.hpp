@@ -2,6 +2,7 @@
 
 #include <concepts>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,21 @@
 #define INTERNAL_CONVERT_FIELD_ENV(field_name) make_env_entry(#field_name, field_name)
 
 namespace Profiler {
+    // Helper concepts
+    namespace detail {
+        template<typename T>
+        struct is_std_optional : std::false_type {};
+
+        template<typename U>
+        struct is_std_optional<std::optional<U>> : std::true_type {};
+
+        template<typename T>
+        inline constexpr bool is_std_optional_v = is_std_optional<T>::value;
+
+        template<typename T>
+        concept Optional = is_std_optional_v<T>;
+    } // namespace detail
+
     enum class ProfilerTraceMode {
         Error = 0,
         Aggregate,
@@ -80,10 +96,11 @@ namespace Profiler {
         bool OutputOverwrite;
 
         ProfilerTraceMode TraceMode;
+        std::optional<int32_t> RankHint;
 
         int Check{CheckVal};
 
-        [[nodiscard]] std::array<std::string, 11> to_env() const {
+        [[nodiscard]] std::array<std::string, 12> to_env() const {
             return {
                     INTERNAL_CONVERT_FIELD_ENV(ShimDirectory),        //
                     INTERNAL_CONVERT_FIELD_ENV(LoadIbtrace),          //
@@ -95,6 +112,7 @@ namespace Profiler {
                     INTERNAL_CONVERT_FIELD_ENV(OutputDirectory),      //
                     INTERNAL_CONVERT_FIELD_ENV(OutputOverwrite),      //
                     INTERNAL_CONVERT_FIELD_ENV(TraceMode),            //
+                    INTERNAL_CONVERT_FIELD_ENV(RankHint),             //
                     INTERNAL_CONVERT_FIELD_ENV(Check),                //
 
             };
@@ -113,6 +131,7 @@ namespace Profiler {
                     INTERNAL_PARSE_ENV_FIELD(OutputDirectory),      //
                     INTERNAL_PARSE_ENV_FIELD(OutputOverwrite),      //
                     INTERNAL_PARSE_ENV_FIELD(TraceMode),            //
+                    INTERNAL_PARSE_ENV_FIELD(RankHint),             //
                     INTERNAL_PARSE_ENV_FIELD(Check),                //
             };
         }
@@ -150,6 +169,62 @@ namespace Profiler {
         }
 
         template<typename T>
+        [[nodiscard]] static std::string make_env_entry(std::string_view name, std::optional<T> value) {
+            if (!value.has_value()) {
+                return std::string{EnvPrefix} + std::string{name} + "=\"\"";
+            }
+
+            return std::string{EnvPrefix} + std::string{name} + "=\"" + value_to_string(std::move(value.value())) +
+                   "\"";
+        }
+
+        template<typename T>
+        [[nodiscard]] static T parse_str(const std::string_view value_str, const std::string& env_name) {
+            // We need a null terminated string after this point
+            std::string val_str_unwrapped{value_str.begin() + 1, value_str.end() - 1};
+
+            if constexpr (std::is_same_v<T, bool>) {
+                if (val_str_unwrapped == "1") {
+                    return true;
+                }
+
+                if (val_str_unwrapped == "0") {
+                    return false;
+                }
+
+                throw std::runtime_error("Invalid value from " + env_name + ": " + val_str_unwrapped);
+            }
+
+            if constexpr (std::is_integral_v<T>) {
+                if constexpr (std::is_signed_v<T>) {
+                    auto parsed_value = std::stoll(val_str_unwrapped);
+                    return static_cast<T>(parsed_value);
+                } else /* if constexpr (!std::is_signed_v<T>) */ {
+                    auto parsed_value = std::stoull(val_str_unwrapped);
+                    return static_cast<T>(parsed_value);
+                }
+            } else if constexpr (std::constructible_from<std::string, T>) {
+                return val_str_unwrapped;
+            } else if constexpr (requires(std::istream& is, T v) { is >> v; }) {
+                T parsed_val{};
+                std::istringstream iss{val_str_unwrapped};
+                if (!(iss >> parsed_val)) {
+                    throw std::runtime_error("Invalid value from " + env_name + ": " + val_str_unwrapped);
+                }
+
+                return parsed_val;
+            } else {
+                // Failsafe if the class has unsupported types
+                // DR on some compilers (<= GCC 12)
+                // https://www.reddit.com/r/cpp_questions/comments/1it55nq/gcc_114clang_14_static_assert_hits_even_without/
+                static_assert(sizeof(T) && false);
+            }
+
+            throw std::runtime_error("Invalid value from " + env_name + ": " + val_str_unwrapped);
+        }
+
+
+        template<typename T>
         [[nodiscard]] static T parse_env(const std::string_view name) {
             const auto env_name = std::string{EnvPrefix} + std::string{name};
 
@@ -167,47 +242,29 @@ namespace Profiler {
                 throw std::runtime_error("Invalid value from " + env_name + ": " + std::string{val});
             }
 
-            // We need a null terminated string after this point
-            std::string val_str_unwrapped{val_str.begin() + 1, val_str.end() - 1};
+            return parse_str<T>(val_str, env_name);
+        }
 
-            if constexpr (std::is_same_v<T, bool>) {
-                if (val_str_unwrapped == "1") {
-                    return true;
-                }
+        // TODO: repeated code
+        template<detail::Optional T>
+        [[nodiscard]] static T parse_env(const std::string_view name) {
+            const auto env_name = std::string{EnvPrefix} + std::string{name};
 
-                if (val_str_unwrapped == "0") {
-                    return false;
-                }
-
-                throw std::runtime_error("Invalid value from " + env_name + ": " + std::string{val});
+            const char* val = std::getenv(env_name.c_str());
+            if (val == nullptr) {
+                return std::nullopt;
             }
 
-            if constexpr (std::is_integral_v<T>) {
-                if constexpr (std::is_signed_v<T>) {
-                    auto parsed_value = std::stoll(val_str_unwrapped);
-                    return static_cast<T>(parsed_value);
-                } else /* if constexpr (!std::is_signed_v<T>) */ {
-                    auto parsed_value = std::stoull(val_str_unwrapped);
-                    return static_cast<T>(parsed_value);
-                }
-            } else if constexpr (std::constructible_from<std::string, T>) {
-                return val_str_unwrapped;
-            } else if constexpr (requires(std::istream& is, T v) { is >> v; }) {
-                T parsed_val{};
-                std::istringstream iss{val_str_unwrapped};
-                if (!(iss >> parsed_val)) {
-                    throw std::runtime_error("Invalid value from " + env_name + ": " + std::string{val});
-                }
-
-                return parsed_val;
-            } else {
-                // Failsafe if the class has unsupported types
-                // DR on some compilers (<= GCC 12)
-                // https://www.reddit.com/r/cpp_questions/comments/1it55nq/gcc_114clang_14_static_assert_hits_even_without/
-                static_assert(sizeof(T) && false);
+            const std::string_view val_str{val};
+            if (val_str.length() < 3) {
+                return std::nullopt;
             }
 
-            throw std::runtime_error("Invalid value from " + env_name + ": " + std::string{val});
+            if (!(val_str.starts_with('"') && val_str.ends_with('"'))) {
+                return std::nullopt;
+            }
+
+            return T{parse_str<typename T::value_type>(val_str, env_name)};
         }
     };
 } // namespace Profiler

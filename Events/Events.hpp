@@ -17,6 +17,7 @@ namespace Events {
 
         // Meta/calibration events (1-9)
         TscCalibration = 1,
+        ProcessInfo = 2,
 
         // IBVerbs events (100-199)
         IbvDeviceRegistration = 100,
