@@ -86,6 +86,16 @@ namespace Profiler::Events {
         uint64_t ep_addr;
         uint32_t qp_num;
     };
+
+    EVENT_STRUCT UcpWorkerAddress {
+        uint64_t worker_addr;  // worker handle (same as UcpWorkerCreate)
+        uint64_t address_hash; // hash of serialized UCX address bytes
+    };
+
+    EVENT_STRUCT UcpEpConnection {
+        uint64_t ep_addr;          // local endpoint handle
+        uint64_t remote_addr_hash; // hash of remote's serialized UCX address
+    };
 } // namespace Profiler::Events
 
 // clang-format off
@@ -103,4 +113,6 @@ DEFINE_EVENT_TRAIT(Profiler::Events::UcpMemMap, Events::EventTypeId::UcpMemMap, 
 DEFINE_EVENT_TRAIT(Profiler::Events::UcpMemUnmap, Events::EventTypeId::UcpMemUnmap, Events::EventCategory::NIC, "ucp_mem_unmap");
 DEFINE_EVENT_TRAIT(Profiler::Events::UcpWorkerProgress, Events::EventTypeId::UcpWorkerProgress, Events::EventCategory::NIC, "ucp_worker_progress");
 DEFINE_EVENT_TRAIT(Profiler::Events::UcpEpQpMapping, Events::EventTypeId::UcpEpQpMapping, Events::EventCategory::NIC, "UCX EP-QP Mapping");
+DEFINE_EVENT_TRAIT(Profiler::Events::UcpWorkerAddress, Events::EventTypeId::UcpWorkerAddress, Events::EventCategory::NIC, "ucp_worker_get_address");
+DEFINE_EVENT_TRAIT(Profiler::Events::UcpEpConnection, Events::EventTypeId::UcpEpConnection, Events::EventCategory::NIC, "UCX EP Connection");
 // clang-format on

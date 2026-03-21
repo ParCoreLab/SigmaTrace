@@ -128,6 +128,10 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
     target_link_libraries(${ProfilerShimTarget} PRIVATE EventsLib)
     target_include_directories(${ProfilerShimTarget} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Events")
 
+    target_link_libraries(${ProfilerShimTarget} PRIVATE
+            absl::hash
+            absl::flat_hash_map)
+
     # Make sure we build before the profiler
     add_dependencies(Profiler ${ProfilerShimTarget})
     target_link_libraries(Profiler PRIVATE ${SIGMA_PROVIDER_PATHS_TARGET})

@@ -2,6 +2,8 @@
 #include "../ProfilerShim.hpp"
 #include "Common.hpp"
 
+#include <absl/hash/hash.h>
+
 #include "../Events/UcxEvents.hpp"
 #include "UcxEventSource.hpp"
 
@@ -46,18 +48,76 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
         instance().m_event_recorder->Record(event, ts_start);
     });
 
-    m_ucx_profiler->register_post<ucx::ucp_ep_create_tag>([](ucs_status_t status, ucp_worker_h worker,
-                                                             const ucp_ep_params_t*, ucp_ep_h* ep_p,
-                                                             const auto ts_start, const auto ts_end) {
-        if (status != 0 || !ep_p || !*ep_p) {
+    m_ucx_profiler->register_post<ucx::ucp_worker_get_address_tag>([](ucs_status_t status, ucp_worker_h worker,
+                                                                      ucp_address_t** addr_p, size_t* len_p,
+                                                                      const auto ts_start, const auto ts_end) {
+        if (status != 0 || !addr_p || !*addr_p || !len_p || *len_p == 0) {
             return;
         }
 
-        const Profiler::Events::UcpEpCreate event{
+        const auto hash = absl::HashOf(std::string_view(reinterpret_cast<const char*>(*addr_p), *len_p));
+
+        // Store address length for hashing remote addresses in ucp_ep_create
+        instance().m_ucx_worker_addr_length = *len_p;
+
+        const Profiler::Events::UcpWorkerAddress event{
                 .worker_addr = reinterpret_cast<uint64_t>(worker),
-                .ep_addr = reinterpret_cast<uint64_t>(*ep_p),
+                .address_hash = hash,
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+    });
+
+    // Pre-hook: signal that UCX EP creation is in progress on this thread
+    m_ucx_profiler->register_pre<ucx::ucp_ep_create_tag>(
+            [](ucp_worker_h, const ucp_ep_params_t*, ucp_ep_h*, const auto) {
+        t_ucx_ep_creating = true;
+        t_ucx_captured_qpn = 0;
+    });
+
+    m_ucx_profiler->register_post<ucx::ucp_ep_create_tag>([](ucs_status_t status, ucp_worker_h worker,
+                                                             const ucp_ep_params_t* params, ucp_ep_h* ep_p,
+                                                             const auto ts_start, const auto ts_end) {
+        if (status != 0 || !ep_p || !*ep_p) {
+            t_ucx_ep_creating = false;
+            return;
+        }
+
+        const auto ep_addr = reinterpret_cast<uint64_t>(*ep_p);
+
+        const Profiler::Events::UcpEpCreate event{
+                .worker_addr = reinterpret_cast<uint64_t>(worker),
+                .ep_addr = ep_addr,
+        };
+        instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        // UCX-native destination: hash the remote worker address from params
+        if (params && (params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS) && params->address) {
+            const size_t addr_len = instance().m_ucx_worker_addr_length;
+            if (addr_len > 0) {
+                const auto remote_hash =
+                        absl::HashOf(std::string_view(reinterpret_cast<const char*>(params->address), addr_len));
+
+                const Profiler::Events::UcpEpConnection conn_event{
+                        .ep_addr = ep_addr,
+                        .remote_addr_hash = remote_hash,
+                };
+                instance().m_event_recorder->Record(conn_event, ts_start, ts_end);
+            }
+        }
+
+        // IBV QP correlation: if ibv_create_qp was called during EP creation, capture the mapping
+        t_ucx_ep_creating = false;
+        if (t_ucx_captured_qpn != 0) {
+            const uint32_t qpn = t_ucx_captured_qpn;
+            t_ucx_captured_qpn = 0;
+
+            {
+                std::scoped_lock lock(instance().m_ucx_ep_qp_mutex);
+                instance().m_ucx_ep_qp_map[ep_addr] = qpn;
+            }
+
+            instance().m_event_recorder->Record(Profiler::Events::UcpEpQpMapping{.ep_addr = ep_addr, .qp_num = qpn}, 0);
+        }
     });
 
     m_ucx_profiler->register_pre<ucx::ucp_ep_close_nbx_tag>(

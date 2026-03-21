@@ -14,6 +14,8 @@ set(ABSL_BUILD_TESTING OFF)
 set(ABSL_USE_GOOGLETEST_HEAD OFF)
 set(ABSL_PROPAGATE_CXX_STD ON)
 set(ABSL_ENABLE_INSTALL ON)
+# Required when linking abseil static libs into shared libraries (e.g. libProfilerShim.so)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if (BUILD_ABSEIL)
     # Prefer building from source; fall back to system if source unavailable

@@ -37,6 +37,11 @@ extern "C" void ucp_worker_destroy(ucp_worker_h worker) {
     /* return */ ucx::Profiler::invoke_preload<ucx::ucp_worker_destroy_tag>(worker);
 }
 
+extern "C" ucs_status_t ucp_worker_get_address(ucp_worker_h worker, ucp_address_t** address_p,
+                                               size_t* address_length_p) {
+    return ucx::Profiler::invoke_preload<ucx::ucp_worker_get_address_tag>(worker, address_p, address_length_p);
+}
+
 extern "C" ucs_status_t ucp_ep_create(ucp_worker_h worker, const ucp_ep_params_t* params, ucp_ep_h* ep_p) {
     return ucx::Profiler::invoke_preload<ucx::ucp_ep_create_tag>(worker, params, ep_p);
 }

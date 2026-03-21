@@ -99,6 +99,8 @@ namespace Events {
         UcpMemUnmap,
         UcpWorkerProgress,
         UcpEpQpMapping,
+        UcpWorkerAddress,
+        UcpEpConnection,
 
         // User-defined events start at 1000
         UserDefined = 1000,

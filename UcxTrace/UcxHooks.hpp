@@ -14,6 +14,7 @@ DEFINE_PRELOAD_HOOK(ucx, ucp_init_version, "ucp_init_version", ucs_status_t, uns
 DEFINE_PRELOAD_HOOK(ucx, ucp_cleanup, "ucp_cleanup", std::monostate, ucp_context_h);
 DEFINE_PRELOAD_HOOK(ucx, ucp_worker_create, "ucp_worker_create", ucs_status_t, ucp_context_h, const ucp_worker_params_t*, ucp_worker_h*);
 DEFINE_PRELOAD_HOOK(ucx, ucp_worker_destroy, "ucp_worker_destroy", std::monostate, ucp_worker_h);
+DEFINE_PRELOAD_HOOK(ucx, ucp_worker_get_address, "ucp_worker_get_address", ucs_status_t, ucp_worker_h, ucp_address_t**, size_t*);
 DEFINE_PRELOAD_HOOK(ucx, ucp_ep_create, "ucp_ep_create", ucs_status_t, ucp_worker_h, const ucp_ep_params_t*, ucp_ep_h*);
 DEFINE_PRELOAD_HOOK(ucx, ucp_ep_close_nbx, "ucp_ep_close_nbx", ucs_status_ptr_t, ucp_ep_h, const ucp_request_param_t*);
 

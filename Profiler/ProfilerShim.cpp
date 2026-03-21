@@ -21,6 +21,10 @@
 #include "Events/IbvEvents.hpp"
 #endif
 
+#if SIGMA_HAS_UCX
+#include "Events/UcxEvents.hpp"
+#endif
+
 #include "Modules/RankDetector/RankDetector.hpp"
 
 #include "ProfilerShim.hpp"
@@ -135,18 +139,36 @@ void ProfilerCtx::emit_ucx_summaries() {
 
     using Profiler::Events::CommLayer;
 
+    // Emit EP-level send summaries with destination info when available
     auto merged_send = m_ucx_send_registry.merge_all();
     for (const auto& [ep_addr, stats]: merged_send) {
-        const Profiler::Events::CommunicationSummary summary{
-                .bytes_sent = stats.bytes_sent,
-                .send_count = stats.send_count,
-                .gpu_id = Profiler::Events::UnknownDeviceId,
-                .ep_addr = ep_addr,
-                .layer = CommLayer::UCX,
-        };
+        Profiler::Events::CommunicationSummary summary{};
+        summary.bytes_sent = stats.bytes_sent;
+        summary.send_count = stats.send_count;
+        summary.gpu_id = Profiler::Events::UnknownDeviceId;
+        summary.ep_addr = ep_addr;
+        summary.layer = CommLayer::UCX;
+
+        // If we have IBV QP mapping, populate dest fields from IBV connection info
+        {
+            std::scoped_lock lock(m_ucx_ep_qp_mutex);
+            auto qp_it = m_ucx_ep_qp_map.find(ep_addr);
+            if (qp_it != m_ucx_ep_qp_map.end()) {
+                summary.src_qpn = qp_it->second;
+#if SIGMA_HAS_RDMA_CORE
+                auto conn_it = m_qp_connections.find(qp_it->second);
+                if (conn_it != m_qp_connections.end()) {
+                    summary.dest_qpn = conn_it->second.dest_qpn;
+                    summary.dest_lid = conn_it->second.dest_lid;
+                }
+#endif
+            }
+        }
+
         m_event_recorder->Record(summary, 0);
     }
 
+    // Emit worker-level recv summaries (total incoming per worker)
     auto merged_recv = m_ucx_recv_registry.merge_all();
     for (const auto& [worker_addr, stats]: merged_recv) {
         const Profiler::Events::CommunicationSummary summary{
@@ -157,6 +179,14 @@ void ProfilerCtx::emit_ucx_summaries() {
                 .layer = CommLayer::UCX,
         };
         m_event_recorder->Record(summary, 0);
+    }
+
+    // Emit EP-QP mappings (shutdown fallback for any not emitted during EP creation)
+    {
+        std::scoped_lock lock(m_ucx_ep_qp_mutex);
+        for (const auto& [ep_addr, qpn]: m_ucx_ep_qp_map) {
+            m_event_recorder->Record(Profiler::Events::UcpEpQpMapping{.ep_addr = ep_addr, .qp_num = qpn}, 0);
+        }
     }
 }
 #endif // SIGMA_HAS_UCX
@@ -267,6 +297,7 @@ void ProfilerCtx::LateLoadCUDA() {
 // TODO: this might miss the real first initialization
 // However, an actual symbol override can break things
 // This should also be done on cuGetExportTable or something
+extern "C" CUresult Fake_cuInit(unsigned int Flags);
 extern "C" CUresult Fake_cuInit(unsigned int Flags) {
     auto* real_cuInit = reinterpret_cast<decltype(cuInit)*>(Profiler::CudaExportTable::get_real_cu_func("cuInit"));
     if (!real_cuInit) {

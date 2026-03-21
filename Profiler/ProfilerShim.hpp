@@ -266,6 +266,14 @@ struct ProfilerCtx {
 #if SIGMA_HAS_UCX
     ThreadLocalRegistry<uint64_t, EndpointTrafficStats> m_ucx_send_registry; // keyed by ep_addr
     ThreadLocalRegistry<uint64_t, EndpointTrafficStats> m_ucx_recv_registry; // keyed by worker_addr
+
+    // UCX-native destination resolution: worker address length for hashing remote addresses
+    size_t m_ucx_worker_addr_length{0};
+
+    // Thread-local correlation: ep_addr → qp_num discovered during ucp_ep_create
+    std::mutex m_ucx_ep_qp_mutex;
+    std::unordered_map<uint64_t, uint32_t> m_ucx_ep_qp_map; // ep_addr → qpn
+
     void emit_ucx_summaries();
 #endif
 #if SIGMA_HAS_LIBFABRIC
@@ -363,6 +371,12 @@ struct ProfilerCtx {
 
 // Pointer to better control the lifetime
 extern ProfilerCtx* g_ProfilerInstance;
+
+#if SIGMA_HAS_UCX
+// Thread-local correlation: set during ucp_ep_create so ibv_create_qp can capture the QPN
+inline thread_local bool t_ucx_ep_creating = false;
+inline thread_local uint32_t t_ucx_captured_qpn = 0;
+#endif
 
 static inline ProfilerCtx& instance() {
     return *g_ProfilerInstance;

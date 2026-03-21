@@ -33,6 +33,13 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir, const Profiler
                 .qp_num = out_qp->qp_num,
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+#if SIGMA_HAS_UCX
+        // Thread-local correlation: if this QP was created during ucp_ep_create, capture it
+        if (t_ucx_ep_creating && out_qp->qp_num != 0) {
+            t_ucx_captured_qpn = out_qp->qp_num;
+        }
+#endif
     });
 
     m_ibv_profiler->register_pre<ibv::destroy_qp_tag>([](ibv_qp* qp, const auto ts_start) {
