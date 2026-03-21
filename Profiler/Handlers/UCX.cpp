@@ -3,10 +3,7 @@
 #include "Common.hpp"
 
 #include <absl/hash/hash.h>
-#include <dlfcn.h>
-
 #include "../Events/UcxEvents.hpp"
-#include "Dlsym.hpp"
 #include "UcxEventSource.hpp"
 
 // Length of the UCX address prefix to hash for cross-process correlation.
@@ -45,30 +42,6 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
                 .worker_addr = reinterpret_cast<uint64_t>(*worker_p),
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
-
-        // Query worker address ourselves (like register_nic does for IBV)
-        // so we always have the address hash for cross-process correlation
-        static auto* fn_get_addr = reinterpret_cast<decltype(ucp_worker_get_address)*>(
-                smart_dlsym::real_dlsym(RTLD_NEXT, "ucp_worker_get_address"));
-        static auto* fn_release_addr = reinterpret_cast<decltype(ucp_worker_release_address)*>(
-                smart_dlsym::real_dlsym(RTLD_NEXT, "ucp_worker_release_address"));
-
-        if (fn_get_addr && fn_release_addr) {
-            ucp_address_t* addr = nullptr;
-            size_t addr_len = 0;
-            if (fn_get_addr(*worker_p, &addr, &addr_len) == UCS_OK && addr && addr_len >= kUcxAddrHashPrefix) {
-                const auto hash = absl::HashOf(
-                        std::string_view(reinterpret_cast<const char*>(addr), kUcxAddrHashPrefix));
-
-                const Profiler::Events::UcpWorkerAddress addr_event{
-                        .worker_addr = reinterpret_cast<uint64_t>(*worker_p),
-                        .address_hash = hash,
-                };
-                instance().m_event_recorder->Record(addr_event, ts_start, ts_end);
-
-                fn_release_addr(*worker_p, addr);
-            }
-        }
     });
 
     m_ucx_profiler->register_pre<ucx::ucp_worker_destroy_tag>([](ucp_worker_h worker, const auto ts_start) {
@@ -86,8 +59,7 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
             return;
         }
 
-        const auto hash = absl::HashOf(
-                std::string_view(reinterpret_cast<const char*>(*addr_p), kUcxAddrHashPrefix));
+        const auto hash = absl::HashOf(std::string_view(reinterpret_cast<const char*>(*addr_p), kUcxAddrHashPrefix));
 
         const Profiler::Events::UcpWorkerAddress event{
                 .worker_addr = reinterpret_cast<uint64_t>(worker),
@@ -119,10 +91,16 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
 
+        // Track active EP for shutdown-time ucp_ep_query
+        {
+            std::scoped_lock lock(instance().m_ucx_ep_mutex);
+            instance().m_ucx_active_eps.insert(ep_addr);
+        }
+
         // UCX-native destination: hash a fixed prefix of the remote worker address
         if (params && (params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS) && params->address) {
-            const auto remote_hash = absl::HashOf(
-                    std::string_view(reinterpret_cast<const char*>(params->address), kUcxAddrHashPrefix));
+            const auto remote_hash =
+                    absl::HashOf(std::string_view(reinterpret_cast<const char*>(params->address), kUcxAddrHashPrefix));
 
             const Profiler::Events::UcpEpConnection conn_event{
                     .ep_addr = ep_addr,
@@ -148,10 +126,16 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
 
     m_ucx_profiler->register_pre<ucx::ucp_ep_close_nbx_tag>(
             [](ucp_ep_h ep, const ucp_request_param_t*, const auto ts_start) {
+        const auto ep_addr = reinterpret_cast<uint64_t>(ep);
         const Profiler::Events::UcpEpClose event{
-                .ep_addr = reinterpret_cast<uint64_t>(ep),
+                .ep_addr = ep_addr,
         };
         instance().m_event_recorder->Record(event, ts_start);
+
+        {
+            std::scoped_lock lock(instance().m_ucx_ep_mutex);
+            instance().m_ucx_active_eps.erase(ep_addr);
+        }
     });
 
     m_ucx_profiler->register_post<ucx::ucp_tag_send_nbx_tag>([](ucs_status_ptr_t request, ucp_ep_h ep, const void*,

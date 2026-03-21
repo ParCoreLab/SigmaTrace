@@ -22,6 +22,9 @@
 #endif
 
 #if SIGMA_HAS_UCX
+#include <absl/hash/hash.h>
+#include <arpa/inet.h>
+#include <ucp/api/ucp.h>
 #include "Events/UcxEvents.hpp"
 #endif
 
@@ -132,12 +135,60 @@ void ProfilerCtx::emit_communication_summaries() {
 #endif // SIGMA_HAS_RDMA_CORE
 
 #if SIGMA_HAS_UCX
+namespace {
+    // Hash a sockaddr's IP address (ignoring port) into a uint64_t
+    uint64_t hash_sockaddr_ip(const struct sockaddr_storage& ss) {
+        if (ss.ss_family == AF_INET) {
+            const auto& sin = reinterpret_cast<const struct sockaddr_in&>(ss);
+            return absl::HashOf(sin.sin_addr.s_addr);
+        } else if (ss.ss_family == AF_INET6) {
+            const auto& sin6 = reinterpret_cast<const struct sockaddr_in6&>(ss);
+            return absl::HashOf(
+                    std::string_view(reinterpret_cast<const char*>(&sin6.sin6_addr), sizeof(sin6.sin6_addr)));
+        }
+        return 0;
+    }
+} // namespace
+
 void ProfilerCtx::emit_ucx_summaries() {
     if (!m_event_recorder) {
         return;
     }
 
     using Profiler::Events::CommLayer;
+
+    // Query active EPs for remote sockaddr via ucp_ep_query
+    // Emit UcpEpConnection (ep -> remote IP hash) and UcpWorkerAddress (local IP hash -> hostname)
+    bool local_addr_emitted = false;
+    {
+        std::scoped_lock lock(m_ucx_ep_mutex);
+        for (const auto ep_addr: m_ucx_active_eps) {
+            auto* ep = reinterpret_cast<ucp_ep_h>(ep_addr);
+            ucp_ep_attr_t attr{};
+            attr.field_mask = UCP_EP_ATTR_FIELD_LOCAL_SOCKADDR | UCP_EP_ATTR_FIELD_REMOTE_SOCKADDR;
+
+            if (ucp_ep_query(ep, &attr) != UCS_OK) {
+                continue;
+            }
+
+            // Emit remote addr hash for this EP
+            const uint64_t remote_hash = hash_sockaddr_ip(attr.remote_sockaddr);
+            if (remote_hash != 0) {
+                m_event_recorder->Record(
+                        Profiler::Events::UcpEpConnection{.ep_addr = ep_addr, .remote_addr_hash = remote_hash}, 0);
+            }
+
+            // Emit local IP hash → hostname once per process
+            if (!local_addr_emitted) {
+                const uint64_t local_hash = hash_sockaddr_ip(attr.local_sockaddr);
+                if (local_hash != 0) {
+                    m_event_recorder->Record(
+                            Profiler::Events::UcpWorkerAddress{.worker_addr = 0, .address_hash = local_hash}, 0);
+                    local_addr_emitted = true;
+                }
+            }
+        }
+    }
 
     // Emit EP-level send summaries with destination info when available
     auto merged_send = m_ucx_send_registry.merge_all();
