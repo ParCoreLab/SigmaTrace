@@ -31,7 +31,12 @@ namespace Launcher {
         }
 
         if (!WIFEXITED(status)) {
-            perror("[Launcher] Child process terminated abnormally");
+            if (WIFSIGNALED(status)) {
+                std::cerr << "[Launcher] Child process killed by signal " << WTERMSIG(status)
+                          << (WCOREDUMP(status) ? " (core dumped)" : "") << std::endl;
+            } else {
+                std::cerr << "[Launcher] Child process terminated abnormally (status=" << status << ")" << std::endl;
+            }
             return 255;
         }
 
