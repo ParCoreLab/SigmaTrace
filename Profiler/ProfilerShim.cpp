@@ -437,6 +437,10 @@ static void profiler_finalize() {
     g_ProfilerInstance = nullptr;
 
     std::cout << "[Profiler] Exited Normally!" << std::endl;
+
+    // Terminate immediately to prevent shared library destructors
+    // from crashing during _dl_fini(). The profiler has already flushed all data.
+    _exit(0);
 }
 
 static void __attribute__((constructor)) init() {
@@ -504,6 +508,7 @@ static void profiler_atfork_child() {
      *Notably, provider handles that are opened with dlopen are kept as is
      */
     auto* new_profiler_instance = new ProfilerCtx(std::move(*g_ProfilerInstance));
+    // TODO: might be a better idea to leak than delete
     delete g_ProfilerInstance;
     g_ProfilerInstance = new_profiler_instance;
 
