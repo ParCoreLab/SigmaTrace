@@ -3,7 +3,6 @@
 #include "Common.hpp"
 
 #include <absl/hash/hash.h>
-#include <arpa/inet.h>
 #include <ucp/api/ucp.h>
 #include "../Events/UcxEvents.hpp"
 #include "UcxEventSource.hpp"
@@ -12,20 +11,6 @@
 // UCX addresses are opaque and variable-length, but the first 32 bytes contain
 // the worker UUID which is sufficient for unique fingerprinting.
 static constexpr size_t kUcxAddrHashPrefix = 32;
-
-namespace {
-    uint64_t hash_sockaddr_ip(const struct sockaddr_storage& ss) {
-        if (ss.ss_family == AF_INET) {
-            const auto& sin = reinterpret_cast<const struct sockaddr_in&>(ss);
-            return absl::HashOf(sin.sin_addr.s_addr);
-        } else if (ss.ss_family == AF_INET6) {
-            const auto& sin6 = reinterpret_cast<const struct sockaddr_in6&>(ss);
-            return absl::HashOf(
-                    std::string_view(reinterpret_cast<const char*>(&sin6.sin6_addr), sizeof(sin6.sin6_addr)));
-        }
-        return 0;
-    }
-} // namespace
 
 // ================================================================================================
 void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler::ProfilerArgs& args) {
@@ -107,33 +92,35 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
 
-        // Query EP for remote sockaddr right after creation (handle is valid now)
+        // Emit local worker address hash (once per worker) for cross-process correlation
         {
-            ucp_ep_attr_t attr{};
-            attr.field_mask = UCP_EP_ATTR_FIELD_LOCAL_SOCKADDR | UCP_EP_ATTR_FIELD_REMOTE_SOCKADDR;
+            static std::mutex s_emitted_mutex;
+            static std::unordered_set<uint64_t> s_emitted_workers;
 
-            if (ucp_ep_query(*ep_p, &attr) == UCS_OK) {
-                const uint64_t remote_hash = hash_sockaddr_ip(attr.remote_sockaddr);
-                if (remote_hash != 0) {
+            const auto worker_addr = reinterpret_cast<uint64_t>(worker);
+            bool need_emit = false;
+            {
+                std::scoped_lock lock(s_emitted_mutex);
+                need_emit = s_emitted_workers.insert(worker_addr).second;
+            }
+
+            if (need_emit) {
+                ucp_address_t* addr = nullptr;
+                size_t addr_len = 0;
+                if (ucp_worker_get_address(worker, &addr, &addr_len) == UCS_OK && addr && addr_len >= kUcxAddrHashPrefix) {
+                    const auto local_hash = absl::HashOf(
+                            std::string_view(reinterpret_cast<const char*>(addr), kUcxAddrHashPrefix));
+                    std::cerr << "[Profiler] Worker " << std::hex << worker_addr << std::dec
+                              << " local_addr_hash=" << local_hash << " len=" << addr_len << std::endl;
                     instance().m_event_recorder->Record(
-                            Profiler::Events::UcpEpConnection{.ep_addr = ep_addr, .remote_addr_hash = remote_hash},
+                            Profiler::Events::UcpWorkerAddress{.worker_addr = worker_addr, .address_hash = local_hash},
                             ts_start, ts_end);
-                }
-
-                const uint64_t local_hash = hash_sockaddr_ip(attr.local_sockaddr);
-                if (local_hash != 0) {
-                    // Emit once per process — use atomic flag
-                    static std::atomic<bool> s_local_emitted{false};
-                    if (!s_local_emitted.exchange(true)) {
-                        instance().m_event_recorder->Record(
-                                Profiler::Events::UcpWorkerAddress{.worker_addr = 0, .address_hash = local_hash},
-                                ts_start, ts_end);
-                    }
+                    ucp_worker_release_address(worker, addr);
                 }
             }
         }
 
-        // Fallback: hash remote worker address prefix if sockaddr not available
+        // Hash remote worker address prefix for destination correlation
         if (params && (params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS) && params->address) {
             const auto remote_hash =
                     absl::HashOf(std::string_view(reinterpret_cast<const char*>(params->address), kUcxAddrHashPrefix));
