@@ -3,8 +3,10 @@
 #include "Common.hpp"
 
 #include <absl/hash/hash.h>
+#include <dlfcn.h>
 
 #include "../Events/UcxEvents.hpp"
+#include "Dlsym.hpp"
 #include "UcxEventSource.hpp"
 
 // ================================================================================================
@@ -38,6 +40,31 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
                 .worker_addr = reinterpret_cast<uint64_t>(*worker_p),
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
+
+        // Query worker address ourselves (like register_nic does for IBV)
+        // so we always have the address hash for cross-process correlation
+        static auto* fn_get_addr = reinterpret_cast<decltype(ucp_worker_get_address)*>(
+                smart_dlsym::real_dlsym(RTLD_NEXT, "ucp_worker_get_address"));
+        static auto* fn_release_addr = reinterpret_cast<decltype(ucp_worker_release_address)*>(
+                smart_dlsym::real_dlsym(RTLD_NEXT, "ucp_worker_release_address"));
+
+        if (fn_get_addr && fn_release_addr) {
+            ucp_address_t* addr = nullptr;
+            size_t addr_len = 0;
+            if (fn_get_addr(*worker_p, &addr, &addr_len) == UCS_OK && addr && addr_len > 0) {
+                instance().m_ucx_worker_addr_length = addr_len;
+
+                const auto hash = absl::HashOf(std::string_view(reinterpret_cast<const char*>(addr), addr_len));
+
+                const Profiler::Events::UcpWorkerAddress addr_event{
+                        .worker_addr = reinterpret_cast<uint64_t>(*worker_p),
+                        .address_hash = hash,
+                };
+                instance().m_event_recorder->Record(addr_event, ts_start, ts_end);
+
+                fn_release_addr(*worker_p, addr);
+            }
+        }
     });
 
     m_ucx_profiler->register_pre<ucx::ucp_worker_destroy_tag>([](ucp_worker_h worker, const auto ts_start) {
