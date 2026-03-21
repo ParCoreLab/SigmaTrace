@@ -9,6 +9,11 @@
 #include "Dlsym.hpp"
 #include "UcxEventSource.hpp"
 
+// Length of the UCX address prefix to hash for cross-process correlation.
+// UCX addresses are opaque and variable-length, but the first 32 bytes contain
+// the worker UUID which is sufficient for unique fingerprinting.
+static constexpr size_t kUcxAddrHashPrefix = 32;
+
 // ================================================================================================
 void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler::ProfilerArgs& args) {
     m_ucx_profiler = load_provider<ucx::Profiler>(shim_dir / Profiler::SIGMA_UCX_PROVIDER_PATH);
@@ -51,10 +56,9 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
         if (fn_get_addr && fn_release_addr) {
             ucp_address_t* addr = nullptr;
             size_t addr_len = 0;
-            if (fn_get_addr(*worker_p, &addr, &addr_len) == UCS_OK && addr && addr_len > 0) {
-                instance().m_ucx_worker_addr_length = addr_len;
-
-                const auto hash = absl::HashOf(std::string_view(reinterpret_cast<const char*>(addr), addr_len));
+            if (fn_get_addr(*worker_p, &addr, &addr_len) == UCS_OK && addr && addr_len >= kUcxAddrHashPrefix) {
+                const auto hash = absl::HashOf(
+                        std::string_view(reinterpret_cast<const char*>(addr), kUcxAddrHashPrefix));
 
                 const Profiler::Events::UcpWorkerAddress addr_event{
                         .worker_addr = reinterpret_cast<uint64_t>(*worker_p),
@@ -78,14 +82,12 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
     m_ucx_profiler->register_post<ucx::ucp_worker_get_address_tag>([](ucs_status_t status, ucp_worker_h worker,
                                                                       ucp_address_t** addr_p, size_t* len_p,
                                                                       const auto ts_start, const auto ts_end) {
-        if (status != 0 || !addr_p || !*addr_p || !len_p || *len_p == 0) {
+        if (status != 0 || !addr_p || !*addr_p || !len_p || *len_p < kUcxAddrHashPrefix) {
             return;
         }
 
-        const auto hash = absl::HashOf(std::string_view(reinterpret_cast<const char*>(*addr_p), *len_p));
-
-        // Store address length for hashing remote addresses in ucp_ep_create
-        instance().m_ucx_worker_addr_length = *len_p;
+        const auto hash = absl::HashOf(
+                std::string_view(reinterpret_cast<const char*>(*addr_p), kUcxAddrHashPrefix));
 
         const Profiler::Events::UcpWorkerAddress event{
                 .worker_addr = reinterpret_cast<uint64_t>(worker),
@@ -117,19 +119,16 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
 
-        // UCX-native destination: hash the remote worker address from params
+        // UCX-native destination: hash a fixed prefix of the remote worker address
         if (params && (params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS) && params->address) {
-            const size_t addr_len = instance().m_ucx_worker_addr_length;
-            if (addr_len > 0) {
-                const auto remote_hash =
-                        absl::HashOf(std::string_view(reinterpret_cast<const char*>(params->address), addr_len));
+            const auto remote_hash = absl::HashOf(
+                    std::string_view(reinterpret_cast<const char*>(params->address), kUcxAddrHashPrefix));
 
-                const Profiler::Events::UcpEpConnection conn_event{
-                        .ep_addr = ep_addr,
-                        .remote_addr_hash = remote_hash,
-                };
-                instance().m_event_recorder->Record(conn_event, ts_start, ts_end);
-            }
+            const Profiler::Events::UcpEpConnection conn_event{
+                    .ep_addr = ep_addr,
+                    .remote_addr_hash = remote_hash,
+            };
+            instance().m_event_recorder->Record(conn_event, ts_start, ts_end);
         }
 
         // IBV QP correlation: if ibv_create_qp was called during EP creation, capture the mapping
