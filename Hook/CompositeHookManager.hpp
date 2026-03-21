@@ -274,7 +274,7 @@ namespace hook {
             auto ret = real(args...);
 
             // Skip post hooks if the predicate is false
-            if constexpr (HookTrait<Tag>::predicate_fn) {
+            if constexpr (HookTrait<Tag>::predicate_fn != nullptr) {
                 if (!HookTrait<Tag>::predicate_fn(ret, args...)) {
                     return ret;
                 }
@@ -357,7 +357,7 @@ namespace hook {
             decltype(auto) ret = original(args...);
 
             // Skip post hooks if the predicate is false
-            if constexpr (HookTrait<Tag>::predicate_fn) {
+            if constexpr (HookTrait<Tag>::predicate_fn != nullptr) {
                 if (!HookTrait<Tag>::predicate_fn(ret, args...)) {
                     return ret;
                 }

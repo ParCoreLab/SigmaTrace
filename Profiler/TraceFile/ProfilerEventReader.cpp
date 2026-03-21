@@ -1587,7 +1587,7 @@ public:
                ProfilerEvents::FiEndpointQpMapping&& event) {
         auto& local_storage = process_local_storage(file_header);
         local_storage.fi_ep_to_qp[event.ep_addr] = event.qp_num;
-        m_fi_qps.insert(static_cast<uint32_t>(event.qp_num));
+        m_fi_qps.insert(event.qp_num);
     }
 
     // ========================================================================
@@ -1876,7 +1876,7 @@ public:
                ProfilerEvents::UcpEpQpMapping&& event) {
         auto& local_storage = process_local_storage(file_header);
         local_storage.ucp_ep_to_qp[event.ep_addr] = event.qp_num;
-        m_ucx_qps.insert(static_cast<uint32_t>(event.qp_num));
+        m_ucx_qps.insert(event.qp_num);
     }
 
     // ========================================================================

@@ -33,9 +33,10 @@ set(PROFILER_SHIM_SOURCES
         ProfilerProviders.hpp)
 
 if (SIGMA_HAS_CUDA)
-    list(APPEND PROFILER_SHIM_SOURCES
-            Handlers/CUDAHijack.cpp
-            Handlers/CUPTI.cpp)
+    list(APPEND PROFILER_SHIM_SOURCES Handlers/CUPTI.cpp)
+    if (SIGMA_HAS_RDMA_CORE)
+        list(APPEND PROFILER_SHIM_SOURCES Handlers/CUDAHijack.cpp)
+    endif ()
 endif ()
 
 if (SIGMA_HAS_RDMA_CORE)
