@@ -3,6 +3,8 @@
 #include "Common.hpp"
 
 #include <absl/hash/hash.h>
+#include <arpa/inet.h>
+#include <ucp/api/ucp.h>
 #include "../Events/UcxEvents.hpp"
 #include "UcxEventSource.hpp"
 
@@ -10,6 +12,20 @@
 // UCX addresses are opaque and variable-length, but the first 32 bytes contain
 // the worker UUID which is sufficient for unique fingerprinting.
 static constexpr size_t kUcxAddrHashPrefix = 32;
+
+namespace {
+    uint64_t hash_sockaddr_ip(const struct sockaddr_storage& ss) {
+        if (ss.ss_family == AF_INET) {
+            const auto& sin = reinterpret_cast<const struct sockaddr_in&>(ss);
+            return absl::HashOf(sin.sin_addr.s_addr);
+        } else if (ss.ss_family == AF_INET6) {
+            const auto& sin6 = reinterpret_cast<const struct sockaddr_in6&>(ss);
+            return absl::HashOf(
+                    std::string_view(reinterpret_cast<const char*>(&sin6.sin6_addr), sizeof(sin6.sin6_addr)));
+        }
+        return 0;
+    }
+} // namespace
 
 // ================================================================================================
 void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler::ProfilerArgs& args) {
@@ -91,13 +107,33 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
         };
         instance().m_event_recorder->Record(event, ts_start, ts_end);
 
-        // Track active EP for shutdown-time ucp_ep_query
+        // Query EP for remote sockaddr right after creation (handle is valid now)
         {
-            std::scoped_lock lock(instance().m_ucx_ep_mutex);
-            instance().m_ucx_active_eps.insert(ep_addr);
+            ucp_ep_attr_t attr{};
+            attr.field_mask = UCP_EP_ATTR_FIELD_LOCAL_SOCKADDR | UCP_EP_ATTR_FIELD_REMOTE_SOCKADDR;
+
+            if (ucp_ep_query(*ep_p, &attr) == UCS_OK) {
+                const uint64_t remote_hash = hash_sockaddr_ip(attr.remote_sockaddr);
+                if (remote_hash != 0) {
+                    instance().m_event_recorder->Record(
+                            Profiler::Events::UcpEpConnection{.ep_addr = ep_addr, .remote_addr_hash = remote_hash},
+                            ts_start, ts_end);
+                }
+
+                const uint64_t local_hash = hash_sockaddr_ip(attr.local_sockaddr);
+                if (local_hash != 0) {
+                    // Emit once per process — use atomic flag
+                    static std::atomic<bool> s_local_emitted{false};
+                    if (!s_local_emitted.exchange(true)) {
+                        instance().m_event_recorder->Record(
+                                Profiler::Events::UcpWorkerAddress{.worker_addr = 0, .address_hash = local_hash},
+                                ts_start, ts_end);
+                    }
+                }
+            }
         }
 
-        // UCX-native destination: hash a fixed prefix of the remote worker address
+        // Fallback: hash remote worker address prefix if sockaddr not available
         if (params && (params->field_mask & UCP_EP_PARAM_FIELD_REMOTE_ADDRESS) && params->address) {
             const auto remote_hash =
                     absl::HashOf(std::string_view(reinterpret_cast<const char*>(params->address), kUcxAddrHashPrefix));
@@ -131,11 +167,6 @@ void ProfilerCtx::load_ucx(const std::filesystem::path& shim_dir, const Profiler
                 .ep_addr = ep_addr,
         };
         instance().m_event_recorder->Record(event, ts_start);
-
-        {
-            std::scoped_lock lock(instance().m_ucx_ep_mutex);
-            instance().m_ucx_active_eps.erase(ep_addr);
-        }
     });
 
     m_ucx_profiler->register_post<ucx::ucp_tag_send_nbx_tag>([](ucs_status_ptr_t request, ucp_ep_h ep, const void*,

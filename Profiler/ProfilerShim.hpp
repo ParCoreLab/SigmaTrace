@@ -271,10 +271,6 @@ struct ProfilerCtx {
     std::mutex m_ucx_ep_qp_mutex;
     std::unordered_map<uint64_t, uint32_t> m_ucx_ep_qp_map; // ep_addr → qpn
 
-    // Active UCX endpoints for querying at shutdown
-    std::mutex m_ucx_ep_mutex;
-    std::unordered_set<uint64_t> m_ucx_active_eps; // ep_addr (raw pointer)
-
     void emit_ucx_summaries();
 #endif
 #if SIGMA_HAS_LIBFABRIC
