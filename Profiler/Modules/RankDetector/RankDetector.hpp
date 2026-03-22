@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+
+#include <optional>
 
 namespace Profiler {
     struct ProcessRankInfo {
@@ -16,13 +19,31 @@ namespace Profiler {
             return -1;
         }
 
-        return static_cast<int32_t>(std::atoi(val));
+        char* endptr{};
+        errno = 0;
+        const long result = std::strtol(val, &endptr, 10);
+
+        if (endptr == val || *endptr != '\0' || errno == ERANGE) {
+            return -1;
+        }
+
+        return static_cast<int32_t>(result);
     }
 
-    inline ProcessRankInfo GetRankInfo() {
+    inline ProcessRankInfo GetRankInfo(const std::optional<std::string>& env_hint = std::nullopt) {
         ProcessRankInfo info;
 
-        // Priority 1: Open MPI
+        // Try the hint if we have one
+        if (env_hint.has_value()) {
+            if (const auto v = env_int32(env_hint.value().c_str()); v >= 0) {
+                info.rank = v;
+                info.local_rank = v;
+                info.world_size = v;
+                return info;
+            }
+        }
+
+        // Open MPI
         if (auto v = env_int32("OMPI_COMM_WORLD_RANK"); v >= 0) {
             info.rank = v;
             info.local_rank = env_int32("OMPI_COMM_WORLD_LOCAL_RANK");
@@ -30,14 +51,14 @@ namespace Profiler {
             return info;
         }
 
-        // Priority 2: PMI (Intel MPI, MPICH)
+        // PMI (Intel MPI, MPICH)
         if (auto v = env_int32("PMI_RANK"); v >= 0) {
             info.rank = v;
             info.world_size = env_int32("PMI_SIZE");
             return info;
         }
 
-        // Priority 3: SLURM
+        // SLURM
         if (const auto v = env_int32("SLURM_PROCID"); v >= 0) {
             info.rank = v;
             info.local_rank = env_int32("SLURM_LOCALID");
@@ -45,7 +66,7 @@ namespace Profiler {
             return info;
         }
 
-        // Priority 4: PyTorch
+        // PyTorch
         if (const auto v = env_int32("RANK"); v >= 0) {
             info.rank = v;
             info.local_rank = env_int32("LOCAL_RANK");

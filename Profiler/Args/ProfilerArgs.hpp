@@ -97,10 +97,13 @@ namespace Profiler {
 
         ProfilerTraceMode TraceMode;
         std::optional<int32_t> RankHint;
+        std::optional<std::string> RankHintEnv;
+        // TODO: unused for now
+        bool Verbose{false};
 
         int Check{CheckVal};
 
-        [[nodiscard]] std::array<std::string, 12> to_env() const {
+        [[nodiscard]] std::array<std::string, 14> to_env() const {
             return {
                     INTERNAL_CONVERT_FIELD_ENV(ShimDirectory),        //
                     INTERNAL_CONVERT_FIELD_ENV(LoadIbtrace),          //
@@ -113,6 +116,8 @@ namespace Profiler {
                     INTERNAL_CONVERT_FIELD_ENV(OutputOverwrite),      //
                     INTERNAL_CONVERT_FIELD_ENV(TraceMode),            //
                     INTERNAL_CONVERT_FIELD_ENV(RankHint),             //
+                    INTERNAL_CONVERT_FIELD_ENV(RankHintEnv),          //
+                    INTERNAL_CONVERT_FIELD_ENV(Verbose),              //
                     INTERNAL_CONVERT_FIELD_ENV(Check),                //
 
             };
@@ -132,6 +137,8 @@ namespace Profiler {
                     INTERNAL_PARSE_ENV_FIELD(OutputOverwrite),      //
                     INTERNAL_PARSE_ENV_FIELD(TraceMode),            //
                     INTERNAL_PARSE_ENV_FIELD(RankHint),             //
+                    INTERNAL_PARSE_ENV_FIELD(RankHintEnv),          //
+                    INTERNAL_PARSE_ENV_FIELD(Verbose),              //
                     INTERNAL_PARSE_ENV_FIELD(Check),                //
             };
         }
