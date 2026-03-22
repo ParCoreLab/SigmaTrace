@@ -16,6 +16,7 @@ namespace Launcher {
 
         // Child
         if (pid == 0) {
+            std::cout << "[Launcher] Launching " << program_bin.data() << std::endl;
             execvpe(program_bin.data(), const_cast<char**>(program_args.data()),
                     const_cast<char**>(program_env.data()));
             perror("[Launcher] execvpe");
