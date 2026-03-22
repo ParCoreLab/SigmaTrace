@@ -146,7 +146,8 @@ namespace Profiler {
                             .options(all)
                             .positional(positional)
                             .allow_unregistered()
-                            .style(po::command_line_style::unix_style | po::command_line_style::allow_long_disguise)
+                            .style((po::command_line_style::unix_style & ~po::command_line_style::allow_guessing) |
+                                   po::command_line_style::allow_long_disguise)
                             .run();
 
             auto program_option_it = parsed.options.end();
@@ -159,6 +160,13 @@ namespace Profiler {
                     program_argv_index = argv_cursor;
                     program_option_it = it;
                     break;
+                }
+
+                // Unknown option before the program
+                if (it->unregistered) {
+                    // This ensures the error message is consistent with the rest of the code
+                    throw po::unknown_option(it->original_tokens.empty() ? it->string_key
+                                                                         : it->original_tokens.front());
                 }
 
                 for (const auto& token: it->original_tokens) {
