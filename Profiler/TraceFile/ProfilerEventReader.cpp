@@ -1,6 +1,6 @@
 #include <fstream>
+
 #include <iostream>
-#include <map>
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -11,13 +11,14 @@
 #include "EventReader.hpp"
 #include "EventRecorderConfig.hpp"
 
+#include "Helpers/Utilities.hpp"
+
 #include "../Events/CUDAEvents.hpp"
 #include "../Events/IbvEvents.hpp"
 #include "../Events/LibfabricEvents.hpp"
 #include "../Events/MetaEvents.hpp"
 #include "../Events/Mlx5DvEvents.hpp"
 #include "../Events/UcxEvents.hpp"
-#include "Helpers/Utilities.hpp"
 
 // Convenience
 using Events::EventFileHeader;
@@ -33,8 +34,8 @@ using ThreadId = std::uint64_t;
 using NicId = std::uint64_t;
 
 using EnabledEvents =
-        Events::TypeList<ProfilerEvents::TscCalibration, ProfilerEvents::ProcessInfo, //
-                         ProfilerEvents::IbvDeviceRegistration, // ProfilerEvents::IbvPortRegistration, //
+        Events::TypeList<ProfilerEvents::TscCalibration, ProfilerEvents::ProcessInfo,                               //
+                         ProfilerEvents::IbvDeviceRegistration, ProfilerEvents::IbvPortRegistration,                //
                          ProfilerEvents::IbvOpenDevice, ProfilerEvents::IbvCloseDevice,                             //
                          ProfilerEvents::IbvCreateQp, ProfilerEvents::IbvDestroyQp, ProfilerEvents::IbvModifyQp,    //
                          ProfilerEvents::IbvMemoryReg, ProfilerEvents::IbvMemoryDereg,                              //
@@ -263,7 +264,7 @@ public:
                     std::string_view category) {
         // Safeguard
         if (ts_end == 0 || ts_start > ts_end) {
-            std::cerr << "Received malformed timestamps for add_slice()" << std::endl;
+            // std::cerr << "Received malformed timestamps for add_slice()" << std::endl;
             ts_end = ts_start;
         }
 
@@ -555,7 +556,7 @@ struct ProcessLocalStorage {
     absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_create_close_flows;       // ep_addr -> flow_id
     absl::flat_hash_map<uint64_t, uint64_t> ucp_worker_create_destroy_flows; // worker_addr -> flow_id
     absl::flat_hash_map<uint64_t, uint64_t> ucp_tag_send_flows;              // tag -> flow_id
-    absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_to_qp;                    // ep_addr -> qp_num
+    absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_to_qp;                    // ep_addr -> qp_num1
     // ============================================================================
 };
 
@@ -819,11 +820,12 @@ public:
         m_builder.register_device_track(TrackType::NIC, node_id, nic_id, nic_name);
     }
 
-    // Non-trace, for bookkeeping only
+    // Non-trace, builds LID -> hostname mapping for cross-node QP destination resolution
     void visit(EventTrait<ProfilerEvents::IbvPortRegistration>, const EventFileHeader& file_header, EventHeader&&,
                ProfilerEvents::IbvPortRegistration&& event) {
-        sigma_ignore_unused(file_header);
-        sigma_ignore_unused(event);
+        if (event.lid != 0) {
+            m_lid_to_hostname[event.lid] = std::string(file_header.hostname);
+        }
     }
 
     void visit(EventTrait<ProfilerEvents::IbvOpenDevice>, const EventFileHeader& file_header, EventHeader&& header,
@@ -1153,7 +1155,7 @@ public:
 
         auto& local_storage = process_local_storage(file_header);
 
-        // Determine layer
+        // Determine layer from the event
         std::string layer_str = "ibv";
         using Profiler::Events::CommLayer;
         switch (event.layer) {
@@ -1165,12 +1167,6 @@ public:
                 break;
             case CommLayer::IBV:
             default:
-                // Fall back to QP tracking sets for backward compatibility with old traces
-                if (m_ucx_qps.contains(event.src_qpn)) {
-                    layer_str = "ucx";
-                } else if (m_fi_qps.contains(event.src_qpn)) {
-                    layer_str = "libfabric";
-                }
                 break;
         }
 
@@ -1587,7 +1583,6 @@ public:
                ProfilerEvents::FiEndpointQpMapping&& event) {
         auto& local_storage = process_local_storage(file_header);
         local_storage.fi_ep_to_qp[event.ep_addr] = event.qp_num;
-        m_fi_qps.insert(event.qp_num);
     }
 
     // ========================================================================
@@ -2478,6 +2473,9 @@ private:
     // Has duplicate entries because we don't get a bimap
     absl::flat_hash_map<uint32_t, uint32_t> m_qp_dest_map;
 
+    // LID -> hostname mapping (from IbvPortRegistration events)
+    absl::flat_hash_map<uint16_t, std::string> m_lid_to_hostname;
+
     // Generation-based flow tracking for wr_id reuse disambiguation
     // Key: (dest_qpn, wr_id) -> FlowEntry
     absl::flat_hash_map<std::pair<uint32_t, uint64_t>, FlowEntry> m_global_pending_flows;
@@ -2743,16 +2741,31 @@ private:
 
             std::string src_id = make_node_id(entry.hostname, entry.layer, s.src_qpn, entry.endpoint_id);
 
-            // Resolve destination node ID by constructing candidate IDs
+            // Resolve destination node ID by matching dest_qpn + dest_lid for disambiguation
             std::string dst_id;
             if (s.dest_qpn != 0) {
                 const auto dst_it = qpn_to_node_ids.find(s.dest_qpn);
                 if (dst_it != qpn_to_node_ids.end()) {
-                    // Pick the first matching node (there should only be one per unique QPN in practice)
+                    // Use dest_lid to determine the correct destination hostname
+                    std::string dest_hostname;
+                    if (s.dest_lid != 0) {
+                        const auto lid_it = m_lid_to_hostname.find(s.dest_lid);
+                        if (lid_it != m_lid_to_hostname.end()) {
+                            dest_hostname = lid_it->second;
+                        }
+                    }
+
+                    // Pick the candidate matching the expected hostname, or fall back to first
                     for (const auto& candidate: dst_it->second) {
                         if (all_node_ids.contains(candidate)) {
-                            dst_id = candidate;
-                            break;
+                            if (dest_hostname.empty() || candidate.starts_with(dest_hostname + "_")) {
+                                dst_id = candidate;
+                                break;
+                            }
+                            // Remember first valid candidate as fallback
+                            if (dst_id.empty()) {
+                                dst_id = candidate;
+                            }
                         }
                     }
                 }
