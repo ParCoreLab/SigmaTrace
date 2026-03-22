@@ -93,6 +93,7 @@ namespace Profiler {
         // clang-format off
         profiler_trace_control.add_options()
         ("rank-hint", po::value<uint32_t>(), "Communication rank hint for visualization")
+        ("rank-hint-env", po::value<std::string>(), "Environment variable for communication rank hint")
         ("trace-mode", po::value<ProfilerTraceMode>(&profiler_trace_mode)->default_value(ProfilerTraceMode::Simple), "Set Profiler trace mode (simple, aggregate, full)");
         // clang-format off
         // ================================================================
@@ -104,8 +105,9 @@ namespace Profiler {
         const Events::RuntimeConfig events_config{};
         // clang-format off
         opt_trace.add_options()
+        ("output-overwrite,f", po::bool_switch()->default_value(false), "Overwrite --output-dir if exists. Useful for multi-process scenarios")
         ("output-dir,o", po::value<std::string>()->default_value(events_config.OutputDirectory), "Directory where traces will be recorded")
-        ("output-overwrite,f", po::bool_switch()->default_value(false), "Overwrite --output-dir if exists. Useful for multi-process scenarios");
+        ("verbose,v", po::bool_switch()->default_value(false), "Enable verbose output");
         // clang-format on
         // ================================================================
 
@@ -221,11 +223,17 @@ namespace Profiler {
 
         profiler_args.OutputDirectory = vm["output-dir"].as<std::string>();
         profiler_args.OutputOverwrite = vm["output-overwrite"].as<bool>();
+        profiler_args.Verbose = vm["verbose"].as<bool>();
 
         profiler_args.TraceMode = vm["trace-mode"].as<ProfilerTraceMode>();
 
         if (!vm["rank-hint"].empty()) {
             profiler_args.RankHint.emplace(vm["rank-hint"].as<decltype(profiler_args.RankHint)::value_type>());
+        }
+
+        if (!vm["rank-hint-env"].empty()) {
+            profiler_args.RankHintEnv.emplace(
+                    vm["rank-hint-env"].as<decltype(profiler_args.RankHintEnv)::value_type>());
         }
 
         // Validation

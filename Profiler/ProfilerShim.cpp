@@ -218,7 +218,7 @@ void ProfilerCtx::LateLoad() {
                 .world_size = rank_hint,
         };
     } else {
-        const auto rank_info = Profiler::GetRankInfo();
+        const auto rank_info = Profiler::GetRankInfo(m_args.RankHintEnv);
         process_info = {
                 .rank = rank_info.rank,
                 .local_rank = rank_info.local_rank,
@@ -515,7 +515,7 @@ static void profiler_atfork_child() {
     // Reset finalization guard so this child can finalize independently
     g_finalized.store(false);
 
-    // Initialize a new EventRecorder
+    // Initialize a new EventRecorder and emit meta events
     instance().LateLoad();
 
     // Exit handler is not inherited on fork
