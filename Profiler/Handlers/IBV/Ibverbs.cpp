@@ -187,7 +187,7 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir, const Profiler
             for (const auto* wr_it = wr; wr_it != nullptr; wr_it = wr_it->next) {
                 num_wrs++;
 
-                if (trace_mode >= Profiler::ProfilerTraceMode::Simple) {
+                if (trace_mode >= Profiler::ProfilerTraceMode::Full) {
                     const Profiler::Events::IbvPostRecvWr recv_wr_event{
                             .context_addr = context_addr,
                             .qp_num = qp->qp_num,
@@ -198,12 +198,14 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir, const Profiler
                 }
             }
 
-            const Profiler::Events::IbvPostRecv recv_event{
-                    .context_addr = context_addr,
-                    .qp_num = qp->qp_num,
-                    .num_wrs = num_wrs,
-            };
-            profiler.m_event_recorder->Record(recv_event, ts_start, ts_end);
+            if (trace_mode == Profiler::ProfilerTraceMode::Full) {
+                const Profiler::Events::IbvPostRecv recv_event{
+                        .context_addr = context_addr,
+                        .qp_num = qp->qp_num,
+                        .num_wrs = num_wrs,
+                };
+                profiler.m_event_recorder->Record(recv_event, ts_start, ts_end);
+            }
         });
     }
 
