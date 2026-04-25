@@ -170,14 +170,37 @@ void ProfilerCtx::emit_fi_summaries() {
     using Profiler::Events::CommLayer;
 
     auto merged = m_fi_traffic_registry.merge_all();
-    for (const auto& [ep_addr, stats]: merged) {
+
+    // Read from ProfilerCtx maps
+    std::scoped_lock lock(m_fi_addr_mutex);
+
+    for (const auto& [key, stats]: merged) {
+        uint32_t own_hash = 0;
+        const auto own_it = m_fi_ep_own_hash.find(key.ep_addr);
+        if (own_it != m_fi_ep_own_hash.end()) {
+            own_hash = own_it->second;
+        }
+
+        uint32_t dest_hash = 0;
+        if (key.dest_addr != FI_DEST_UNKNOWN) {
+            const auto ep_it = m_fi_dest_hash.find(key.ep_addr);
+            if (ep_it != m_fi_dest_hash.end()) {
+                const auto dest_it = ep_it->second.find(key.dest_addr);
+                if (dest_it != ep_it->second.end()) {
+                    dest_hash = dest_it->second;
+                }
+            }
+        }
+
         const Profiler::Events::CommunicationSummary summary{
+                .src_qpn = own_hash,
+                .dest_qpn = dest_hash,
                 .bytes_sent = stats.bytes_sent,
                 .bytes_recv = stats.bytes_recv,
                 .send_count = stats.send_count,
                 .recv_count = stats.recv_count,
                 .gpu_id = Profiler::Events::UnknownDeviceId,
-                .ep_addr = ep_addr,
+                .ep_addr = key.ep_addr,
                 .layer = CommLayer::Libfabric,
         };
         m_event_recorder->Record(summary, 0);

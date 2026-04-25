@@ -556,7 +556,7 @@ struct ProcessLocalStorage {
     absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_create_close_flows;       // ep_addr -> flow_id
     absl::flat_hash_map<uint64_t, uint64_t> ucp_worker_create_destroy_flows; // worker_addr -> flow_id
     absl::flat_hash_map<uint64_t, uint64_t> ucp_tag_send_flows;              // tag -> flow_id
-    absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_to_qp;                    // ep_addr -> qp_num1
+    absl::flat_hash_map<uint64_t, uint64_t> ucp_ep_to_qp;                    // ep_addr -> qp_num
     // ============================================================================
 };
 
@@ -1420,7 +1420,6 @@ public:
 
         // Bandwidth counters for fi_send
         if (event.total_iov_len > 0) {
-            accumulate_ep_send(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_sent(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_sent(node_id, header.timestamp_start, event.total_iov_len);
             auto info = resolve_ep_nic(local_storage, event.ep_addr, node_id, false);
@@ -1449,7 +1448,6 @@ public:
 
         // Bandwidth counters for fi_recv
         if (event.total_iov_len > 0) {
-            accumulate_ep_recv(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_recv(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_recv(node_id, header.timestamp_start, event.total_iov_len);
             auto& local_storage = process_local_storage(file_header);
@@ -1480,7 +1478,6 @@ public:
 
         // Bandwidth counters for fi_rdma_read (recv direction)
         if (event.total_iov_len > 0) {
-            accumulate_ep_recv(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_recv(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_recv(node_id, header.timestamp_start, event.total_iov_len);
             auto& local_storage = process_local_storage(file_header);
@@ -1511,7 +1508,6 @@ public:
 
         // Bandwidth counters for fi_rdma_write (send direction)
         if (event.total_iov_len > 0) {
-            accumulate_ep_send(file_header, event.ep_addr, event.total_iov_len, false);
             emit_fabric_node_bytes_sent(node_id, header.timestamp_start, event.total_iov_len);
             emit_fabric_node_bw_sent(node_id, header.timestamp_start, event.total_iov_len);
             auto& local_storage = process_local_storage(file_header);
@@ -1565,7 +1561,6 @@ public:
 
         // Bandwidth counters for fi_inject (send direction)
         if (event.len > 0) {
-            accumulate_ep_send(file_header, event.ep_addr, event.len, false);
             emit_fabric_node_bytes_sent(node_id, header.timestamp_start, event.len);
             emit_fabric_node_bw_sent(node_id, header.timestamp_start, event.len);
             auto& local_storage = process_local_storage(file_header);
@@ -1583,6 +1578,7 @@ public:
                ProfilerEvents::FiEndpointQpMapping&& event) {
         auto& local_storage = process_local_storage(file_header);
         local_storage.fi_ep_to_qp[event.ep_addr] = event.qp_num;
+        m_fi_qps.insert(event.qp_num);
     }
 
     // ========================================================================
@@ -1697,7 +1693,6 @@ public:
 
         // Bandwidth counters for ucp_tag_send
         if (event.size > 0) {
-            accumulate_ep_send(file_header, event.ep_addr, event.size, true);
             emit_ucx_node_bytes_sent(node_id, header.timestamp_start, event.size);
             emit_ucx_node_bw_sent(node_id, header.timestamp_start, event.size);
             auto info = resolve_ep_nic(local_storage, event.ep_addr, node_id, true);
@@ -1751,7 +1746,6 @@ public:
 
         // Bandwidth counters for ucp_put (send direction)
         if (event.size > 0) {
-            accumulate_ep_send(file_header, event.ep_addr, event.size, true);
             emit_ucx_node_bytes_sent(node_id, header.timestamp_start, event.size);
             emit_ucx_node_bw_sent(node_id, header.timestamp_start, event.size);
             auto& local_storage = process_local_storage(file_header);
@@ -1781,7 +1775,6 @@ public:
 
         // Bandwidth counters for ucp_get (recv direction)
         if (event.size > 0) {
-            accumulate_ep_recv(file_header, event.ep_addr, event.size, true);
             emit_ucx_node_bytes_recv(node_id, header.timestamp_start, event.size);
             emit_ucx_node_bw_recv(node_id, header.timestamp_start, event.size);
             auto& local_storage = process_local_storage(file_header);
@@ -1813,7 +1806,6 @@ public:
         // Bandwidth counters for ucp_am_send (send direction)
         const uint64_t am_total = event.header_size + event.payload_size;
         if (am_total > 0) {
-            accumulate_ep_send(file_header, event.ep_addr, am_total, true);
             emit_ucx_node_bytes_sent(node_id, header.timestamp_start, am_total);
             emit_ucx_node_bw_sent(node_id, header.timestamp_start, am_total);
             auto& local_storage = process_local_storage(file_header);

@@ -81,11 +81,32 @@ struct EndpointTrafficStats {
     }
 };
 
+// Sentinel for "no destination known" (recv side). fi_addr_t=0 is a valid AV address.
+static constexpr uint64_t FI_DEST_UNKNOWN = UINT64_MAX; // matches FI_ADDR_UNSPEC
+
+// Composite key for per-destination libfabric traffic tracking
+struct FiTrafficKey {
+    uint64_t ep_addr;
+    uint64_t dest_addr; // fi_addr_t for sends, FI_DEST_UNKNOWN for recvs
+
+    bool operator==(const FiTrafficKey&) const = default;
+
+    // TODO: use absl
+    struct Hash {
+        size_t operator()(const FiTrafficKey& k) const noexcept {
+            auto h1 = std::hash<uint64_t>{}(k.ep_addr);
+            auto h2 = std::hash<uint64_t>{}(k.dest_addr);
+            return h1 ^ (h2 << 1);
+        }
+    };
+};
+
 // Per-thread traffic accumulators merged at shutdown.
 // The mutex is only taken on thread registration (first access per thread)
-template<typename Key, typename Stats>
+template<typename Key, typename Stats, typename Hash = std::hash<Key>>
 struct ThreadLocalRegistry {
-    using Map = std::unordered_map<Key, Stats>;
+    // TODO: use absl
+    using Map = std::unordered_map<Key, Stats, Hash>;
 
     Map& get_thread_local() {
         thread_local Map* cached = nullptr;
@@ -269,8 +290,14 @@ struct ProfilerCtx {
     void emit_ucx_summaries();
 #endif
 #if SIGMA_HAS_LIBFABRIC
-    ThreadLocalRegistry<uint64_t, EndpointTrafficStats> m_fi_traffic_registry; // keyed by ep_addr
+    ThreadLocalRegistry<FiTrafficKey, EndpointTrafficStats, FiTrafficKey::Hash> m_fi_traffic_registry;
     void emit_fi_summaries();
+
+    // EP address resolution: populated eagerly at data-path time from handler callbacks.
+    // Stored here in the ProfilerCtx lifetime so it survives past provider static destruction.
+    std::mutex m_fi_addr_mutex;
+    std::unordered_map<uint64_t /*ep_addr*/, uint32_t /*own_hash*/> m_fi_ep_own_hash;
+    std::unordered_map<uint64_t /*ep_addr*/, std::unordered_map<uint64_t /*fi_addr_t*/, uint32_t>> m_fi_dest_hash;
 #endif
     // ================================================================
 

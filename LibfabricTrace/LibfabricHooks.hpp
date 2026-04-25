@@ -4,43 +4,64 @@
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_rma.h>
+#include <rdma/fi_tagged.h>
 
 #include "HookTrait.hpp"
 
 // ================================================================
 // libfabric Hook Definitions
 //
-// Most libfabric API functions are static inline wrappers that call through
-// ops tables. Only fi_fabric and fi_getinfo are real exported symbols.
-//
-// Hook strategy:
-// 1. Preload hooks: fi_fabric, fi_getinfo (real exported symbols)
-// 2. Object-ops hooks on fid_ep: data-path operations (sendmsg, recvmsg, etc.)
-//
-// Lifecycle operations (fi_domain, fi_endpoint, fi_close, fi_enable, fi_mr_reg,
-// fi_av_insert) are static inline in the headers. They call through ops tables
-// on different parent objects (fid_fabric, fid_domain, fid, etc.) and would
-// require separate object type handling. They are hooked via ops table
-// replacement on the parent object in post-callbacks.
+// Each libfabric API function maps to a separate function pointer in the
+// endpoint's ops tables. We hook every entry point so that no variant
+// (send, sendv, sendmsg, inject, senddata, injectdata, ...) is missed.
 // ================================================================
 
 // ================================================================
-// Preload hooks (real exported symbols)
+// Preload hooks
 // ================================================================
 // clang-format off
 DEFINE_PRELOAD_HOOK(fi, fi_fabric, "fi_fabric", int, struct fi_fabric_attr*, struct fid_fabric**, void*);
 DEFINE_PRELOAD_HOOK(fi, fi_getinfo, "fi_getinfo", int, uint32_t, const char*, const char*, uint64_t, const struct fi_info*, struct fi_info**);
 
 // ================================================================
-// Object-ops hooks on fid_ep (data-path through ops tables)
-// These capture all higher-level wrappers:
-//   fi_send, fi_sendv, fi_sendmsg, fi_inject -> ep->msg->sendmsg
-//   fi_recv, fi_recvv, fi_recvmsg            -> ep->msg->recvmsg
-//   fi_read, fi_readv, fi_readmsg            -> ep->rma->readmsg
-//   fi_write, fi_writev, fi_writemsg         -> ep->rma->writemsg
+// Object-ops hooks on fid_ep: message ops (ep->msg)
+// All 9 function pointers in fi_ops_msg (excluding size field)
 // ================================================================
-DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_sendmsg, "fi_sendmsg", ssize_t, struct fid_ep*, const struct fi_msg*, uint64_t);
-DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_recvmsg, "fi_recvmsg", ssize_t, struct fid_ep*, const struct fi_msg*, uint64_t);
-DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_readmsg, "fi_readmsg", ssize_t, struct fid_ep*, const struct fi_msg_rma*, uint64_t);
-DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_writemsg, "fi_writemsg", ssize_t, struct fid_ep*, const struct fi_msg_rma*, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_recv,       "fi_recv",       ssize_t, struct fid_ep*, void*, size_t, void*, fi_addr_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_recvv,      "fi_recvv",      ssize_t, struct fid_ep*, const struct iovec*, void**, size_t, fi_addr_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_recvmsg,    "fi_recvmsg",    ssize_t, struct fid_ep*, const struct fi_msg*, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_send,       "fi_send",       ssize_t, struct fid_ep*, const void*, size_t, void*, fi_addr_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_sendv,      "fi_sendv",      ssize_t, struct fid_ep*, const struct iovec*, void**, size_t, fi_addr_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_sendmsg,    "fi_sendmsg",    ssize_t, struct fid_ep*, const struct fi_msg*, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_inject,     "fi_inject",     ssize_t, struct fid_ep*, const void*, size_t, fi_addr_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_senddata,   "fi_senddata",   ssize_t, struct fid_ep*, const void*, size_t, void*, uint64_t, fi_addr_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_msg_injectdata, "fi_injectdata", ssize_t, struct fid_ep*, const void*, size_t, uint64_t, fi_addr_t);
+
+// ================================================================
+// Object-ops hooks on fid_ep: RMA ops (ep->rma)
+// All 9 function pointers in fi_ops_rma (excluding size field)
+// ================================================================
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_read,       "fi_read",          ssize_t, struct fid_ep*, void*, size_t, void*, fi_addr_t, uint64_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_readv,      "fi_readv",         ssize_t, struct fid_ep*, const struct iovec*, void**, size_t, fi_addr_t, uint64_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_readmsg,    "fi_readmsg",       ssize_t, struct fid_ep*, const struct fi_msg_rma*, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_write,      "fi_write",         ssize_t, struct fid_ep*, const void*, size_t, void*, fi_addr_t, uint64_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_writev,     "fi_writev",        ssize_t, struct fid_ep*, const struct iovec*, void**, size_t, fi_addr_t, uint64_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_writemsg,   "fi_writemsg",      ssize_t, struct fid_ep*, const struct fi_msg_rma*, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_inject,     "fi_inject_write",  ssize_t, struct fid_ep*, const void*, size_t, fi_addr_t, uint64_t, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_writedata,  "fi_writedata",     ssize_t, struct fid_ep*, const void*, size_t, void*, uint64_t, fi_addr_t, uint64_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_rma_injectdata, "fi_injectwritedata", ssize_t, struct fid_ep*, const void*, size_t, uint64_t, fi_addr_t, uint64_t, uint64_t);
+
+// ================================================================
+// Object-ops hooks on fid_ep: tagged ops (ep->tagged)
+// All 9 function pointers in fi_ops_tagged (excluding size field)
+// ================================================================
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_recv,       "fi_trecv",       ssize_t, struct fid_ep*, void*, size_t, void*, fi_addr_t, uint64_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_recvv,      "fi_trecvv",      ssize_t, struct fid_ep*, const struct iovec*, void**, size_t, fi_addr_t, uint64_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_recvmsg,    "fi_trecvmsg",    ssize_t, struct fid_ep*, const struct fi_msg_tagged*, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_send,       "fi_tsend",       ssize_t, struct fid_ep*, const void*, size_t, void*, fi_addr_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_sendv,      "fi_tsendv",      ssize_t, struct fid_ep*, const struct iovec*, void**, size_t, fi_addr_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_sendmsg,    "fi_tsendmsg",    ssize_t, struct fid_ep*, const struct fi_msg_tagged*, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_inject,     "fi_tinject",     ssize_t, struct fid_ep*, const void*, size_t, fi_addr_t, uint64_t);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_senddata,   "fi_tsenddata",   ssize_t, struct fid_ep*, const void*, size_t, void*, uint64_t, fi_addr_t, uint64_t, void*);
+DEFINE_OBJECT_OPS_HOOK(fi, ep_tagged_injectdata, "fi_tinjectdata", ssize_t, struct fid_ep*, const void*, size_t, uint64_t, fi_addr_t, uint64_t);
 // clang-format on
