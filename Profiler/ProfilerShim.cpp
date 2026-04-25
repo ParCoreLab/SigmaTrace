@@ -4,6 +4,8 @@
 #include <atomic>
 #include <future>
 
+#include <absl/container/flat_hash_set.h>
+
 #include "Dlsym.hpp"
 
 #include "EventRecorder.hpp"
@@ -51,7 +53,7 @@ void ProfilerCtx::emit_communication_summaries() {
     auto merged_traffic = m_traffic_registry.merge_all();
 
     // Track which QPs we've already emitted summaries for
-    std::unordered_set<uint32_t> emitted_qpns;
+    absl::flat_hash_set<uint32_t> emitted_qpns;
 
     for (const auto& [qpn, stats]: merged_traffic) {
         uint32_t dest_qpn = 0;

@@ -11,14 +11,14 @@
 #include "EventReader.hpp"
 #include "EventRecorderConfig.hpp"
 
-#include "Helpers/Utilities.hpp"
-
 #include "../Events/CUDAEvents.hpp"
 #include "../Events/IbvEvents.hpp"
 #include "../Events/LibfabricEvents.hpp"
 #include "../Events/MetaEvents.hpp"
 #include "../Events/Mlx5DvEvents.hpp"
 #include "../Events/UcxEvents.hpp"
+
+#include "Helpers/Utilities.hpp"
 
 // Convenience
 using Events::EventFileHeader;

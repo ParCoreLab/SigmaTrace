@@ -25,7 +25,7 @@ namespace Profiler::hijack {
 
     // NIC UAR regaddresses allocated with mlx5dv_devx_alloc_uar
     // uar->reg_addr -> uar->page_id
-    inline std::unordered_map<void*, UarPageIdType> Mlx5UarAllocations{};
+    inline std::unordered_map<void*, std::pair<AddrType, UarPageIdType>> Mlx5UarAllocations{};
 
     // Host addresses registered with cuMemHostRegister with CU_MEMHOSTREGISTER_DEVICEMAP
     // These are the uar->reg_addr from above

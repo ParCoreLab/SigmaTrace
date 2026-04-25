@@ -62,6 +62,11 @@ foreach (ProfilerShimTarget IN ITEMS ProfilerShim)
             OUTPUT_NAME "${ProfilerShimTarget}"
     )
 
+    target_link_libraries(${ProfilerShimTarget} PRIVATE
+            absl::hash
+            absl::flat_hash_map
+            absl::flat_hash_set)
+
     # Might fix something that's not broken yet
     # target_link_options(${ProfilerShimTarget} PRIVATE
     #         "LINKER:--unresolved-symbols=ignore-all"

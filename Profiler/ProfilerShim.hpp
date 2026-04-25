@@ -6,8 +6,10 @@
 #include <mutex>
 #include <tuple>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/hash/hash.h>
 
 // Generic GPU types
 #include "Helpers/GPUTypes.hpp"
@@ -85,7 +87,7 @@ struct EndpointTrafficStats {
 // The mutex is only taken on thread registration (first access per thread)
 template<typename Key, typename Stats>
 struct ThreadLocalRegistry {
-    using Map = std::unordered_map<Key, Stats>;
+    using Map = absl::flat_hash_map<Key, Stats>;
 
     Map& get_thread_local() {
         thread_local Map* cached = nullptr;
@@ -213,12 +215,12 @@ struct ProfilerCtx {
     std::unordered_map<UmemIdType, typename decltype(m_mlx5_umem_addr_to_gpu)::iterator> m_mlx5_umem_to_entry;
 
     using MemoryRepeaterHandle = Profiler::MemoryRepeater::MemoryRepeaterHandle;
-    std::unordered_map<UarPageIdType, std::vector<MemoryRepeaterHandle>> m_mlx5_uar_hijack_handles;
+    absl::flat_hash_map<std::pair<void*, UarPageIdType>, std::vector<MemoryRepeaterHandle>> m_mlx5_uar_hijack_handles;
 
     // QP tracking
     std::mutex m_mlx5_qp_mutex;
     using QpId = uint32_t;
-    std::unordered_map<QpId, QpInfo> m_mlx5_qp_info;
+    absl::flat_hash_map<QpId, QpInfo> m_mlx5_qp_info;
     // ================================================================
 
     // ================================================================
@@ -244,7 +246,7 @@ struct ProfilerCtx {
         uint16_t dest_lid;
         uint8_t port_num;
     };
-    std::unordered_map<uint32_t /*src_qpn*/, QpConnectionEntry> m_qp_connections;
+    absl::flat_hash_map<uint32_t /*src_qpn*/, QpConnectionEntry> m_qp_connections;
     // ================================================================
 
     // ================================================================
