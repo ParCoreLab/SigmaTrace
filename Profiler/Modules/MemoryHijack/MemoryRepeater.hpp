@@ -28,6 +28,10 @@ namespace Profiler::MemoryRepeater {
                 signal_finish();
             }
 
+            if (m_internal_signal) {
+                *m_internal_signal.get() = false;
+            }
+
             // TODO: probably not safe
             if (m_thread && m_thread->joinable()) {
                 m_thread->join();
@@ -36,17 +40,19 @@ namespace Profiler::MemoryRepeater {
 
         void start() noexcept {
             m_signal = std::make_shared<std::atomic<bool>>(true);
+            m_internal_signal = std::make_shared<std::atomic<bool>>(true);
 
             // DO NOT CAPTURE `this`! It will be invalidated after move
             // Copy or move values instead
-            m_thread = std::make_unique<std::jthread>([hijack_addr = m_hijack_addr,        //
-                                                       real_addr = m_real_addr,            //
-                                                       on_change = std::move(m_on_change), //
-                                                       is_alive_signal = m_signal          // Copy shared_ptr
+            m_thread = std::make_unique<std::jthread>([hijack_addr = m_hijack_addr,         //
+                                                       real_addr = m_real_addr,             //
+                                                       on_change = std::move(m_on_change),  //
+                                                       internal_signal = m_internal_signal, // Copy shared_ptr
+                                                       is_alive_signal = m_signal           // Copy shared_ptr
             ]() {
                 auto current_value = *hijack_addr;
 
-                while (*is_alive_signal.get()) {
+                while (*internal_signal.get()) {
                     wait_mem(hijack_addr);
 
                     // Atomic load for safety
@@ -58,16 +64,16 @@ namespace Profiler::MemoryRepeater {
                         continue;
                     }
 
-                    // Call the callback
-                    // TODO: maybe should be async
-                    on_change(written_val);
-
-                    if (!*is_alive_signal.get()) {
-                        return;
+                    // Record/process before forwarding so we can copy WQEs
+                    // from the SQ before the NIC consumes and the GPU recycles them.
+                    // WE MIGHT NEED TO GET RID OF THE IF CONDITION AND ALWAYS CALL
+                    if (*is_alive_signal.get()) {
+                        on_change(written_val);
                     }
 
-                    // TODO: maybe coroutine
+                    // Forward to NIC after callback
                     __atomic_store_n(static_cast<uint64_t*>(real_addr), written_val, __ATOMIC_RELEASE);
+
                     current_value = written_val;
                 }
             });
@@ -78,11 +84,19 @@ namespace Profiler::MemoryRepeater {
             m_thread->request_stop();
         }
 
+
     private:
         DataType* m_hijack_addr;
         void* m_real_addr;
         CallbackType m_on_change;
 
+        /*
+         * We have two signals here. m_signal is for users of this module to set.
+         * Once set, the provided callback will stop getting called.
+         * The thread will not stop however. In my testing, I found that there are
+         * still some writes after the exit that need to be forwarded...
+         */
+        std::shared_ptr<std::atomic<bool>> m_internal_signal{nullptr};
         std::shared_ptr<std::atomic<bool>> m_signal{nullptr};
         std::unique_ptr<std::jthread> m_thread{nullptr};
     };
