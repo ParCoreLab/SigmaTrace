@@ -51,11 +51,12 @@ namespace Events {
         // ================================================================
 
         // mlx5dv specific events
-        Mlx5dvDoorbellRing = 200,
-        Mlx5dvMemoryRegistration,
+        Mlx5dvMemoryRegistration = 201,
         Mlx5dvMemoryDereg,
         Mlx5dvUarAlloc,
         Mlx5dvUarFree,
+        Mlx5dvDoorbellRingData,    // RDMA_WRITE, SEND, RDMA_READ
+        Mlx5dvDoorbellRingControl, // Barriers, atomics, NOP, etc.
 
         // CUDA events
         CudaKernelLaunch = 300,

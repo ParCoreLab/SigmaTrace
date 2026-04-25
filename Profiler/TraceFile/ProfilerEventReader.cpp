@@ -44,8 +44,8 @@ using EnabledEvents =
                          ProfilerEvents::IbvPollCq, ProfilerEvents::IbvCompletion,                                  //
                          ProfilerEvents::QpConnectionInfo, ProfilerEvents::CommunicationSummary,                    //
                          ProfilerEvents::Mlx5dvMemoryRegistration, ProfilerEvents::Mlx5dvMemoryDereg,               //
-                         ProfilerEvents::DoorbellRing, ProfilerEvents::CUDAKernelLaunch,
-                         ProfilerEvents::CUDAKernelExit, //
+                         ProfilerEvents::DoorbellRingData, ProfilerEvents::DoorbellRingControl,                     //
+                         ProfilerEvents::CUDAKernelLaunch, ProfilerEvents::CUDAKernelExit,                          //
                          // libfabric events
                          ProfilerEvents::FiDomainOpen, ProfilerEvents::FiEndpointCreate,             //
                          ProfilerEvents::FiEndpointClose, ProfilerEvents::FiMemoryReg,               //
@@ -1255,42 +1255,36 @@ public:
         }
     }
 
-    void visit(EventTrait<ProfilerEvents::DoorbellRing> T, const EventFileHeader& file_header, EventHeader&& header,
-               ProfilerEvents::DoorbellRing&& event) {
+    void visit(EventTrait<ProfilerEvents::DoorbellRingData> T, const EventFileHeader& file_header, EventHeader&& header,
+               ProfilerEvents::DoorbellRingData&& event) {
         using Meta = decltype(T);
 
         const auto node_id = register_node(file_header.hostname);
         const auto gpu_id = event.gpu_id;
 
-        // Ensure GPU track exists
-        // TODO: static_cast here isn't really correct... GpuId_T can be negative (because of out bad design)
         const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, static_cast<uint64_t>(node_id),
                                                                     static_cast<uint64_t>(gpu_id));
 
-        // Emit instant event for doorbell ring
         auto* instant_event = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name);
         add_header_annotations(instant_event, file_header);
 
-        m_builder.add_annotation("Addr", event.addr);
-        // m_builder.add_annotation("wqe_index", event.wqe_index);
-        m_builder.add_annotation("qp_num", event.qp_num);
-        m_builder.add_annotation("Is_CPU_Hijack", event.is_cpu_hijack ? "Yes" : "No");
-        m_builder.add_annotation("bytes_sent", event.bytes_sent);
+        m_builder.add_annotation(instant_event, "gpu_id", static_cast<int64_t>(gpu_id));
+        m_builder.add_annotation(instant_event, "qp_num", event.qp_num);
+        m_builder.add_annotation(instant_event, "prod_index", event.prod_index);
+        m_builder.add_annotation(instant_event, "bytes_sent", event.bytes_sent);
+        m_builder.add_annotation(instant_event, "opcode", event.opcode);
 
-        // Emit bandwidth counters for doorbell send
+        // Data doorbells contribute to bandwidth counters
         if (event.bytes_sent > 0) {
-            // For doorbell events, use the GPU track as parent for the QP counter
             emit_qp_send_counter(node_id, event.qp_num, track_uuid, header.timestamp_start, event.bytes_sent);
             emit_gpu_send_counter(node_id, gpu_id, header.timestamp_start, event.bytes_sent);
 
-            // Node-level counters always emitted
             emit_node_bw_sent(node_id, header.timestamp_start, event.bytes_sent);
             emit_node_bytes_sent(node_id, header.timestamp_start, event.bytes_sent);
 
-            // Windowed bandwidth counters
             emit_qp_bw_sent(node_id, event.qp_num, track_uuid, header.timestamp_start, event.bytes_sent);
             emit_gpu_bw_sent(node_id, gpu_id, header.timestamp_start, event.bytes_sent);
-            // NIC-level bandwidth if qp_to_nic lookup succeeds
+
             auto& db_local_storage = process_local_storage(file_header);
             const auto nic_it = db_local_storage.qp_to_nic.find(event.qp_num);
             if (nic_it != db_local_storage.qp_to_nic.end()) {
@@ -1300,6 +1294,26 @@ public:
                 emit_nic_bytes_sent(node_id, nic_it->second, nic_track_uuid, header.timestamp_start, event.bytes_sent);
             }
         }
+    }
+
+    void visit(EventTrait<ProfilerEvents::DoorbellRingControl> T, const EventFileHeader& file_header,
+               EventHeader&& header, ProfilerEvents::DoorbellRingControl&& event) {
+        using Meta = decltype(T);
+
+        const auto node_id = register_node(file_header.hostname);
+        const auto gpu_id = event.gpu_id;
+
+        const uint64_t track_uuid = m_builder.register_device_track(TrackType::GPU, static_cast<uint64_t>(node_id),
+                                                                    static_cast<uint64_t>(gpu_id));
+
+        auto* instant_event = m_builder.add_instant_event(track_uuid, header.timestamp_start, Meta::name);
+        add_header_annotations(instant_event, file_header);
+
+        m_builder.add_annotation(instant_event, "gpu_id", static_cast<int64_t>(gpu_id));
+        m_builder.add_annotation(instant_event, "qp_num", event.qp_num);
+        m_builder.add_annotation(instant_event, "prod_index", event.prod_index);
+        m_builder.add_annotation(instant_event, "opcode", event.opcode);
+        m_builder.add_annotation(instant_event, "remote_addr", event.remote_addr);
     }
 
     // ========================================================================

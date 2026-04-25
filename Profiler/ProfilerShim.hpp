@@ -149,6 +149,11 @@ struct QpInfo {
     // QP transport service type from QPC (0x5 = DCI)
     // Pending doorbells awaiting byte count resolution after batch memcpy+parse
     std::vector<PendingDoorbell> pending_doorbells{};
+    // Per-doorbell async WQE copy state.  Each doorbell async-copies its
+    // delta WQEBBs into host_wqe_buf before the NIC write, preserving WQE
+    // data before the GPU can recycle SQ slots.  Only synced at batch time.
+    void* copy_stream{nullptr};     // CUstream, lazy-init
+    uint8_t* host_wqe_buf{nullptr}; // pinned host buffer, lazy-init
 };
 
 template<typename T>

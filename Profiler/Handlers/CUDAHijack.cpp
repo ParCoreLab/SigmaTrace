@@ -1,8 +1,6 @@
 #include <condition_variable>
-#include <deque>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <unordered_map>
 
 #include <cuda.h>
@@ -36,10 +34,6 @@ namespace Profiler::hijack {
     inline std::unordered_map<void*, void*> CuFakeUarPtrs{};
     // ================================================================
 
-    // Per-handle worker tracking for drain-all (sync hooks / shutdown)
-    inline std::mutex g_workers_mutex;
-    inline std::vector<std::weak_ptr<class DoorbellParseWorker>> g_workers;
-
     // Called from pthread_atfork child handler.
     // Reinitializes the mutex (POSIX: mutex state is undefined after fork)
     // and clears stale parent-process data from the maps.
@@ -47,100 +41,237 @@ namespace Profiler::hijack {
     void reset();
     void reset() {
         new (&m_profiler_hijack_mutex) std::mutex();
-        new (&g_workers_mutex) std::mutex();
         Mlx5UarAllocations.clear();
         CuMemHostRegisterAddrs.clear();
         CuFakeUarPtrs.clear();
-        g_workers.clear();
     }
 
     // ================================================================
     // WQE parsing helpers
     // ================================================================
     constexpr uint32_t WQEBB_SIZE = 64;
+    constexpr uint32_t PROD_ID_MASK = 0xFFFF;
 
-    struct ParseResult {
+    static uint32_t prod_id_diff_16(const uint32_t end, const uint32_t start) {
+        return (end - start) & PROD_ID_MASK;
+    }
+
+    // Opcode classification via bit-set lookup (avoids branch chains on the hot path).
+    // Bit N is set if opcode N has that property.
+    // has_raddr:     RDMA_WRITE(0x08) RDMA_READ(0x10) ATOMIC_CS(0x11) ATOMIC_FA(0x12)
+    //               ATOMIC_MASKED_CS(0x14) ATOMIC_MASKED_FA(0x15)
+    // has_data_segs: RDMA_WRITE(0x08) SEND(0x0A) RDMA_READ(0x10)
+    // is_data:       RDMA_WRITE(0x08) SEND(0x0A) RDMA_READ(0x10)
+    static constexpr uint32_t OPCODE_HAS_RADDR =
+            (1u << 0x08) | (1u << 0x10) | (1u << 0x11) | (1u << 0x12) | (1u << 0x14) | (1u << 0x15);
+    static constexpr uint32_t OPCODE_HAS_DATA = (1u << 0x08) | (1u << 0x0A) | (1u << 0x10);
+
+    static bool opcode_has_raddr(uint8_t op) {
+        return op < 32 && (OPCODE_HAS_RADDR >> op) & 1;
+    }
+    static bool opcode_has_data_segs(uint8_t op) {
+        return op < 32 && (OPCODE_HAS_DATA >> op) & 1;
+    }
+    [[maybe_unused]] static bool opcode_is_data(uint8_t op) {
+        return op < 32 && (OPCODE_HAS_DATA >> op) & 1;
+    }
+
+    struct TrafficAccum {
         uint64_t total_bytes{0};
         uint32_t send_count{0};
-        std::unordered_map<uint32_t, uint64_t> bytes_by_end_prod_id;
     };
 
-    static ParseResult parse_wqe_buffer(const uint8_t* host_buf, uint32_t prod_id_start, uint32_t prod_id_end,
-                                        uint32_t qpn, uint8_t service_type) {
-        ParseResult result;
+    // When true, only emit DoorbellRingControl events for masked atomics
+    // (ATOMIC_MASKED_CS 0x14 / ATOMIC_MASKED_FA 0x15).  These are the opcodes
+    // NVSHMEM uses for both barrier signaling AND application-level atomics
+    // (e.g. nvshmem_int_atomic_compare_swap).  Each atomic is emitted
+    // individually (not aggregated per doorbell) so that filtering by
+    // remote_addr in SQL can isolate barrier events from application atomics.
+    // Data doorbells and NOPs are skipped. Traffic accounting is still maintained.
+    static constexpr bool BarrierOnly = false;
 
-        for (uint32_t i = 0, prod_id = prod_id_start; prod_id < prod_id_end;) {
+    // When false, will copy every WQE as they come without
+    // deferring batching for later. This will be slower
+    // but will catch every doorbell write
+    static constexpr bool BatchUar = true;
+
+    // Masked-atomic opcodes: ATOMIC_MASKED_CS (0x14) and ATOMIC_MASKED_FA (0x15).
+    static constexpr uint32_t OPCODE_IS_MASKED_ATOMIC = (1u << 0x14) | (1u << 0x15);
+    static bool opcode_is_masked_atomic(uint8_t op) {
+        return op < 32 && (OPCODE_IS_MASKED_ATOMIC >> op) & 1;
+    }
+
+    static void parse_and_emit(const uint8_t* host_buf, uint32_t prod_id_start, uint32_t prod_id_end, uint32_t qpn,
+                               uint8_t service_type, Events::GpuId_T gpu_id,
+                               const std::vector<PendingDoorbell>& pending_doorbells,
+                               ::Events::EventRecorder<>& recorder, TrafficAccum& traffic) {
+        if (pending_doorbells.empty()) {
+            return;
+        }
+
+        const uint32_t num_wqebbs = prod_id_diff_16(prod_id_end, prod_id_start);
+        const bool is_dci = (service_type == 0x5);
+
+        uint32_t i = 0;
+        uint32_t prod_id = prod_id_start;
+        size_t db_idx = 0;
+
+        // Per-doorbell accumulators — reset on each flush_doorbell
+        uint64_t data_bytes = 0;
+        uint8_t data_opcode = 0;
+        uint8_t ctrl_opcode = 0;
+        uint64_t ctrl_raddr = 0;
+
+        auto flush_doorbell = [&](size_t idx) {
+            const auto& db = pending_doorbells[idx];
+            if constexpr (BarrierOnly) {
+                // if (ctrl_opcode == 20 && (ctrl_raddr - 8 * gpu_id) == 26317160960) {
+                if (ctrl_opcode == 20) {
+                    recorder.Record(
+                            Events::DoorbellRingControl{
+                                    .prod_index = db.prod_id,
+                                    .qp_num = qpn,
+                                    .gpu_id = gpu_id,
+                                    .opcode = ctrl_opcode,
+                                    .remote_addr = ctrl_raddr,
+                            },
+                            db.timestamp);
+                }
+            } else {
+                if (data_bytes > 0 || data_opcode != 0) {
+                    recorder.Record(
+                            Events::DoorbellRingData{
+                                    .prod_index = db.prod_id,
+                                    .qp_num = qpn,
+                                    .gpu_id = gpu_id,
+                                    .bytes_sent = data_bytes,
+                                    .opcode = data_opcode,
+                            },
+                            db.timestamp);
+                }
+                // if (ctrl_opcode == 20 && (ctrl_raddr - 8 * gpu_id) == 26317160960) {
+                if (ctrl_opcode == 20) {
+                    recorder.Record(
+                            Events::DoorbellRingControl{
+                                    .prod_index = db.prod_id,
+                                    .qp_num = qpn,
+                                    .gpu_id = gpu_id,
+                                    .opcode = ctrl_opcode,
+                                    .remote_addr = ctrl_raddr,
+                            },
+                            db.timestamp);
+                }
+            }
+            data_bytes = 0;
+            data_opcode = 0;
+            ctrl_opcode = 0;
+            ctrl_raddr = 0;
+        };
+
+        while (i < num_wqebbs) {
             const uint8_t* wqe = host_buf + i * WQEBB_SIZE;
-            const auto* ctrl = reinterpret_cast<const mlx5_wqe_ctrl_seg*>(wqe);
-
-            const uint32_t wqe_qpn_ds = be32toh(ctrl->qpn_ds);
+            const uint32_t wqe_qpn_ds = be32toh(reinterpret_cast<const mlx5_wqe_ctrl_seg*>(wqe)->qpn_ds);
             const uint32_t wqe_ds = wqe_qpn_ds & 0xFF;
-            const uint32_t wqe_qpn = wqe_qpn_ds >> 8;
 
-            if (wqe_qpn != qpn) {
-                std::cerr << "[i=" << i << " prod_id = " << prod_id << "] WRONG QPN " << wqe_qpn << " vs " << qpn
-                          << std::endl;
-                std::abort();
+            if ((wqe_qpn_ds >> 8) != qpn || wqe_ds == 0) {
+                ++i;
+                prod_id = (prod_id + 1) & PROD_ID_MASK;
+                // Advance doorbell cursor past skipped prod_id
+                while (db_idx < pending_doorbells.size()) {
+                    const auto diff = prod_id_diff_16(prod_id, pending_doorbells[db_idx].prod_id);
+                    if (diff == 0 || diff > 0x7FFF) {
+                        break;
+                    }
+                    flush_doorbell(db_idx);
+                    ++db_idx;
+                }
+                if (db_idx >= pending_doorbells.size()) {
+                    break;
+                }
+                continue;
             }
 
-            // Parse WQE segments to extract byte count
-            // ctrl_seg is 16B (1 ds unit). Remaining ds units are data/raddr segments.
-            const uint32_t opmod_idx_opcode = be32toh(ctrl->opmod_idx_opcode);
-            const uint8_t opcode = opmod_idx_opcode & 0xFF;
-            // Only parse data_segs for opcodes with known WQE layouts
-            // RDMA_WRITE (0x08), RDMA_READ (0x10): ctrl + [datagram] + raddr + data_segs
-            // SEND (0x0A): ctrl + [datagram] + data_segs
-            // Skip NOP (0x00), UMR (0x14), and other opcodes with different layouts
-            const bool has_raddr = (opcode == 0x08 || opcode == 0x10);
-            const bool has_data_segs = (opcode == 0x08 || opcode == 0x10 || opcode == 0x0A);
+            const uint8_t opcode = be32toh(reinterpret_cast<const mlx5_wqe_ctrl_seg*>(wqe)->opmod_idx_opcode) & 0xFF;
+            const uint32_t wqebbs = (wqe_ds + 3) >> 2;
+            i += wqebbs;
+            prod_id = (prod_id + wqebbs) & PROD_ID_MASK;
+
+            const bool has_raddr = opcode_has_raddr(opcode);
+            const bool has_data = opcode_has_data_segs(opcode);
+
+            // In BarrierOnly mode, only parse segments for masked atomics
+            const bool need_parse =
+                    BarrierOnly ? (has_raddr && opcode_is_masked_atomic(opcode)) : (has_raddr || has_data);
 
             uint64_t wqe_bytes = 0;
-            if (has_data_segs && wqe_ds > 1) {
-                const uint8_t* seg_ptr = wqe + 16;  // past ctrl_seg (16B)
-                uint32_t remaining_ds = wqe_ds - 1; // ds units after ctrl
+            uint64_t wqe_raddr = 0;
 
-                // DCI QPs (st=0x5) have a 64B datagram/AV segment (4 ds units) after ctrl_seg
-                if (service_type == 0x5 && remaining_ds >= 4) {
+            if (need_parse && wqe_ds > 1) {
+                const uint8_t* seg_ptr = wqe + 16;
+                uint32_t remaining_ds = wqe_ds - 1;
+
+                if (is_dci && remaining_ds >= 4) {
                     seg_ptr += 64;
                     remaining_ds -= 4;
                 }
 
                 if (has_raddr && remaining_ds >= 1) {
-                    // Skip mlx5_wqe_raddr_seg (16B = 1 ds unit)
+                    wqe_raddr = be64toh(*reinterpret_cast<const uint64_t*>(seg_ptr));
                     seg_ptr += 16;
-                    remaining_ds -= 1;
+                    --remaining_ds;
                 }
 
-                // Parse data segments (each 16B): byte_count(4B) + lkey(4B) + addr(8B)
-                // Bit 31 of byte_count is the inline data flag in MLX5; mask it off
-                while (remaining_ds >= 1) {
-                    const uint32_t byte_count = be32toh(*reinterpret_cast<const uint32_t*>(seg_ptr)) & 0x7FFFFFFF;
-                    wqe_bytes += byte_count;
-                    seg_ptr += 16;
-                    remaining_ds -= 1;
+                if constexpr (!BarrierOnly) {
+                    if (has_data) {
+                        for (; remaining_ds; --remaining_ds, seg_ptr += 16)
+                            wqe_bytes += be32toh(*reinterpret_cast<const uint32_t*>(seg_ptr)) & 0x7FFFFFFF;
+                    }
                 }
             }
 
-            result.total_bytes += wqe_bytes;
-            if (has_data_segs) {
-                ++result.send_count;
+            traffic.total_bytes += wqe_bytes;
+            traffic.send_count += has_data;
+
+            // Advance doorbell cursor: flush when we cross a boundary
+            while (db_idx < pending_doorbells.size()) {
+                const auto diff = prod_id_diff_16(prod_id, pending_doorbells[db_idx].prod_id);
+                if (diff == 0 || diff > 0x7FFF) {
+                    break;
+                }
+                flush_doorbell(db_idx);
+                ++db_idx;
             }
+            if (db_idx >= pending_doorbells.size())
+                break;
 
-            // ds is in 16B units; advance by whole WQEBBs (64B each = 4 ds units)
-            const uint32_t wqebbs = (wqe_ds + 3) / 4;
-            i += wqebbs;
-            prod_id += wqebbs;
-
-            // Map end prod_id to byte count for doorbell correlation
-            result.bytes_by_end_prod_id[prod_id] = wqe_bytes;
+            // Accumulate this WQE into per-doorbell state
+            if constexpr (BarrierOnly) {
+                if (opcode_is_masked_atomic(opcode)) {
+                    if (ctrl_opcode != 20) {
+                        ctrl_opcode = opcode;
+                        ctrl_raddr = wqe_raddr;
+                    }
+                }
+            } else {
+                if (has_data) {
+                    data_bytes += wqe_bytes;
+                    data_opcode = opcode;
+                } else if (has_raddr) {
+                    ctrl_opcode = opcode;
+                    ctrl_raddr = wqe_raddr;
+                }
+            }
         }
 
-        return result;
+        // Flush last doorbell
+        if (db_idx < pending_doorbells.size()) {
+            flush_doorbell(db_idx);
+        }
     }
 
     static CUresult copy_wqes_from_gpu(uint8_t* dst, const QpInfo& qp_info, uint32_t prod_id_start,
                                        uint32_t prod_id_end, CUstream stream) {
-        const uint32_t num_wqebbs_total = prod_id_end - prod_id_start;
+        const uint32_t num_wqebbs_total = prod_id_diff_16(prod_id_end, prod_id_start);
         const auto wq_mask = (1u << qp_info.log_wq_size) - 1u;
         const uint32_t start_slot = prod_id_start & wq_mask;
         const uint32_t wq_slots = 1u << qp_info.log_wq_size;
@@ -160,149 +291,6 @@ namespace Profiler::hijack {
         }
         return cuMemcpyDtoHAsync(dst + tail * WQEBB_SIZE, reinterpret_cast<CUdeviceptr>(qp_info.sq_base),
                                  head * WQEBB_SIZE, stream);
-    }
-
-    /*
-     * Background parse worker
-     * Wanted to offload WQE parsing to a background thread after we copy the data
-     * to avoid delaying the doorbell forwarding too much.
-     * I'm unsure at this point if this really makes any difference because the small
-     * machine I'm testing on is too small.
-     *
-     * TODO:
-     *   - Consider using BackgroundProcessor. The code here is messy for no good reason
-     *   - Check if delayed cuStreamSynchronize is OK. It's probably not
-     *   - We can probably offload the memcpy to the background thread too...
-     *   - Need to do preemptive doorbell flush on known high-latency paths
-     *     such as context or stream synchronize
-     */
-    struct ParseWorkItem {
-        // std::vector<uint8_t> wqe_data;
-        uint8_t* wqe_data;
-        std::vector<PendingDoorbell> pending_doorbells;
-        uint32_t prod_id_start;
-        uint32_t prod_id_end;
-        uint32_t qpn;
-        GpuId_T gpu_id;
-        uint8_t service_type;
-        CUstream cu_stream;
-    };
-
-    class DoorbellParseWorker {
-        ProfilerCtx& m_profiler;
-        std::mutex m_mutex;
-        std::condition_variable m_cv;
-        std::condition_variable m_drain_cv;
-        std::deque<ParseWorkItem> m_queue;
-        uint64_t m_enqueue_count{0};
-        uint64_t m_process_count{0};
-        bool m_shutdown{false};
-        std::thread m_thread;
-
-        void process_item(const ParseWorkItem& item) {
-            CU_CHECK(cuStreamSynchronize(item.cu_stream));
-
-            const auto result =
-                    parse_wqe_buffer(item.wqe_data, item.prod_id_start, item.prod_id_end, item.qpn, item.service_type);
-
-            {
-                auto& traffic = m_profiler.m_traffic_registry.get_thread_local()[item.qpn];
-                traffic.bytes_sent += result.total_bytes;
-                traffic.send_count += result.send_count;
-            }
-
-            for (const auto& pending: item.pending_doorbells) {
-                uint64_t doorbell_bytes = 0;
-                const auto it = result.bytes_by_end_prod_id.find(pending.prod_id);
-                if (it != result.bytes_by_end_prod_id.end()) {
-                    doorbell_bytes = it->second;
-                }
-
-                const Events::DoorbellRing event{
-                        .addr = 0,
-                        .prod_index = pending.prod_id,
-                        .qp_num = item.qpn,
-                        .gpu_id = item.gpu_id,
-                        .is_cpu_hijack = true,
-                        .bytes_sent = doorbell_bytes,
-                };
-                m_profiler.m_event_recorder->Record(event, pending.timestamp);
-            }
-        }
-
-        void run() {
-            while (true) {
-                ParseWorkItem item;
-                {
-                    std::unique_lock lock(m_mutex);
-                    m_cv.wait(lock, [this] {
-                        return m_shutdown || !m_queue.empty();
-                    });
-
-                    if (m_shutdown && m_queue.empty()) {
-                        return;
-                    }
-
-                    item = std::move(m_queue.front());
-                    m_queue.pop_front();
-                }
-
-                process_item(item);
-
-                {
-                    std::scoped_lock lock(m_mutex);
-                    ++m_process_count;
-                    m_drain_cv.notify_all();
-                }
-            }
-        }
-
-    public:
-        explicit DoorbellParseWorker(ProfilerCtx& profiler) :
-            m_profiler(profiler), m_thread([this] {
-                run();
-            }) {}
-
-        ~DoorbellParseWorker() {
-            {
-                std::scoped_lock lock(m_mutex);
-                m_shutdown = true;
-            }
-            m_cv.notify_all();
-            if (m_thread.joinable()) {
-                m_thread.join();
-            }
-        }
-
-        void enqueue(ParseWorkItem&& item) {
-            {
-                std::scoped_lock lock(m_mutex);
-                m_queue.push_back(std::move(item));
-                ++m_enqueue_count;
-            }
-            m_cv.notify_one();
-        }
-
-        // Wait for all items enqueued up to this point to be processed.
-        void drain() {
-            std::unique_lock lock(m_mutex);
-            const auto target = m_enqueue_count;
-            m_drain_cv.wait(lock, [this, target] {
-                return m_process_count >= target;
-            });
-        }
-    };
-
-    static void drain_all_workers() {
-        std::scoped_lock lock(g_workers_mutex);
-        std::erase_if(g_workers, [](const auto& wp) {
-            return wp.expired();
-        });
-        for (auto& wp: g_workers) {
-            if (auto sp = wp.lock()) {
-                sp->drain();
-            }
-        }
     }
 
     // ================================================================
@@ -358,7 +346,7 @@ namespace Profiler::hijack {
      *      We allocate a fake HOST page and register a repeater for it. The page is allocated with cudaHostAlloc
      *      We call the original cuMemHostGetDevicePointer with the fake host page
      */
-    static void on_doorbell_ring(const uint64_t new_val, DoorbellParseWorker& worker) {
+    static void on_doorbell_ring(const uint64_t new_val) {
         /*
          * UAR Doorbell NVSHMEM writes only has the first two fields
          * See ibgda_device.cuh
@@ -420,65 +408,51 @@ namespace Profiler::hijack {
                 qp_info._has_pending = true;
             }
 
-            constexpr auto Batch_Threshold{512};
-            constexpr auto Flush_Margin{64};
-            const auto wq_size = 1u << qp_info.log_wq_size;
-            const auto distance = dbr_prod_id - qp_info._oldest_uncopied_prod_id;
+            // Lazy-init per-QP copy stream and host buffer
+            if (!qp_info.copy_stream) {
+                CU_CHECK(cuCtxPushCurrent(qp_info.gpu_ctx));
+                CUstream s;
+                CU_CHECK(cuStreamCreate(&s, CU_STREAM_NON_BLOCKING));
+                qp_info.copy_stream = s;
+                void* raw_ptr = nullptr;
+                CU_CHECK(cuMemAllocHost(&raw_ptr, (1u << qp_info.log_wq_size) * WQEBB_SIZE * 4));
+                qp_info.host_wqe_buf = static_cast<uint8_t*>(raw_ptr);
+            }
 
-            const bool should_submit = (distance + Flush_Margin >= wq_size) // safety
-                                       || (distance >= Batch_Threshold);    // batching
+            // Async-copy this doorbell's delta WQEBBs into host buffer.
+            // This runs BEFORE the NIC write (callback-before-forward in
+            // MemoryRepeater), so the SQ data is guaranteed valid.
+            const auto delta_wqebbs = prod_id_diff_16(dbr_prod_id, last_prod_id);
+            if (delta_wqebbs > 0) {
+                const auto buf_offset = prod_id_diff_16(last_prod_id, qp_info._oldest_uncopied_prod_id);
+                copy_wqes_from_gpu(qp_info.host_wqe_buf + buf_offset * WQEBB_SIZE, qp_info, last_prod_id, dbr_prod_id,
+                                   static_cast<CUstream>(qp_info.copy_stream));
+                // No sync here — just enqueue. Sync only at batch time.
+            }
 
-            if (should_submit) {
+            constexpr auto Batch_Threshold{128};
+            const auto distance = prod_id_diff_16(dbr_prod_id, qp_info._oldest_uncopied_prod_id);
+
+            if (!BatchUar || distance >= Batch_Threshold) {
                 const auto prod_id_start = qp_info._oldest_uncopied_prod_id;
                 const auto prod_id_end = dbr_prod_id;
-                // const uint32_t num_wqebbs_total = prod_id_end - prod_id_start;
+                auto* cu_stream = static_cast<CUstream>(qp_info.copy_stream);
 
-                thread_local CUstream cu_stream = std::invoke([&qp_info]() {
-                    CUstream s;
-                    CU_CHECK(cuCtxPushCurrent(qp_info.gpu_ctx));
-                    CU_CHECK(cuStreamCreate(&s, CU_STREAM_NON_BLOCKING));
-                    return s;
-                });
+                // All per-doorbell async copies are on this stream — one sync gets them all
+                CU_CHECK(cuStreamSynchronize(cu_stream));
 
-                // Auto-cleaning thread_local buffer
-                struct CuMemHostDeleter {
-                    void operator()(uint8_t* ptr) const {
-                        if (ptr) {
-                            CU_CHECK(cuMemFreeHost(ptr));
-                        }
-                    }
-                };
-                using CuHostMemPtr = std::unique_ptr<uint8_t[], CuMemHostDeleter>;
-                thread_local CuHostMemPtr host_wqe_buf{nullptr};
-                if (!host_wqe_buf) {
-                    void* raw_ptr = nullptr;
-                    CU_CHECK(cuMemAllocHost(&raw_ptr, 1024 * WQEBB_SIZE * 64));
-                    host_wqe_buf.reset(static_cast<uint8_t*>(raw_ptr));
+                TrafficAccum accum;
+                parse_and_emit(qp_info.host_wqe_buf, prod_id_start, prod_id_end, dbr_qpn, qp_info.service_type,
+                               qp_info.gpu_id, qp_info.pending_doorbells, *profiler.m_event_recorder, accum);
+                {
+                    auto& traffic = profiler.m_traffic_registry.get_thread_local()[dbr_qpn];
+                    traffic.bytes_sent += accum.total_bytes;
+                    traffic.send_count += accum.send_count;
                 }
-
-                CU_CHECK(copy_wqes_from_gpu(host_wqe_buf.get(), qp_info, prod_id_start, prod_id_end, cu_stream));
-
-                // May be unsafe to not call this here
-                // TODO: if something breaks, enable this here and remove the same line from process_item
-                // CU_CHECK(cuStreamSynchronize(cu_stream));
-
-                // Offload parsing to background worker
-                ParseWorkItem work_item;
-                work_item.cu_stream = cu_stream;
-                work_item.wqe_data = host_wqe_buf.get();
-
-                work_item.pending_doorbells = std::move(qp_info.pending_doorbells);
-                work_item.prod_id_start = prod_id_start;
-                work_item.prod_id_end = prod_id_end;
-                work_item.qpn = dbr_qpn;
-                work_item.gpu_id = qp_info.gpu_id;
-                work_item.service_type = qp_info.service_type;
 
                 qp_info.pending_doorbells.clear();
                 qp_info._oldest_uncopied_prod_id = dbr_prod_id;
                 qp_info._has_pending = false;
-
-                worker.enqueue(std::move(work_item));
 
                 profiler.doorbell_submitted.fetch_add(1, std::memory_order_relaxed);
             } else {
@@ -531,18 +505,12 @@ namespace Profiler::hijack {
         void* reg_addr_real = p;
         void* fake_reg_addr = uar_fake_page_addr;
 
-        auto worker = std::make_shared<DoorbellParseWorker>(profiler);
-        {
-            std::scoped_lock wlock(g_workers_mutex);
-            g_workers.push_back(worker);
-        }
-
-        MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real, [worker](uint64_t new_val) {
-            on_doorbell_ring(new_val, *worker);
+        MemoryRepeaterHandle handle{static_cast<uint64_t*>(fake_reg_addr), reg_addr_real, [](uint64_t new_val) {
+            on_doorbell_ring(new_val);
         }};
 
-        const auto page_id = Mlx5UarAllocations.at(p);
-        auto& hijack_handles = profiler.m_mlx5_uar_hijack_handles[page_id];
+        const auto [uar_addr, page_id] = Mlx5UarAllocations.at(p);
+        auto& hijack_handles = profiler.m_mlx5_uar_hijack_handles[{p, page_id}];
         auto& inserted_handle = hijack_handles.emplace_back(std::move(handle));
         inserted_handle.start();
 
@@ -652,13 +620,13 @@ void ProfilerCtx::load_doorbell_hijack() {
     m_mlx5dv_profiler->register_post<mlx5dv::devx_alloc_uar_tag>(
             [](mlx5dv_devx_uar* out_uar, ibv_context*, uint32_t, auto...) {
         std::scoped_lock lock(Profiler::hijack::m_profiler_hijack_mutex);
-        Profiler::hijack::Mlx5UarAllocations.insert_or_assign(out_uar->reg_addr, out_uar->page_id);
+        std::pair<AddrType, UarPageIdType> val{PtrToUint(out_uar), out_uar->page_id};
+        Profiler::hijack::Mlx5UarAllocations.insert_or_assign(out_uar->reg_addr, std::move(val));
     });
 
     // For hijack
     m_mlx5dv_profiler->register_pre<mlx5dv::devx_free_uar_tag>([](mlx5dv_devx_uar* devx_uar, auto...) {
         std::scoped_lock lock(Profiler::hijack::m_profiler_hijack_mutex);
-
         // TODO (big): this should really be a dependency injection *into* this module
         // We shouldn't be pulling ProfilerShim.hpp
         auto& profiler = instance();
@@ -668,15 +636,34 @@ void ProfilerCtx::load_doorbell_hijack() {
         // destroys the callback lambda
         // The worker destructor processes remaining items and joins its thread.
         // GPU SQ buffers are still valid (UAR free happens before umem_dereg).
-        const auto handles = profiler.m_mlx5_uar_hijack_handles.find(devx_uar->page_id);
-        if (handles != profiler.m_mlx5_uar_hijack_handles.end()) {
-            for (auto& h: handles->second) {
-                h.signal_finish();
-            }
-            profiler.m_mlx5_uar_hijack_handles.erase(handles);
+
+        const auto uar_alloation_entry = Profiler::hijack::Mlx5UarAllocations.find(devx_uar->reg_addr);
+        if (uar_alloation_entry == Profiler::hijack::Mlx5UarAllocations.end()) {
+            // std::abort();
+            return;
         }
 
-        // Flush any remaining sub-threshold pending doorbells
+        if (uar_alloation_entry->second.first != PtrToUint(devx_uar) ||
+            uar_alloation_entry->second.second != devx_uar->page_id) {
+            return;
+        }
+
+        // Signal the MemoryRepeater to stop polling, then flush remaining
+        // pending doorbells. We use signal_finish() (non-blocking) rather
+        // than erasing the handle here because erasing joins the thread,
+        // and the thread may be blocked in on_doorbell_ring ->
+        // cuStreamSynchronize, which would deadlock.
+        const auto handles_it = profiler.m_mlx5_uar_hijack_handles.find({devx_uar->reg_addr, devx_uar->page_id});
+        if (handles_it != profiler.m_mlx5_uar_hijack_handles.end()) {
+            for (auto& h: handles_it->second) {
+                h.signal_finish();
+            }
+        }
+
+        // The polling thread has been told to stop.  It will exit after its
+        // current iteration (possibly one last on_doorbell_ring callback).
+        // Flush whatever is pending - this picks up everything including
+        // any final doorbell the thread may have just delivered.
         profiler.flush_pending_doorbells();
 
         Profiler::hijack::Mlx5UarAllocations.erase(devx_uar->reg_addr);
@@ -688,9 +675,6 @@ void ProfilerCtx::load_doorbell_hijack() {
 // Flush all pending doorbell batches so bytes aren't lost.
 // Called from sync hooks and before emit_communication_summaries() at shutdown.
 void ProfilerCtx::flush_pending_doorbells() {
-    // Drain all per-handle background workers first
-    Profiler::hijack::drain_all_workers();
-
     std::scoped_lock qp_lock(m_mlx5_qp_mutex);
 
     for (auto& [qpn, qp_info]: m_mlx5_qp_info) {
@@ -699,54 +683,38 @@ void ProfilerCtx::flush_pending_doorbells() {
         }
 
         if (qp_info.gpu_mem_type != cudaMemoryTypeDevice) {
+            // TODO
             continue;
         }
 
         const auto prod_id_start = qp_info._oldest_uncopied_prod_id;
         const auto prod_id_end = qp_info._last_prod_id;
 
-        if (prod_id_end <= prod_id_start) {
+        if (prod_id_start == prod_id_end) {
             continue;
         }
 
-        const uint32_t num_wqebbs_total = prod_id_end - prod_id_start;
-
-        CUstream cu_stream;
-        if (cuCtxPushCurrent(qp_info.gpu_ctx) != CUDA_SUCCESS) {
-            continue;
-        }
-        if (cuStreamCreate(&cu_stream, CU_STREAM_NON_BLOCKING) != CUDA_SUCCESS) {
-            CUcontext dummy;
-            CU_CHECK(cuCtxPopCurrent(&dummy));
+        // Per-doorbell async copies already landed in qp_info.host_wqe_buf.
+        // Just sync and parse.
+        if (!qp_info.copy_stream || !qp_info.host_wqe_buf) {
             continue;
         }
 
-        std::vector<uint8_t> host_wqe_buf(num_wqebbs_total * Profiler::hijack::WQEBB_SIZE);
-
-        const CUresult err_copy = Profiler::hijack::copy_wqes_from_gpu(host_wqe_buf.data(), qp_info, prod_id_start,
-                                                                       prod_id_end, cu_stream);
-
-        if (err_copy != CUDA_SUCCESS || cuStreamSynchronize(cu_stream) != CUDA_SUCCESS) {
-            CU_CHECK(cuStreamDestroy(cu_stream));
-            CUcontext dummy;
-            CU_CHECK(cuCtxPopCurrent(&dummy));
+        auto* cu_stream = static_cast<CUstream>(qp_info.copy_stream);
+        if (cuStreamSynchronize(cu_stream) != CUDA_SUCCESS) {
             continue;
         }
 
-        const auto result = Profiler::hijack::parse_wqe_buffer(host_wqe_buf.data(), prod_id_start, prod_id_end, qpn,
-                                                               qp_info.service_type);
-
+        Profiler::hijack::TrafficAccum accum;
+        Profiler::hijack::parse_and_emit(qp_info.host_wqe_buf, prod_id_start, prod_id_end, qpn, qp_info.service_type,
+                                         qp_info.gpu_id, qp_info.pending_doorbells, *m_event_recorder, accum);
         {
             auto& traffic = m_traffic_registry.get_thread_local()[qpn];
-            traffic.bytes_sent += result.total_bytes;
-            traffic.send_count += result.send_count;
+            traffic.bytes_sent += accum.total_bytes;
+            traffic.send_count += accum.send_count;
         }
 
         qp_info.pending_doorbells.clear();
         qp_info._has_pending = false;
-
-        CU_CHECK(cuStreamDestroy(cu_stream));
-        CUcontext dummy;
-        CU_CHECK(cuCtxPopCurrent(&dummy));
     }
 }
