@@ -36,7 +36,8 @@ extern "C" int fi_fabric(fi_fabric_attr* attr, fid_fabric** fabric, void* contex
 
 // This recurses infinitely and breaks
 // Who knows why
-// extern "C" int fi_getinfo(uint32_t version, const char* node, const char* service, uint64_t flags, const fi_info* hints,
+// extern "C" int fi_getinfo(uint32_t version, const char* node, const char* service, uint64_t flags, const fi_info*
+// hints,
 //                           fi_info** info) {
 //     return libfabric::Profiler::invoke_preload<fi::fi_getinfo_tag>(version, node, service, flags, hints, info);
 // }
