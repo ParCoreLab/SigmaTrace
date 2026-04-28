@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.0)
+cmake_minimum_required(VERSION 3.31)
 
 # For whatever reason project() sets CMAKE_CUDA_ARCHITECTURES to 75
 if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
