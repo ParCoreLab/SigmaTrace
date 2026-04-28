@@ -163,7 +163,7 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir, const Profiler
         }
 
         // Simple and Full record this
-        if (trace_mode >= Profiler::ProfilerTraceMode::Full) {
+        if (trace_mode >= Profiler::ProfilerTraceMode::Simple) {
             Profiler::Events::IbvPostSend post_send_event{
                     .context_addr = context_addr,
                     .num_wrs = num_wrs,
@@ -198,7 +198,7 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir, const Profiler
                 }
             }
 
-            if (trace_mode == Profiler::ProfilerTraceMode::Full) {
+            if (trace_mode >= Profiler::ProfilerTraceMode::Simple) {
                 const Profiler::Events::IbvPostRecv recv_event{
                         .context_addr = context_addr,
                         .qp_num = qp->qp_num,
@@ -235,7 +235,7 @@ void ProfilerCtx::load_ibv(const std::filesystem::path& shim_dir, const Profiler
 
             // TODO: might need further optimizations...
             // This is a const check
-            if (trace_mode == Profiler::ProfilerTraceMode::Full) {
+            if (trace_mode >= Profiler::ProfilerTraceMode::Simple) {
                 using Profiler::Events::IbvCompletion;
                 const IbvCompletion completion_event{
                         .context_addr = context_addr,
