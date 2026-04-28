@@ -4,6 +4,9 @@
 
 .clangd
 
+.venv/
+venv/
+
 build/
 build-*/
 cmake-build-*/
