@@ -37,7 +37,7 @@ namespace FileIO {
         static constexpr auto BufferSize = ElementSize * Capacity;
 
         struct WriteRequest {
-            uint8_t buffer_index;
+            std::size_t buffer_index;
             std::size_t size;
         };
 
@@ -174,14 +174,14 @@ namespace FileIO {
         }
 
         // Background write helpers (only used when BackgroundWrite = true)
-        void submit_to_writer(uint8_t buffer_index, std::size_t size) {
+        void submit_to_writer(std::size_t buffer_index, std::size_t size) {
             std::lock_guard lock(bg().m_queue_mutex);
             bg().m_write_queue.push({buffer_index, size});
             bg().m_queue_cv.notify_one();
         }
 
         void wait_for_writer_idle() {
-            std::scoped_lock lock(bg().m_idle_mutex);
+            std::unique_lock lock(bg().m_idle_mutex);
             bg().m_idle_cv.wait(lock, [this] {
                 std::lock_guard qlock(bg().m_queue_mutex);
                 return bg().m_write_queue.empty();
@@ -192,7 +192,7 @@ namespace FileIO {
             while (true) {
                 WriteRequest req;
                 {
-                    std::scoped_lock lock(bg().m_queue_mutex);
+                    std::unique_lock lock(bg().m_queue_mutex);
                     bg().m_queue_cv.wait(lock, [this] {
                         return !bg().m_write_queue.empty() || !bg().m_running;
                     });

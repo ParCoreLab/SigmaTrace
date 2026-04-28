@@ -121,8 +121,8 @@ namespace Events {
         #endif
         */
 
-        FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
-        // FileIO::BackgroundStreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+        // FileIO::StreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
+        FileIO::BackgroundStreamBuffer<EventFileHeader, ElementSize, Capacity> m_file_buffer;
     };
 
     // Type-safe wrapper for specific event types

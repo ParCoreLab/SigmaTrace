@@ -13,7 +13,7 @@
 namespace Events {
     // TODO: this is probably too big for some systems and will break
     // it's stack allocated too...
-    static constexpr size_t DefaultCapacity = 4096;
+    static constexpr size_t DefaultCapacity = 8192;
 
     // Per-thread collection of event buffers (one per event type)
     // Tracks all created buffers so they can be finalized explicitly
