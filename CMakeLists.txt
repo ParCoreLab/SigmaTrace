@@ -50,39 +50,6 @@ Sigma_load_feature_flags()
 # Modules
 add_subdirectory(Modules)
 
-# "Main" Test Executable
-# Excluded because ncclMemAlloc is broken on some systems
-# TODO: move this out of here
-if (SIGMA_HAS_CUDA AND SIGMA_HAS_RDMA_CORE AND SIGMA_HAS_NCCL)
-    Sigma_add_executable(Thing EXCLUDE_FROM_ALL main.cu)
-    target_link_libraries(Thing PRIVATE SigmaHelpers)
-    #target_link_libraries(Thing PRIVATE CUDA::cudart)
-
-    # Link Dependencies defined in modules
-    target_link_libraries(Thing PRIVATE ibverbs)
-    target_link_libraries(Thing PRIVATE nccl)
-endif ()
-
-if (SIGMA_HAS_CUDA AND SIGMA_HAS_NVSHMEM)
-    Sigma_add_executable(ThingNVSHMEM main_nvshmem.cu)
-    set_cuda_rpath(ThingNVSHMEM)
-
-    # Preventing some linker issues with clang
-    set_target_properties(ThingNVSHMEM PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-    target_link_options(ThingNVSHMEM PRIVATE -no-pie)
-
-    target_compile_options(ThingNVSHMEM PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
-            --generate-line-info
-            -g
-            >)
-
-    target_link_libraries(ThingNVSHMEM PRIVATE SigmaHelpers)
-    target_link_libraries(ThingNVSHMEM PRIVATE CUDA::cudart)
-    target_link_libraries(ThingNVSHMEM PRIVATE CUDA::nvml)
-    target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_host)
-    target_link_libraries(ThingNVSHMEM PRIVATE nvshmem::nvshmem_device)
-endif ()
-
 # Dlsym shims
 add_subdirectory(SmartDlsym)
 

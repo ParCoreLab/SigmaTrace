@@ -1,3 +1,3 @@
 # Apps
 
-Individual applications for testing
+Sample applications for testing
