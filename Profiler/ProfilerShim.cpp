@@ -208,6 +208,7 @@ void ProfilerCtx::LateLoad() {
             .monotonic_ns = snapshot.monotonic_ns,
             .tsc_freq_hz = snapshot.tsc_freq_hz,
     };
+
     m_event_recorder->Record(calibration, 0);
 
     // Get rank from user args or the environment and record ProcessInfo event
@@ -554,17 +555,14 @@ extern "C" int __libc_start_main(int (*main)(int, char**, char**), int argc, cha
         std::signal(sig, profiler_at_signal);
     }
 
-    // This is launched in a separate thread because we don't want thread_local
-    // desructors in the main thread to mistaken
-    auto res = std::async([&]() -> int {
-        return real_func(main, argc, argv, init, fini, rtld_fini, stack_end);
-    });
-    res.wait();
+    // We need to call this from the same thread the main function runs because some libraries
+    // and launchers don't like it when you call dlopen from a different thread
+    const auto res = real_func(main, argc, argv, init, fini, rtld_fini, stack_end);
 
     // We do it here because destructors have reverse order and will break providers
     profiler_finalize();
 
-    return res.get();
+    return res;
 }
 #pragma GCC diagnostic pop
 // ================================================================================================
