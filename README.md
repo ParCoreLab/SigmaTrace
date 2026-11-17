@@ -232,8 +232,10 @@ Helpers under `Tools/`:
 - `check-clang-format.sh` — run `clang-format -n` over the tracked sources.
 
 ## Related Paper
+
 Published at SC26
 
+```bibtex
 @misc{baydamirli2026sigmatrace,
   author        = {Baydamirli, Javid and Unat, Didem},
   title         = {{SigmaTrace}: Library-Agnostic Observability for {CPU}/{GPU}-Initiated {RDMA} Communication},
@@ -243,3 +245,4 @@ Published at SC26
   primaryClass  = {cs.DC},
   url           = {https://arxiv.org/abs/2610.24328}
 }
+```
