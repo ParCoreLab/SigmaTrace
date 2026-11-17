@@ -230,3 +230,15 @@ Helpers under `Tools/`:
 - `count_sass_instructions.sh` — quick SASS instruction histogram for a
   disassembled CUDA kernel.
 - `check-clang-format.sh` — run `clang-format -n` over the tracked sources.
+
+## Related Paper
+Published at SC26
+@misc{baydamirli2026sigmatrace,
+  author        = {Baydamirli, Javid and Unat, Didem},
+  title         = {{SigmaTrace}: Library-Agnostic Observability for {CPU}/{GPU}-Initiated {RDMA} Communication},
+  year          = {2026},
+  eprint        = {2610.24328},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.DC},
+  url           = {https://arxiv.org/abs/2610.24328}
+}
