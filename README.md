@@ -233,6 +233,7 @@ Helpers under `Tools/`:
 
 ## Related Paper
 Published at SC26
+
 @misc{baydamirli2026sigmatrace,
   author        = {Baydamirli, Javid and Unat, Didem},
   title         = {{SigmaTrace}: Library-Agnostic Observability for {CPU}/{GPU}-Initiated {RDMA} Communication},
